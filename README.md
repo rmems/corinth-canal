@@ -90,9 +90,15 @@ OLMOE_PATH=/models/OLMoE-1B-7B-Q5_K_M.gguf \
 
 This work builds directly on prior research in spiking and spike-driven LLMs.
 
-- `SpikeLLM` for introducing the Optimal Brain Spiking framework and Generalized Integrate-and-Fire neurons that inspired the ternary GIF implementation used here.
-- `NSLLM` for the unified neuromorphic spike-based LLM pipeline and emphasis on energy-efficient spike representations.
-- `QSD-Transformer` for quantized spike-driven attention mechanisms.
+- Xing et al. (2024), *SpikeLLM: Scaling up Spiking Neural Network to Large Language Models via Saliency-based Spiking*.
+  - arXiv: [2407.04752](https://arxiv.org/abs/2407.04752)
+  - DOI: [10.48550/arXiv.2407.04752](https://doi.org/10.48550/arXiv.2407.04752)
+- Xu et al. (2025), *Neuromorphic spike-based large language model* (`NSLLM`).
+  - Journal page: [National Science Review](https://academic.oup.com/nsr/advance-article/doi/10.1093/nsr/nwaf551/8365570)
+  - DOI: [10.1093/nsr/nwaf551](https://doi.org/10.1093/nsr/nwaf551)
+- Qiu et al. (2025), *Quantized Spike-driven Transformer* (`QSD-Transformer`).
+  - ICLR poster: [OpenReview / ICLR 2025](https://iclr.cc/virtual/2025/poster/30954)
+  - arXiv: [2501.13492](https://arxiv.org/abs/2501.13492)
 - The Allen Institute for AI for releasing the open OLMoE models used as the primary testbed.
 
 ## Citation
