@@ -40,5 +40,5 @@ pub use error::{HybridError, Result};
 pub use hybrid::{HybridModel, OLMoE, Projector};
 pub use types::{
     EMBEDDING_DIM, HybridConfig, HybridOutput, OlmoeExecutionMode, ProjectionMode,
-    SNN_INPUT_CHANNELS, TelemetrySnapshot,
+    TelemetrySnapshot,
 };

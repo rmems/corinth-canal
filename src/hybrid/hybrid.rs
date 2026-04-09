@@ -24,6 +24,9 @@ impl HybridModel {
         if config.snn_steps == 0 {
             return Err(HybridError::InvalidConfig("snn_steps must be ≥ 1".into()));
         }
+        if config.num_experts == 0 {
+            return Err(HybridError::InvalidConfig("num_experts must be ≥ 1".into()));
+        }
         if config.top_k_experts == 0 {
             return Err(HybridError::InvalidConfig("top_k_experts must be ≥ 1".into()));
         }
@@ -53,15 +56,7 @@ impl HybridModel {
     pub fn forward(&mut self, snap: &TelemetrySnapshot) -> Result<HybridOutput> {
         self.global_step += 1;
 
-        let mut spike_train = Vec::with_capacity(self.config.snn_steps);
-        for step in 0..self.config.snn_steps {
-            let active_1 = (step + snap.gpu_temp_c.max(0.0) as usize) % N_NEURONS;
-            let active_2 = (active_1 + 5) % N_NEURONS;
-            spike_train.push(vec![active_1, active_2]);
-        }
-
-        let potentials = vec![0.5; N_NEURONS];
-        let iz_potentials = vec![0.0; IZ_NEURONS];
+        let (spike_train, potentials, iz_potentials) = self.synthetic_activity(snap);
         let embedding = self
             .projector
             .project(&spike_train, &potentials, &iz_potentials)?;
@@ -87,6 +82,32 @@ impl HybridModel {
             selected_experts: Some(olmoe_out.selected_experts),
             reasoning: None,
         })
+    }
+
+    fn synthetic_activity(
+        &self,
+        snap: &TelemetrySnapshot,
+    ) -> (Vec<Vec<usize>>, Vec<f32>, Vec<f32>) {
+        let phase_seed = (snap.timestamp_ms as usize / 1_000
+            + snap.gpu_temp_c.max(0.0).round() as usize
+            + snap.cpu_tctl_c.max(0.0).round() as usize)
+            % N_NEURONS;
+
+        let spike_train = (0..self.config.snn_steps)
+            .map(|step| {
+                let lead = (phase_seed + step) % N_NEURONS;
+                let trail = (lead + N_NEURONS / 2) % N_NEURONS;
+                vec![lead, trail]
+            })
+            .collect();
+
+        let thermal_bias = 0.2 + 0.4 * snap.thermal_stress();
+        let potentials = (0..N_NEURONS)
+            .map(|idx| thermal_bias + (idx as f32 / N_NEURONS as f32) * 0.3)
+            .collect();
+        let iz_potentials = vec![0.0; IZ_NEURONS];
+
+        (spike_train, potentials, iz_potentials)
     }
 
     pub fn train_step(&mut self, snap: &TelemetrySnapshot, target: &[f32]) -> Result<f32> {

@@ -20,7 +20,6 @@ fn main() -> corinth_canal::Result<()> {
     let cfg = HybridConfig {
         olmoe_model_path: model_path,
         snn_steps: 20,
-        context_length: 512,
         num_experts: 8,
         top_k_experts: 1,
         olmoe_execution_mode,

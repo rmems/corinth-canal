@@ -33,10 +33,6 @@ pub enum HybridError {
     #[error("input length mismatch: expected {expected}, got {got}")]
     InputLengthMismatch { expected: usize, got: usize },
 
-    /// The synthetic spike front-end produced no spikes.
-    #[error("SNN produced no spikes after {steps} steps — network may be silent")]
-    SilentNetwork { steps: usize },
-
     /// OLMoE forward pass returned an error.
     #[error("OLMoE forward pass failed: {0}")]
     OlmoeForward(String),

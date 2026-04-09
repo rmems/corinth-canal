@@ -2,9 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Number of synthetic input channels used by the dummy spike front-end.
-pub const SNN_INPUT_CHANNELS: usize = 16;
-
 /// Dimensionality of the dense embedding the projector hands to OLMoE.
 pub const EMBEDDING_DIM: usize = 2048;
 
@@ -33,7 +30,6 @@ impl TelemetrySnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridConfig {
     pub olmoe_model_path: String,
-    pub context_length: usize,
     pub num_experts: usize,
     pub top_k_experts: usize,
     pub olmoe_execution_mode: OlmoeExecutionMode,
@@ -45,7 +41,6 @@ impl Default for HybridConfig {
     fn default() -> Self {
         Self {
             olmoe_model_path: String::new(),
-            context_length: 512,
             num_experts: 8,
             top_k_experts: 1,
             olmoe_execution_mode: OlmoeExecutionMode::SpikingSim,
