@@ -8,16 +8,11 @@ pub const EMBEDDING_DIM: usize = 2048;
 /// Minimal local telemetry payload used to seed deterministic spike patterns.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelemetrySnapshot {
-    pub timestamp_ms: u64,
     pub gpu_temp_c: f32,
     pub gpu_power_w: f32,
-    pub gpu_clock_mhz: f32,
-    pub mem_util_pct: f32,
     pub cpu_tctl_c: f32,
     pub cpu_package_power_w: f32,
-    pub workload_throughput: f64,
-    pub workload_efficiency: f64,
-    pub auxiliary_signal: f64,
+    pub timestamp_ms: u64,
 }
 
 impl TelemetrySnapshot {

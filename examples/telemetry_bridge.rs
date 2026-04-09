@@ -32,16 +32,11 @@ fn main() -> corinth_canal::Result<()> {
     for step in 0..25usize {
         let phase = step as f32 / 25.0;
         let snap = TelemetrySnapshot {
-            timestamp_ms: (step as u64) * 1000,
             gpu_temp_c: 55.0 + phase * 30.0,
             gpu_power_w: 180.0 + phase * 120.0,
-            gpu_clock_mhz: 1800.0 + phase * 300.0,
-            mem_util_pct: 50.0 + phase * 30.0,
             cpu_tctl_c: 48.0 + phase * 20.0,
             cpu_package_power_w: 70.0 + phase * 40.0,
-            workload_throughput: (0.005 + phase as f64 * 0.01),
-            workload_efficiency: (0.6 + phase as f64 * 0.2),
-            auxiliary_signal: (phase as f64).sin().abs(),
+            timestamp_ms: (step as u64) * 1000,
         };
 
         let output = model.forward(&snap)?;

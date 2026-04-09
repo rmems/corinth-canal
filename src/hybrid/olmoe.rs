@@ -235,7 +235,7 @@ impl OLMoE {
 
         if magic[0] == b'{' || (magic[0] == 0 && magic[1] == 0) {
             return Err(HybridError::UnsupportedFormat(
-                "safetensors files are not supported in standalone mode".into(),
+                "non-GGUF checkpoint headers are not supported in standalone mode".into(),
             ));
         }
 
