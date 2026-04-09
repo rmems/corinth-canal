@@ -16,7 +16,8 @@
 //! # No OLMoE dependency
 //!
 //! The projector is intentionally **pure** — it depends only on the spike
-//! activity types produced by `neuromod` and emits a plain `Vec<f32>`.
+//! activity represented as spike indices, potentials, and adaptive voltages,
+//! and emits a plain `Vec<f32>`.
 //! This keeps it reusable with any LLM backend.
 //!
 //! [`RateSum`]: crate::types::ProjectionMode::RateSum

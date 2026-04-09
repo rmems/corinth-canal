@@ -2,7 +2,7 @@
 name = "corinth-canal"
 version = "0.1.0"
 edition = "2024"
-description = "SNN-logic quantization and hybrid MoE orchestration"
+description = "Minimal standalone SNN-logic quantization bridge"
 repository = "https://github.com/Spikenaut/corinth-canal"
 license = "GPL-3.0-or-later"
 keywords = ["neuromorphic", "snn", "llm", "moe", "hybrid", "spiking"]
@@ -11,38 +11,16 @@ readme = "README.md"
 exclude = ["docs/"]
 
 [dependencies]
-gguf = "0.1"
 serde = { version = "1.0", features = ["derive"] }
-zmq = "0.10"
+thiserror = "1.0"
 
-# Add your custom Candle-free tensor dependencies here
-spikenaut-telemetry = { path = "../spikenaut-telemetry" }
-spikenaut-encoder   = { path = "../spikenaut-encoder" }
-neuromod            = { path = "../neuromod" }
-spikenaut-spine     = { path = "../spikenaut-spine" }
-
-# ── Serialisation / Utility ────────────────────────────────────────────────────
-serde_json = "1.0"
-thiserror  = "2"
-safetensors = { version = "0.4", optional = true }
-
-[dev-dependencies]
-# examples only — no extra overhead in the lib
-serde_json = "1.0"
-
-# ── Feature flags ──────────────────────────────────────────────────────────────
 [features]
-default     = []
-## Enable safetensors BF16 model loading (falls back to stub when disabled).
-safetensors = ["dep:safetensors"]
-## Enable GGUF Q5_K_M model loading (pure Rust parser, no C++ libs required).
-gguf        = []
-## Enable ZMQ spine transport for Rust ↔ Julia training bridge.
-spine-zmq   = ["spikenaut-spine/zmq"]
+default = []
+gguf = []
 
 [profile.release]
-opt-level     = 3
-lto           = true
+opt-level = 3
+lto = true
 codegen-units = 1
 
 [workspace]

@@ -2,18 +2,16 @@
 //!
 //! This module provides a thin, pure-Rust wrapper around the
 //! **allenai/OLMoE-1B-7B-0125-Instruct** MoE language model.  The model is
-//! kept **completely frozen**; only the Spikenaut SNN (via `spikenaut-spine`
-//! and `SpikenautDistill.jl`) is updated during training.
+//! kept **completely frozen** while the standalone crate exercises routing
+//! through synthetic spike-derived embeddings.
 //!
 //! # Loading priority
 //!
 //! 1. **GGUF Q5_K_M** (default, `gguf` feature or no feature flag needed):
 //!    a pure-Rust GGUF header parser + memory-mapped weights.
-//! 2. **safetensors BF16** (`safetensors` feature): load from a directory of
-//!    `.safetensors` shards (full model, needs more RAM).
-//! 3. **Stub / offline mode**: when `olmoe_model_path` is empty the model
+//! 2. **Stub / offline mode**: when `olmoe_model_path` is empty the model
 //!    returns a zero embedding of the correct shape.  This lets the rest of the
-//!    pipeline (SNN, projector, spine) be exercised without a GPU/model download.
+//!    pipeline be exercised without a GPU/model download.
 //!
 //! # Model architecture snapshot (OLMoE-1B-7B-0125)
 //!
@@ -33,7 +31,6 @@
 //! | Feature | Effect |
 //! |---------|--------|
 //! | `gguf` | Enables GGUF parser header validation |
-//! | `safetensors` | Enables `.safetensors` shard loading |
 //! | *(none)* | Stub mode only |
 
 use crate::error::{HybridError, Result};
@@ -56,15 +53,13 @@ const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
 
 /// Frozen OLMoE-1B-7B inference engine.
 ///
-/// In the SpikeLMo architecture this component **never** has its weights
-/// updated.  The SNN front-end (trained by Julia/E-prop) learns to steer
-/// expert selection through the embedding produced by the
-/// [`Projector`](crate::hybrid::projector::Projector).
+/// In the standalone architecture this component keeps its weights frozen and
+/// routes embeddings produced by the projector.
 ///
 /// # Stub mode
 ///
-/// When `model_path` is empty (or the `gguf`/`safetensors` features are
-/// disabled) `OLMoE::load` succeeds and works fully but returns:
+/// When `model_path` is empty (or the `gguf` feature is disabled)
+/// `OLMoE::load` succeeds and works fully but returns:
 ///
 /// * `expert_weights` — uniform `1/num_experts` for each expert
 /// * `selected_experts` — `[0, 1, ..., top_k-1]`
@@ -73,7 +68,7 @@ const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
 /// This is useful for unit-testing the full hybrid pipeline without needing
 /// the actual 4 GB model checkpoint.
 pub struct OLMoE {
-    /// Path to the model file (GGUF or safetensors dir).
+    /// Path to the model file.
     model_path: String,
 
     /// Number of available experts.
@@ -123,7 +118,7 @@ impl OLMoE {
     /// Load (or stub-initialise) the OLMoE model.
     ///
     /// # Arguments
-    /// * `model_path` — path to `OLMoE-1B-7B-Q5_K_M.gguf` (or   `.safetensors` dir).
+    /// * `model_path` — path to `OLMoE-1B-7B-Q5_K_M.gguf`.
     ///   Pass an empty string for stub mode.
     /// * `num_experts` — number of routed experts (8 for OLMoE-1B-7B top-level,
     ///   64 internal experts; pass 8 unless you need per-layer granularity).
@@ -213,7 +208,7 @@ impl OLMoE {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    /// Detect file format (GGUF magic / safetensors header) and return metadata.
+    /// Detect file format and return metadata.
     fn probe_and_load(path: &str) -> Result<OlmoeMetadata> {
         use std::io::Read;
 
@@ -238,26 +233,15 @@ impl OLMoE {
             });
         }
 
-        // Check for safetensors JSON header (starts with `{`)
         if magic[0] == b'{' || (magic[0] == 0 && magic[1] == 0) {
-            #[cfg(feature = "safetensors")]
-            {
-                return Ok(OlmoeMetadata {
-                    hidden_size: OLMOE_HIDDEN,
-                    num_layers: 16,
-                    num_experts: OLMOE_NUM_EXPERTS,
-                    quantization: "BF16".into(),
-                });
-            }
-            #[cfg(not(feature = "safetensors"))]
             return Err(HybridError::UnsupportedFormat(
-                "safetensors file detected but `safetensors` feature is disabled".into(),
+                "safetensors files are not supported in standalone mode".into(),
             ));
         }
 
         Err(HybridError::UnsupportedFormat(format!(
             "unrecognised model magic bytes: {magic:?}  \
-             (enable `gguf` or `safetensors` feature and verify the file)"
+             (enable `gguf` and verify the file)"
         )))
     }
 
