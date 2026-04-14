@@ -3,12 +3,13 @@
 //! Canonical CSV format: timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w
 
 use corinth_canal::{
-    EMBEDDING_DIM, HybridConfig, HybridError, HybridModel, OlmoeExecutionMode, ProjectionMode,
-    TelemetrySnapshot,
+    EMBEDDING_DIM, FUNNEL_HIDDEN_NEURONS, HybridConfig, HybridError, HybridModel,
+    OlmoeExecutionMode, ProjectionMode, TelemetryFunnel, TelemetrySnapshot,
 };
 
 const EXPECTED_HEADER: &str =
     "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
+const TELEMETRY_THRESHOLDS: [f32; 4] = [1.0, 5.0, 1.0, 5.0];
 
 fn parse_u64(v: &str) -> Option<u64> {
     v.parse::<u64>().ok()
@@ -43,11 +44,13 @@ fn main() -> corinth_canal::Result<()> {
         projection_mode: ProjectionMode::SpikingTernary,
     };
 
-    let mut model = HybridModel::new(cfg)?;
+    let mut model = HybridModel::new_with_projector_neurons(cfg.clone(), FUNNEL_HIDDEN_NEURONS)?;
+    let mut funnel = TelemetryFunnel::new(TELEMETRY_THRESHOLDS, cfg.snn_steps);
     println!(
-        "olmoe_loaded={} olmoe_mode={:?}",
+        "olmoe_loaded={} olmoe_mode={:?} funnel_hidden_neurons={}",
         model.olmoe_loaded(),
-        model.config().olmoe_execution_mode
+        model.config().olmoe_execution_mode,
+        FUNNEL_HIDDEN_NEURONS,
     );
 
     let csv_content = std::fs::read_to_string(csv_path)?;
@@ -67,6 +70,8 @@ fn main() -> corinth_canal::Result<()> {
     let mut total_loss = 0.0_f32;
     let mut rows_processed = 0_usize;
     let mut rows_skipped = 0_usize;
+    let mut total_input_spikes = 0_usize;
+    let mut total_hidden_spikes = 0_usize;
 
     for (idx, raw_line) in lines.enumerate() {
         let line_number = idx + 2;
@@ -112,7 +117,18 @@ fn main() -> corinth_canal::Result<()> {
             cpu_package_power_w,
         };
 
-        let output = model.forward(&snap)?;
+        let activity = funnel.encode_snapshot(&snap);
+        let output = model.forward_activity(
+            &activity.spike_train,
+            &activity.potentials,
+            &activity.iz_potentials,
+        )?;
+        let input_spikes = activity
+            .input_spike_train
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>();
+        let hidden_spikes = activity.spike_train.iter().map(Vec::len).sum::<usize>();
 
         let mean_embed = output.embedding.iter().sum::<f32>() / EMBEDDING_DIM as f32;
         let target = vec![mean_embed * 0.9; EMBEDDING_DIM];
@@ -126,11 +142,20 @@ fn main() -> corinth_canal::Result<()> {
 
         total_loss += loss;
         rows_processed += 1;
+        total_input_spikes += input_spikes;
+        total_hidden_spikes += hidden_spikes;
 
         if rows_processed % 100 == 0 || rows_processed <= 5 {
             println!(
-                "step={:>4} gpu_temp={:5.1}C gpu_power={:6.1}W cpu_temp={:5.1}C loss={:.6}",
-                rows_processed, gpu_temp_c, gpu_power_w, cpu_tctl_c, loss
+                "step={:>4} gpu_temp={:5.1}C gpu_power={:6.1}W cpu_temp={:5.1}C ternary={:?} input_spikes={:>3} hidden_spikes={:>4} loss={:.6}",
+                rows_processed,
+                gpu_temp_c,
+                gpu_power_w,
+                cpu_tctl_c,
+                activity.ternary_events,
+                input_spikes,
+                hidden_spikes,
+                loss
             );
         }
     }
@@ -145,6 +170,22 @@ fn main() -> corinth_canal::Result<()> {
     println!("rows_processed={}", rows_processed);
     println!("rows_skipped={}", rows_skipped);
     println!("avg_loss={:.6}", avg_loss);
+    println!(
+        "avg_input_spikes_per_row={:.3}",
+        if rows_processed > 0 {
+            total_input_spikes as f32 / rows_processed as f32
+        } else {
+            0.0
+        }
+    );
+    println!(
+        "avg_hidden_spikes_per_row={:.3}",
+        if rows_processed > 0 {
+            total_hidden_spikes as f32 / rows_processed as f32
+        } else {
+            0.0
+        }
+    );
     println!("global_step={}", model.global_step());
     println!("olmoe_loaded={}", model.olmoe_loaded());
 

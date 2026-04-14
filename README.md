@@ -20,10 +20,13 @@ TelemetrySnapshot
        v  TelemetryEncoder (delta modulation)
 [i8; 4] ternary spikes (+1/0/-1)
        |
-       v  deterministic dummy spike generator
-spike_train + membrane_potentials
+       v  SignedSplitBankBridge
+16 input neurons (4 ch × 2 signs × 2 bank width)
        |
-       v  Projector
+       v  SparseGifHiddenLayer (sparse 16 → 512)
+512 GIF hidden neurons with adaptive thresholds
+       |
+       v  Projector (generalized for 512-neuron input)
 dense embedding [2048]
        |
        v  OLMoE (stub/dense/spiking sim)
@@ -33,11 +36,15 @@ expert_weights + selected_experts + hidden
 ## Quick start
 
 ```rust
-use corinth_canal::{HybridConfig, HybridModel, TelemetryEncoder, TelemetrySnapshot};
+use corinth_canal::{
+    HybridConfig, HybridModel, TelemetryFunnel, TelemetrySnapshot,
+    FUNNEL_HIDDEN_NEURONS,
+};
 
-// Configure delta modulation thresholds
+// Configure the telemetry funnel
 let thresholds = [1.0, 5.0, 1.0, 5.0];
-let mut encoder = TelemetryEncoder::new(thresholds);
+let snn_steps = 20;
+let mut funnel = TelemetryFunnel::new(thresholds, snn_steps);
 
 // Create a telemetry snapshot
 let snap = TelemetrySnapshot {
@@ -48,13 +55,17 @@ let snap = TelemetrySnapshot {
     timestamp_ms: 0,
 };
 
-// Encode into ternary spikes
-let spikes = encoder.encode(&snap);
+// Run the full funnel: encoder -> bridge -> 512-neuron GIF hidden layer
+let activity = funnel.encode_snapshot(&snap);
 
-// Or use the full hybrid pipeline
+// Or use the complete hybrid pipeline
 let cfg = HybridConfig::default();
-let mut model = HybridModel::new(cfg)?;
-let output = model.forward(&snap)?;
+let mut model = HybridModel::new_with_projector_neurons(cfg, FUNNEL_HIDDEN_NEURONS)?;
+let output = model.forward_activity(
+    &activity.spike_train,
+    &activity.potentials,
+    &activity.iz_potentials,
+)?;
 
 println!("Selected experts: {:?}", output.selected_experts);
 ```
@@ -96,6 +107,63 @@ let spikes = encoder.encode(&snap);
 
 // Subsequent calls emit spikes based on delta
 let spikes = encoder.encode(&snap);
+```
+
+## TelemetryFunnel
+
+The `TelemetryFunnel` orchestrates the full spiking pipeline from raw telemetry to hidden-layer activity ready for projection.
+
+### Architecture
+
+```
+TelemetrySnapshot
+       |
+       v  TelemetryEncoder (delta modulation)
+[i8; 4] ternary spikes
+       |
+       v  SignedSplitBankBridge
+16 input neurons (4 channels × 2 polarities × 2 neurons)
+       |
+       v  SparseGifHiddenLayer
+512 GIF neurons with adaptive thresholds (sparse 16→512 weights)
+       |
+       v  FunnelActivity
+spike_train + potentials + iz_potentials
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `SignedSplitBankBridge` | Expands 4-channel ternary spikes into 16 input neurons using signed split banks (positive/negative pairs per channel) |
+| `SparseGifHiddenLayer` | Pure-Rust Generalized Integrate-and-Fire (GIF) layer with adaptive thresholds. Uses sparse 4-edge connectivity per hidden neuron for fast inference |
+| `FunnelActivity` | Output struct containing the 512-neuron spike train, membrane potentials, and Izhikevich potentials |
+
+### GIF neuron parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `leak` | 0.92 | Membrane leak factor |
+| `threshold_base` | 0.65 | Base firing threshold |
+| `adaptation_scale` | 0.22 | Adaptive threshold scaling |
+| `adaptation_decay` | 0.94 | Adaptation variable decay |
+| `reset_ratio` | 0.35 | Post-spike membrane reset |
+
+### Usage
+
+```rust
+use corinth_canal::{TelemetryFunnel, TelemetrySnapshot, FUNNEL_HIDDEN_NEURONS};
+
+let mut funnel = TelemetryFunnel::new(
+    [1.0, 5.0, 1.0, 5.0], // thresholds
+    20,                   // snn_steps
+);
+
+let activity = funnel.encode_snapshot(&TelemetrySnapshot::default());
+
+// activity.spike_train: 512-neuron spike activity over 20 steps
+// activity.potentials: final membrane potentials (512 values)
+// activity.iz_potentials: Izhikevich potentials (5 values)
 ```
 
 ## Features
@@ -153,9 +221,10 @@ cargo run --example csv_replay /path/to/canonical.csv
 | `src/hybrid/mod.rs` | hybrid module switchboard |
 | `src/hybrid/projector.rs` | 2-bit spiking projector logic |
 | `src/hybrid/olmoe.rs` | GGUF-aware OLMoE simulation |
+| `src/funnel.rs` | TelemetryFunnel: encoder + split-bank bridge + sparse GIF hidden layer |
 | `src/hybrid/hybrid.rs` | deterministic front-end + projector + OLMoE orchestration |
 | `examples/telemetry_bridge.rs` | end-to-end standalone example |
-| `examples/csv_replay.rs` | canonical CSV replay adapter |
+| `examples/csv_replay.rs` | canonical CSV replay adapter (funnel-driven) |
 
 ## Acknowledgments
 
