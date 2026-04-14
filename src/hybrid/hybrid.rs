@@ -21,6 +21,13 @@ pub struct HybridModel {
 
 impl HybridModel {
     pub fn new(config: HybridConfig) -> Result<Self> {
+        Self::new_with_projector_neurons(config, N_NEURONS)
+    }
+
+    pub fn new_with_projector_neurons(
+        config: HybridConfig,
+        projector_neurons: usize,
+    ) -> Result<Self> {
         if config.snn_steps == 0 {
             return Err(HybridError::InvalidConfig("snn_steps must be ≥ 1".into()));
         }
@@ -37,7 +44,7 @@ impl HybridModel {
             )));
         }
 
-        let projector = Projector::new(config.projection_mode);
+        let projector = Projector::with_input_neurons(config.projection_mode, projector_neurons);
         let olmoe = OLMoE::load_with_mode(
             &config.olmoe_model_path,
             config.num_experts,
@@ -54,19 +61,29 @@ impl HybridModel {
     }
 
     pub fn forward(&mut self, snap: &TelemetrySnapshot) -> Result<HybridOutput> {
+        let (spike_train, potentials, iz_potentials) = self.synthetic_activity(snap);
+        self.forward_activity(&spike_train, &potentials, &iz_potentials)
+    }
+
+    pub fn forward_activity(
+        &mut self,
+        spike_train: &[Vec<usize>],
+        potentials: &[f32],
+        iz_potentials: &[f32],
+    ) -> Result<HybridOutput> {
         self.global_step += 1;
 
-        let (spike_train, potentials, iz_potentials) = self.synthetic_activity(snap);
         let embedding = self
             .projector
             .project(&spike_train, &potentials, &iz_potentials)?;
         let olmoe_out = self.olmoe.forward(&embedding)?;
 
-        let steps_f = self.config.snn_steps as f32;
-        let mut counts = vec![0usize; N_NEURONS];
-        for step in &spike_train {
+        let steps_f = spike_train.len().max(1) as f32;
+        let neuron_count = self.projector.input_neurons();
+        let mut counts = vec![0usize; neuron_count];
+        for step in spike_train {
             for &idx in step {
-                if idx < N_NEURONS {
+                if idx < neuron_count {
                     counts[idx] += 1;
                 }
             }
@@ -74,9 +91,9 @@ impl HybridModel {
         let firing_rates: Vec<f32> = counts.iter().map(|&c| c as f32 / steps_f).collect();
 
         Ok(HybridOutput {
-            spike_train,
+            spike_train: spike_train.to_vec(),
             firing_rates,
-            membrane_potentials: potentials,
+            membrane_potentials: potentials.to_vec(),
             embedding,
             expert_weights: Some(olmoe_out.expert_weights),
             selected_experts: Some(olmoe_out.selected_experts),
@@ -150,6 +167,7 @@ impl HybridModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::funnel::FUNNEL_HIDDEN_NEURONS;
     use crate::types::{OlmoeExecutionMode, ProjectionMode};
 
     fn default_model() -> HybridModel {
@@ -260,5 +278,25 @@ mod tests {
             let out = model.forward(&TelemetrySnapshot::default()).unwrap();
             assert_eq!(out.embedding.len(), EMBEDDING_DIM, "mode: {mode:?}");
         }
+    }
+
+    #[test]
+    fn test_forward_activity_supports_custom_projector_width() {
+        let mut model = HybridModel::new_with_projector_neurons(
+            HybridConfig::default(),
+            FUNNEL_HIDDEN_NEURONS,
+        )
+        .unwrap();
+        let spike_train = vec![vec![0, 1, 2, 3]; 20];
+        let potentials = vec![0.4; FUNNEL_HIDDEN_NEURONS];
+        let iz_potentials = vec![0.0; IZ_NEURONS];
+
+        let out = model
+            .forward_activity(&spike_train, &potentials, &iz_potentials)
+            .unwrap();
+
+        assert_eq!(out.firing_rates.len(), FUNNEL_HIDDEN_NEURONS);
+        assert_eq!(out.membrane_potentials.len(), FUNNEL_HIDDEN_NEURONS);
+        assert_eq!(out.embedding.len(), EMBEDDING_DIM);
     }
 }
