@@ -65,6 +65,7 @@ impl KernelModule {
                 "project_snapshot_current",
                 "lif_step",
                 "lif_step_weighted",
+                "gif_step_weighted",
                 "spike_rate",
                 "reset_membrane",
                 "stdp_update",
@@ -72,6 +73,7 @@ impl KernelModule {
                 "membrane_dv_dt_reduce_pass1",
                 "routing_entropy_reduce_pass1",
                 "latent_reduce_pass2",
+                "saaq_find_best_walker",
             ],
         )?;
 

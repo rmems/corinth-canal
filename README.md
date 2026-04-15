@@ -14,45 +14,43 @@ This repository originated from the `spikenaut-hybrid` codebase and was reorgani
 
 ## Architecture
 
-### CPU Fallback
+### CPU Fallback + GPU GIF Path
 
 ```text
 TelemetrySnapshot
        |
-       v  TelemetryEncoder (delta modulation)
+       v  TelemetryEncoder (delta modulation) / project_snapshot_current (GPU)
 [i8; 4] ternary spikes (+1/0/-1)
        |
-       v  SignedSplitBankBridge
-16 input neurons (4 ch × 2 signs × 2 bank width)
+       v  SignedSplitBankBridge or GPU input_spikes
+2048 input neurons
        |
-       v  SparseGifHiddenLayer (sparse 16 → 512)
-512 GIF hidden neurons with adaptive thresholds
+       v  SparseGifHiddenLayer (CPU) or gif_step_weighted (GPU with adaptation)
+2048 GIF hidden neurons with adaptive thresholds + history-aware SAAQ
        |
-       v  Projector (generalized for 512-neuron input)
+       v  Projector (SpikingTernary GIF mode for 2048-neuron input)
 dense embedding [2048]
        |
-       v  OLMoE (stub/dense/spiking sim)
-expert_weights + selected_experts + hidden
+       v  OLMoE (stub/dense/spiking sim) + SAT solver for routing
+expert_weights + selected_experts + hidden + spike_count telemetry
 ```
 
-### GPU Acceleration (NVIDIA Blackwell sm_120+)
+### GPU Acceleration (NVIDIA Blackwell sm_120+ with GIF)
 
-When a compatible GPU is detected, the crate offloads key workloads to CUDA kernels compiled from `myelin-accelerator`.
+When a compatible GPU is detected, the crate offloads the 2048-neuron GIF SNN to CUDA via `GpuAccelerator` (temporal tick loop with `gif_step_weighted`, adaptation buffer, dynamic thresholds). This provides history-aware spiking for better SAAQ quantization and sparsity telemetry to optimize 16GB VRAM/power usage.
 
 ```text
-(CPU) TelemetrySnapshot
+TelemetrySnapshot
        |
-       v  (CPU) TelemetryFunnel
-FunnelActivity (spike_train, potentials)
+       v  project_snapshot_current (to input_current)
        |
-       v  (GPU) GpuAccelerator transfers to VRAM
-(GPU) Spiking Network Kernels (LIF, STDP, etc.)
+       v  GpuAccelerator::reset_temporal_state() + load_synapse_weights()
        |
-       v  (GPU) Vector Similarity Kernels
-(GPU) Dense embedding [2048]
+       v  gif_step_weighted_tick loop (adaptation decay, adaptive threshold = base + scale*adaptation, weighted synapses, refractory)
        |
-       v  (CPU) OLMoE (stub/dense/spiking sim)
-expert_weights + selected_experts + hidden
+       v  temporal_*_to_vec (membrane, adaptation, spikes)
+       |
+       v  forward_activity + Projector (GIF mode) + OLMoE + SAAQ/sparsity CSV (spike_count, mean_adaptation, active_fraction)
 ```
 
 ## Quick start
@@ -159,33 +157,29 @@ spike_train + potentials + iz_potentials
 |-----------|-------------|
 | `SignedSplitBankBridge` | Expands 4-channel ternary spikes into 16 input neurons using signed split banks (positive/negative pairs per channel) |
 | `SparseGifHiddenLayer` | Pure-Rust Generalized Integrate-and-Fire (GIF) layer with adaptive thresholds. Uses sparse 4-edge connectivity per hidden neuron for fast inference |
-| `FunnelActivity` | Output struct containing the 512-neuron spike train, membrane potentials, and Izhikevich potentials |
+| `FunnelActivity` / `HybridOutput` | Output struct containing the 2048-neuron GIF spike train, membrane potentials, adaptation stats, and Izhikevich potentials. Extended with spike_count telemetry for SAAQ. |
 
-### GIF neuron parameters
+### GIF neuron parameters (synced in GPU kernel, funnel.rs, projector.rs)
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `leak` | 0.92 | Membrane leak factor |
-| `threshold_base` | 0.65 | Base firing threshold |
-| `adaptation_scale` | 0.22 | Adaptive threshold scaling |
-| `adaptation_decay` | 0.94 | Adaptation variable decay |
-| `reset_ratio` | 0.35 | Post-spike membrane reset |
+| `leak` | 0.92 | Membrane leak factor (GIF_LEAK) |
+| `threshold_base` | 0.65 | Base firing threshold (GIF_THRESHOLD_BASE) |
+| `adaptation_scale` | 0.22 | Adaptive threshold scaling (GIF_ADAPTATION_SCALE) |
+| `adaptation_decay` | 0.94 | Adaptation variable decay (GIF_ADAPTATION_DECAY) |
+| `reset_ratio` | 0.35 | Post-spike membrane reset (GIF_RESET_RATIO) |
+| `drive_scale` | 0.75 | Input drive scaling |
 
-### Usage
+### Usage with GIF GPU Path
 
 ```rust
-use corinth_canal::{TelemetryFunnel, TelemetrySnapshot, FUNNEL_HIDDEN_NEURONS};
+use corinth_canal::{HybridModel, HybridConfig, GpuAccelerator, TelemetrySnapshot};
 
-let mut funnel = TelemetryFunnel::new(
-    [1.0, 5.0, 1.0, 5.0], // thresholds
-    20,                   // snn_steps
-);
+let mut model = HybridModel::new(HybridConfig::default()).unwrap();
+let mut accelerator = GpuAccelerator::new();  // falls back gracefully
+let output = model.forward_gpu_temporal(&mut accelerator, &TelemetrySnapshot::default()).unwrap();
 
-let activity = funnel.encode_snapshot(&TelemetrySnapshot::default());
-
-// activity.spike_train: 512-neuron spike activity over 20 steps
-// activity.potentials: final membrane potentials (512 values)
-// activity.iz_potentials: Izhikevich potentials (5 values)
+// GIF adaptation drives sparsity pruning; CSV now logs spike_count, mean_adaptation, active_fraction for VRAM optimization and Julia symbolic regression
 ```
 
 ## Features

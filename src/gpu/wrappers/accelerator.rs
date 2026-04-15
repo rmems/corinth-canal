@@ -21,16 +21,22 @@ use tracing::warn;
 const SATSOLVER_BLOCK_SIZE: u32 = 256;
 const SATSOLVER_SHARED_MEM_BYTES: u32 = 0;
 const TEMPORAL_BLOCK_SIZE: u32 = 256;
+const TEMPORAL_GRID_SIZE: u32 = 8;  // 8 * 256 = 2048 exact for Blackwell alignment (N_NEURONS)
 const TEMPORAL_SHARED_MEM_BYTES: u32 = 0;
 const SNAPSHOT_CHANNELS: usize = 4;
 
 struct TemporalState {
     neuron_count: usize,
+    n_inputs: usize,
     membrane: GpuBuffer<f32>,
     refractory: GpuBuffer<u32>,
     spikes_out: GpuBuffer<u32>,
     input_current: GpuBuffer<f32>,
+    input_spikes: GpuBuffer<f32>,
+    adaptation: GpuBuffer<f32>,
+    weights: GpuBuffer<f32>,
     snapshot: GpuBuffer<f32>,
+    best_walker: GpuBuffer<u32>,  // persistent 1-element for SAAQ on-device reduction
 }
 
 /// Facade that owns a CUDA context and the compiled PTX modules.
@@ -196,6 +202,81 @@ impl GpuAccelerator {
         state.membrane.to_vec()
     }
 
+    /// Download current adaptation values (GIF state) from device.
+    pub fn temporal_adaptation_to_vec(&self, neuron_count: usize) -> GpuResult<Vec<f32>> {
+        if !self.is_ready() {
+            return Err(GpuError::NoGpu);
+        }
+        let state = self
+            .temporal_state
+            .as_ref()
+            .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
+        Self::expect_len("temporal adaptation", state.adaptation.len(), neuron_count)?;
+        state.adaptation.to_vec()
+    }
+
+    /// Load synapse weight matrix for GIF weighted kernel. Must match neuron_count * n_inputs.
+    /// Call after ensure_temporal_state or it will be overwritten on realloc.
+    pub fn load_synapse_weights(&mut self, weights: &[f32]) -> GpuResult<()> {
+        if !self.is_ready() {
+            return Err(GpuError::NoGpu);
+        }
+        let state = self
+            .temporal_state
+            .as_mut()
+            .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
+        let expected = state.neuron_count * state.n_inputs;
+        if weights.len() != expected {
+            return Err(GpuError::MemoryError(format!(
+                "weights length mismatch: expected {} ({}x{}), got {}",
+                expected, state.neuron_count, state.n_inputs, weights.len()
+            )));
+        }
+        state.weights.upload(weights).map_err(|e| {
+            GpuError::MemoryError(format!("synapse weights upload failed: {e}"))
+        })?;
+        Ok(())
+    }
+
+    /// Run one GIF-weighted LIF step using adaptation, dynamic threshold, and synaptic weights.
+    /// Uses shared memory sized for n_inputs. Call load_synapse_weights first.
+    /// Fills spikes_out and updates membrane/adaptation/refractory.
+    /// Returns the SAAQ best-walker index from on-device reduction (single u32 download).
+    pub fn gif_step_weighted_tick(&mut self, neuron_count: usize) -> GpuResult<u32> {
+        self.ensure_temporal_state(neuron_count)?;
+
+        let modules = self.modules.as_ref().ok_or(GpuError::NoGpu)?;
+        let gif_step = modules.get_function("gif_step_weighted")?;
+        let state = self
+            .temporal_state
+            .as_mut()
+            .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
+        let stream = Self::new_stream()?;
+        // Hardcoded Blackwell alignment: 8 blocks * 256 threads = 2048 neurons exact.
+        // This maxes L1/shared memory bandwidth without warp divergence on sm_120.
+        let grid = TEMPORAL_GRID_SIZE;
+        let shared_bytes = (state.n_inputs * 4) as u32;  // f32 * n_inputs
+
+        unsafe {
+            launch!(gif_step<<<grid, TEMPORAL_BLOCK_SIZE, shared_bytes, stream>>>(
+                state.membrane.as_device_ptr(),
+                state.adaptation.as_device_ptr(),
+                state.weights.as_device_ptr(),
+                state.input_spikes.as_device_ptr(),
+                state.refractory.as_device_ptr(),
+                state.spikes_out.as_device_ptr(),
+                neuron_count as i32,
+                state.n_inputs as i32
+            ))
+            .map_err(|e| GpuError::LaunchFailed(format!("gif_step_weighted launch: {e:?}")))?;
+        }
+
+        // Immediately launch SAAQ reduction on same stream (no intermediate sync).
+        // This kills the Rust for-loop over 2048 values. Only 4-byte result downloaded.
+        let walker = self.saaq_find_best_walker(&stream, neuron_count)?;
+        Ok(walker)
+    }
+
     pub fn reset_temporal_state(&mut self) -> GpuResult<()> {
         if !self.is_ready() {
             return Err(GpuError::NoGpu);
@@ -208,7 +289,8 @@ impl GpuAccelerator {
         let modules = self.modules.as_ref().ok_or(GpuError::NoGpu)?;
         let reset_membrane = modules.get_function("reset_membrane")?;
         let stream = Self::new_stream()?;
-        let grid = Self::ceil_div_u32(state.neuron_count as u32, TEMPORAL_BLOCK_SIZE);
+        // Hardcoded Blackwell alignment for 2048 neurons
+        let grid = TEMPORAL_GRID_SIZE;
 
         unsafe {
             launch!(reset_membrane<<<grid, TEMPORAL_BLOCK_SIZE, TEMPORAL_SHARED_MEM_BYTES, stream>>>(
@@ -234,7 +316,27 @@ impl GpuAccelerator {
         state
             .input_current
             .upload(&vec![0.0f32; state.neuron_count])
-            .map_err(|e| GpuError::MemoryError(format!("reset input_current upload failed: {e}")))
+            .map_err(|e| GpuError::MemoryError(format!("reset input_current upload failed: {e}")))?;
+        state
+            .input_spikes
+            .upload(&vec![0.0f32; state.n_inputs])
+            .map_err(|e| GpuError::MemoryError(format!("reset input_spikes upload failed: {e}")))?;
+        state
+            .adaptation
+            .upload(&vec![0.0f32; state.neuron_count])
+            .map_err(|e| GpuError::MemoryError(format!("reset adaptation upload failed: {e}")))?;
+        state
+            .weights
+            .upload(&vec![0.0f32; state.neuron_count * state.n_inputs])
+            .map_err(|e| GpuError::MemoryError(format!("reset weights upload failed: {e}")))?;
+
+        // Reset SAAQ best walker
+        state
+            .best_walker
+            .upload(&vec![0u32; 1])
+            .map_err(|e| GpuError::MemoryError(format!("reset best_walker upload failed: {e}")))?;
+
+        Ok(())
     }
 
     /// Copy the best SAT walker assignment into `output`.
@@ -294,6 +396,43 @@ impl GpuAccelerator {
             .synchronize()
             .map_err(|e| GpuError::LaunchFailed(format!("satsolver_extract sync: {e:?}")))?;
         Ok(())
+    }
+
+    /// On-device SAAQ reduction: score = membrane - (adaptation_scale * adaptation); argmax walker.
+    /// Launches on `stream` after `gif_step_weighted`; synchronizes before the minimal device read.
+    pub fn saaq_find_best_walker(
+        &mut self,
+        stream: &Stream,
+        neuron_count: usize,
+    ) -> GpuResult<u32> {
+        self.ensure_temporal_state(neuron_count)?;
+
+        let modules = self.modules.as_ref().ok_or(GpuError::NoGpu)?;
+        let saaq_kernel = modules.get_function("saaq_find_best_walker")?;
+        let state = self
+            .temporal_state
+            .as_mut()
+            .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
+
+        let adaptation_scale = 0.22f32;  // matches GIF_ADAPTATION_SCALE from spiking_network.cu
+
+        unsafe {
+            launch!(saaq_kernel<<<TEMPORAL_GRID_SIZE, TEMPORAL_BLOCK_SIZE, 0, stream>>>(
+                state.membrane.as_device_ptr(),
+                state.adaptation.as_device_ptr(),
+                state.best_walker.as_device_ptr(),
+                neuron_count as i32,
+                adaptation_scale
+            ))
+            .map_err(|e| GpuError::LaunchFailed(format!("saaq_find_best_walker launch: {e:?}")))?;
+        }
+
+        stream.synchronize().map_err(|e| {
+            GpuError::LaunchFailed(format!("saaq_find_best_walker sync: {e:?}"))
+        })?;
+
+        let best = state.best_walker.to_vec()?;
+        Ok(best[0])
     }
 
     /// Recompute SAT clause flags and reduce scores to one `(best_score, best_walker)`
@@ -421,13 +560,20 @@ impl GpuAccelerator {
     }
 
     fn build_temporal_state(neuron_count: usize) -> GpuResult<TemporalState> {
+        let n_inputs = neuron_count;  // full connectivity for weighted GIF SNN (sparse can be added later)
+        let weight_size = neuron_count * n_inputs;
         Ok(TemporalState {
             neuron_count,
+            n_inputs,
             membrane: GpuBuffer::<f32>::from_slice(&vec![0.0f32; neuron_count])?,
             refractory: GpuBuffer::<u32>::from_slice(&vec![0u32; neuron_count])?,
             spikes_out: GpuBuffer::<u32>::from_slice(&vec![0u32; neuron_count])?,
             input_current: GpuBuffer::<f32>::from_slice(&vec![0.0f32; neuron_count])?,
+            input_spikes: GpuBuffer::<f32>::from_slice(&vec![0.0f32; n_inputs])?,
+            adaptation: GpuBuffer::<f32>::from_slice(&vec![0.0f32; neuron_count])?,
+            weights: GpuBuffer::<f32>::from_slice(&vec![0.0f32; weight_size])?,
             snapshot: GpuBuffer::<f32>::from_slice(&vec![0.0f32; SNAPSHOT_CHANNELS])?,
+            best_walker: GpuBuffer::<u32>::from_slice(&vec![0u32; 1])?,
         })
     }
 

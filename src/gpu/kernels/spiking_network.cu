@@ -6,6 +6,8 @@
 //    project_snapshot_current — project telemetry snapshot to per-neuron current
 //    lif_step             — LIF neuron step (unweighted)
 //    lif_step_weighted    — LIF step with synaptic weight matrix
+//    gif_step_weighted    — GIF (Generalized Integrate-and-Fire) step with adaptation,
+//                           adaptive threshold, and weighted synapses (matches CPU funnel.rs)
 //    spike_rate           — windowed firing-rate estimator
 //    reset_membrane       — reset membrane to resting potential
 //    stdp_update          — spike-timing-dependent plasticity
@@ -13,6 +15,7 @@
 //    membrane_dv_dt_reduce_pass1 — per-block reduction of |dv/dt|
 //    routing_entropy_reduce_pass1 — per-block reduction of routing entropy
 //    latent_reduce_pass2          — final reduction of pass1 partials
+//    saaq_find_best_walker        — SAAQ argmax reduction (membrane - scale*adaptation); writes single u32 best_walker
 //
 //  Parameters follow the 16-neuron / 16-channel architecture in
 //  neuro-spike-core/src/snn/engine.rs.
@@ -27,6 +30,15 @@
 #define LIF_THRESHOLD    1.0f    // normalised firing threshold
 #define LIF_RESET        0.0f    // reset potential after spike
 #define LIF_REFRACT_TICK 2       // integer ticks of absolute refractory period
+
+// ── GIF model constants (match SparseGifHiddenLayer in funnel.rs) ──
+#define GIF_LEAK             0.92f
+#define GIF_DRIVE_SCALE      0.75f
+#define GIF_THRESHOLD_BASE   0.65f
+#define GIF_ADAPTATION_SCALE 0.22f
+#define GIF_ADAPTATION_DECAY 0.94f
+#define GIF_RESET_RATIO      0.35f
+#define GIF_ADAPTATION_TERM  0.05f
 
 // ── STDP constants (match stdp.rs) ───────────────────────────────
 #define STDP_A_PLUS   0.01f
@@ -220,6 +232,83 @@ void lif_step_weighted(
             v = LIF_RESET;
             refract[tid] = (unsigned int)LIF_REFRACT_TICK;
         }
+    }
+
+    membrane[tid]   = v;
+    spikes_out[tid] = spike;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  gif_step_weighted
+//
+//  GIF (Generalized Integrate-and-Fire) neuron update with synaptic weights,
+//  per-neuron adaptation state, and dynamic threshold. Matches the CPU
+//  SparseGifHiddenLayer::run() logic from funnel.rs for consistency with
+//  the 2048-neuron SNN and OLMoE projector.
+//
+//  Adaptation decays every step; threshold = base + adaptation*scale;
+//  on spike: adaptation += 1.0, soft-reset membrane.
+//
+//  Uses shared memory for input_spikes tile. Refractory is respected.
+//  For full temporal loop, input_spikes can come from previous spikes_out.
+//
+//  Params
+//    membrane     [n_neurons]              — read-write membrane potential
+//    adaptation   [n_neurons]              — read-write GIF adaptation
+//    weights      [n_neurons × n_inputs]   — row-major weight matrix
+//    input_spikes [n_inputs]               — binary spike inputs (0.0/1.0)
+//    refract      [n_neurons]              — refractory counter
+//    spikes_out   [n_neurons]              — output spike flags
+//    n_neurons, n_inputs
+// ════════════════════════════════════════════════════════════════════
+extern "C" __global__
+void gif_step_weighted(
+    float* __restrict__        membrane,
+    float* __restrict__        adaptation,
+    const float* __restrict__  weights,
+    const float* __restrict__  input_spikes,
+    unsigned int* __restrict__ refract,
+    unsigned int* __restrict__ spikes_out,
+    int n_neurons,
+    int n_inputs)
+{
+    extern __shared__ float s_inputs[];
+
+    // Load input spikes into shared memory (same pattern as lif_step_weighted)
+    for (int i = threadIdx.x; i < n_inputs; i += blockDim.x)
+        s_inputs[i] = input_spikes[i];
+    __syncthreads();
+
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n_neurons) return;
+
+    unsigned int ref = refract[tid];
+    float v = membrane[tid];
+    float a = adaptation[tid];
+    unsigned int spike = 0u;
+
+    if (ref > 0u) {
+        v = LIF_RESET;
+        refract[tid] = ref - 1u;
+        adaptation[tid] = a * GIF_ADAPTATION_DECAY;  // decay even during refractory
+    } else {
+        a *= GIF_ADAPTATION_DECAY;
+
+        const float* w_row = weights + (long)tid * n_inputs;
+        float drive = 0.0f;
+        for (int j = 0; j < n_inputs; ++j)
+            drive = fmaf(w_row[j], s_inputs[j], drive);
+
+        v = v * GIF_LEAK + drive * GIF_DRIVE_SCALE - a * GIF_ADAPTATION_TERM;
+
+        float threshold = GIF_THRESHOLD_BASE + a * GIF_ADAPTATION_SCALE;
+        if (v >= threshold) {
+            spike = 1u;
+            v -= threshold * GIF_RESET_RATIO;
+            a += 1.0f;
+            refract[tid] = (unsigned int)LIF_REFRACT_TICK;
+        }
+        adaptation[tid] = a;
     }
 
     membrane[tid]   = v;
@@ -530,6 +619,91 @@ void latent_reduce_pass2(
         if (tid == 0) {
             out_sum[0] = bsum;
             out_max[0] = bmax;
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  saaq_find_best_walker
+//
+//  On-device SAAQ (Spiking Activity and Adaptive Quantization) reduction.
+//  Computes per-neuron score = membrane[tid] - (adaptation_scale * adaptation[tid])
+//  and finds argmax walker (higher score better). Matches the clarified Rust heuristic.
+//
+//  Launched with <<<8, 256>>> for exact 2048-neuron Blackwell alignment.
+//  Uses warp-level max reduction (no atomics, no shared mem beyond warp). Only
+//  the winning u32 index is written to output buffer. This eliminates the
+//  Rust for-loop over temporal_*_to_vec() in hybrid.rs::forward_gpu_temporal.
+//
+//  The pipeline now stays entirely in VRAM after initial latent DMA.
+//  Rust downloads only this 4-byte result per tick for telemetry/CSV.
+//
+//  Params
+//    membrane          [n_neurons] — GIF membrane potentials
+//    adaptation        [n_neurons] — GIF adaptation state
+//    best_walker_out   [1]         — output: best walker index (u32)
+//    n_neurons
+//    adaptation_scale  — e.g. GIF_ADAPTATION_SCALE (0.22f)
+// ════════════════════════════════════════════════════════════════════
+extern "C" __global__
+__launch_bounds__(256)
+void saaq_find_best_walker(
+    const float* __restrict__ membrane,
+    const float* __restrict__ adaptation,
+    unsigned int* __restrict__ best_walker_out,
+    int n_neurons,
+    float adaptation_scale)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    float my_score = -1e30f;  // sentinel for max reduction
+    int my_walker = 0;
+
+    if (tid < n_neurons) {
+        float score = membrane[tid] - (adaptation_scale * adaptation[tid]);
+        my_score = score;
+        my_walker = tid;
+    }
+
+    // Warp-level max reduction (argmax on score, tie-break by lower walker idx)
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        float other_score = __shfl_down_sync(0xffffffffu, my_score, offset);
+        int other_walker = __shfl_down_sync(0xffffffffu, my_walker, offset);
+        if (other_score > my_score || (other_score == my_score && other_walker < my_walker)) {
+            my_score = other_score;
+            my_walker = other_walker;
+        }
+    }
+
+    // Block-level reduction using shared memory (8 warps max for 256 threads)
+    int lane = threadIdx.x & (WARP_SIZE - 1);
+    int warp_id = threadIdx.x / WARP_SIZE;
+    int n_warps = (blockDim.x + WARP_SIZE - 1) / WARP_SIZE;
+
+    __shared__ float s_scores[32];
+    __shared__ int s_walkers[32];
+
+    if (lane == 0) {
+        s_scores[warp_id] = my_score;
+        s_walkers[warp_id] = my_walker;
+    }
+    __syncthreads();
+
+    if (warp_id == 0) {
+        float bscore = (threadIdx.x < n_warps) ? s_scores[lane] : -1e30f;
+        int bwalker = (threadIdx.x < n_warps) ? s_walkers[lane] : 0;
+
+        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+            float other_score = __shfl_down_sync(0xffffffffu, bscore, offset);
+            int other_walker = __shfl_down_sync(0xffffffffu, bwalker, offset);
+            if (other_score > bscore || (other_score == bscore && other_walker < bwalker)) {
+                bscore = other_score;
+                bwalker = other_walker;
+            }
+        }
+
+        if (threadIdx.x == 0) {
+            *best_walker_out = (unsigned int)bwalker;
         }
     }
 }

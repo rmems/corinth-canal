@@ -16,6 +16,7 @@ thiserror = "1.0"
 cust    = "0.3.2"
 anyhow  = { version = "1", features = ["backtrace"] }
 tracing = "0.1"
+neuromod = { path = "/home/raulmc/neuromod" }
 
 [build-dependencies]
 cc = "1.0"
