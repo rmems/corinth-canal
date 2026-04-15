@@ -3,12 +3,18 @@
 use super::olmoe::OLMoE;
 use super::projector::Projector;
 use crate::error::{HybridError, Result};
+use crate::gpu::{GpuAccelerator, GpuBuffer, GpuError, GpuResult};
 use crate::types::{
     EMBEDDING_DIM, HybridConfig, HybridOutput, TelemetrySnapshot,
 };
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
 
-const N_NEURONS: usize = 16;
+const N_NEURONS: usize = 2048;
 const IZ_NEURONS: usize = 5;
+const GPU_ROUTING_TELEMETRY_HEADER: &str = "token_idx,best_score,best_walker";
+const GPU_ROUTING_TELEMETRY_PATH: &str = "snn_gpu_routing_telemetry.csv";
 
 /// Standalone hybrid model that keeps the projector and OLMoE logic real while
 /// replacing the original front-end with deterministic synthetic spikes.
@@ -101,6 +107,50 @@ impl HybridModel {
         })
     }
 
+    /// GPU-only temporal simulation with two-phase execution.
+    /// Phase 1: project_snapshot_current kernel maps TelemetrySnapshot -> input_current buffer
+    /// Phase 2: lif_step kernel runs snn_steps ticks using persistent input_current
+    /// Fails fast with GpuError::NoGpu if GPU unavailable (no CPU fallback).
+    pub fn forward_gpu_temporal(
+        &mut self,
+        accelerator: &mut GpuAccelerator,
+        snap: &TelemetrySnapshot,
+    ) -> GpuResult<HybridOutput> {
+        let neuron_count = self.projector.input_neurons();
+
+        // Phase 1: Project snapshot to input_current
+        accelerator.project_snapshot_current(snap, neuron_count)?;
+
+        // Phase 2: Run N LIF steps, collect spikes each tick
+        let mut spike_train: Vec<Vec<usize>> = Vec::with_capacity(self.config.snn_steps);
+
+        for _ in 0..self.config.snn_steps {
+            accelerator.lif_step_tick(neuron_count)?;
+
+            // Download spikes and convert to indices
+            let spikes = accelerator.temporal_spikes_to_vec(neuron_count)?;
+            let active_neurons: Vec<usize> = spikes
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v != 0)
+                .map(|(i, _)| i)
+                .collect();
+            spike_train.push(active_neurons);
+        }
+
+        // Download final membrane state as potentials
+        let membrane = accelerator.temporal_membrane_to_vec(neuron_count)?;
+        let potentials: Vec<f32> = membrane.iter().map(|&v| v.clamp(0.0, 1.0)).collect();
+
+        // Use existing projector/OLMoE path (CPU-side)
+        let iz_potentials = vec![0.0f32; IZ_NEURONS];
+        let output = self
+            .forward_activity(&spike_train, &potentials, &iz_potentials)
+            .map_err(|e| GpuError::LaunchFailed(format!("forward_activity failed: {e}")))?;
+
+        Ok(output)
+    }
+
     fn synthetic_activity(
         &self,
         snap: &TelemetrySnapshot,
@@ -141,6 +191,54 @@ impl HybridModel {
         Ok(loss)
     }
 
+    pub fn compute_routing_telemetry(
+        &self,
+        accelerator: &GpuAccelerator,
+        assignment: &GpuBuffer<u8>,
+        sat_flags: &mut GpuBuffer<u8>,
+        scores: &GpuBuffer<i32>,
+        clauses: &GpuBuffer<i32>,
+        n_walkers: i32,
+        n_vars: i32,
+        n_clauses: i32,
+        clause_len: i32,
+        token_idx: usize,
+    ) -> GpuResult<()> {
+        let mut best_score = GpuBuffer::<i32>::alloc(1)?;
+        let mut best_walker = GpuBuffer::<i32>::alloc(1)?;
+
+        accelerator.satsolver_aux_reduce_best(
+            assignment,
+            sat_flags,
+            scores,
+            &mut best_score,
+            &mut best_walker,
+            clauses,
+            n_walkers,
+            n_vars,
+            n_clauses,
+            clause_len,
+        )?;
+
+        let final_score = best_score
+            .to_vec()?
+            .first()
+            .copied()
+            .ok_or_else(|| GpuError::MemoryError("best_score buffer returned no values".into()))?;
+        let final_walker = best_walker
+            .to_vec()?
+            .first()
+            .copied()
+            .ok_or_else(|| GpuError::MemoryError("best_walker buffer returned no values".into()))?;
+
+        append_gpu_routing_telemetry_row(
+            Path::new(GPU_ROUTING_TELEMETRY_PATH),
+            token_idx,
+            final_score,
+            final_walker,
+        )
+    }
+
     pub fn reset(&mut self) {
         self.projector.reset_membrane();
         self.olmoe.reset_state();
@@ -162,6 +260,34 @@ impl HybridModel {
     pub fn projector_mut(&mut self) -> &mut Projector {
         &mut self.projector
     }
+}
+
+fn append_gpu_routing_telemetry_row(
+    path: &Path,
+    token_idx: usize,
+    best_score: i32,
+    best_walker: i32,
+) -> GpuResult<()> {
+    let needs_header = !path.exists()
+        || std::fs::metadata(path)
+            .map(|metadata| metadata.len() == 0)
+            .unwrap_or(true);
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| GpuError::MemoryError(format!("CSV Write Failed: {e}")))?;
+
+    if needs_header {
+        writeln!(file, "{GPU_ROUTING_TELEMETRY_HEADER}")
+            .map_err(|e| GpuError::MemoryError(format!("CSV Write Failed: {e}")))?;
+    }
+
+    writeln!(file, "{token_idx},{best_score},{best_walker}")
+        .map_err(|e| GpuError::MemoryError(format!("CSV Write Failed: {e}")))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -298,5 +424,38 @@ mod tests {
         assert_eq!(out.firing_rates.len(), FUNNEL_HIDDEN_NEURONS);
         assert_eq!(out.membrane_potentials.len(), FUNNEL_HIDDEN_NEURONS);
         assert_eq!(out.embedding.len(), EMBEDDING_DIM);
+    }
+
+    #[test]
+    fn test_forward_gpu_temporal_requires_gpu() {
+        let mut accelerator = GpuAccelerator::new_stub_for_tests();
+        let mut model = HybridModel::new(HybridConfig::default()).unwrap();
+        let snap = TelemetrySnapshot::default();
+
+        let err = model.forward_gpu_temporal(&mut accelerator, &snap).unwrap_err();
+        assert!(matches!(err, GpuError::NoGpu));
+    }
+
+    #[test]
+    fn test_gpu_routing_telemetry_writer_adds_header_once() {
+        let path = std::env::temp_dir().join(format!(
+            "corinth_canal_gpu_routing_{}.csv",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        append_gpu_routing_telemetry_row(&path, 0, 11, 3).unwrap();
+        append_gpu_routing_telemetry_row(&path, 1, 7, 2).unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let mut lines = contents.lines();
+        assert_eq!(lines.next().unwrap(), GPU_ROUTING_TELEMETRY_HEADER);
+        assert_eq!(lines.next().unwrap(), "0,11,3");
+        assert_eq!(lines.next().unwrap(), "1,7,2");
+        assert!(lines.next().is_none());
+
+        let _ = std::fs::remove_file(path);
     }
 }

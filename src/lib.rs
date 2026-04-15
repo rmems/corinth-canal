@@ -32,6 +32,7 @@
 
 pub mod error;
 pub mod funnel;
+pub mod gpu;
 pub mod hybrid;
 pub mod latent;
 pub mod telemetry;

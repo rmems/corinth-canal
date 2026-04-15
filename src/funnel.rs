@@ -1,8 +1,8 @@
 use crate::telemetry::TelemetryEncoder;
 use crate::types::TelemetrySnapshot;
 
-pub const FUNNEL_INPUT_NEURONS: usize = 16;
-pub const FUNNEL_HIDDEN_NEURONS: usize = 512;
+pub const FUNNEL_INPUT_NEURONS: usize = 2048;
+pub const FUNNEL_HIDDEN_NEURONS: usize = 2048;
 const TELEMETRY_CHANNELS: usize = 4;
 const BANK_WIDTH: usize = 2;
 const GIF_FAN_IN: usize = 4;
