@@ -1,6 +1,6 @@
 # corinth-canal
 
-Standalone SNN-logic quantization crate focused on the spiking projector and OLMoE routing path.
+SNN-logic quantization repo focused on the spiking projector and OLMoE routing path.
 
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
