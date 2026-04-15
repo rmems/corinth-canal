@@ -16,7 +16,6 @@ thiserror = "1.0"
 cust    = "0.3.2"
 anyhow  = { version = "1", features = ["backtrace"] }
 tracing = "0.1"
-neuromod = { path = "/home/raulmc/neuromod" }
 memmap2 = "0.9"
 libc = "0.2"
 
