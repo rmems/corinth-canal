@@ -30,7 +30,7 @@ use crate::types::{ProjectionMode, EMBEDDING_DIM};
 // ── Projection weight matrix ───────────────────────────────────────────────────
 
 /// Number of neurons in the Spikenaut SNN.
-const SNN_NEURONS: usize = 16;
+const SNN_NEURONS: usize = 2048;
 const TEMPORAL_BINS: usize = 4;
 
 /// Number of Izhikevich neurons in the adaptive bank.

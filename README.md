@@ -14,6 +14,8 @@ This repository originated from the `spikenaut-hybrid` codebase and was reorgani
 
 ## Architecture
 
+### CPU Fallback
+
 ```text
 TelemetrySnapshot
        |
@@ -30,6 +32,26 @@ TelemetrySnapshot
 dense embedding [2048]
        |
        v  OLMoE (stub/dense/spiking sim)
+expert_weights + selected_experts + hidden
+```
+
+### GPU Acceleration (NVIDIA Blackwell sm_120+)
+
+When a compatible GPU is detected, the crate offloads key workloads to CUDA kernels compiled from `myelin-accelerator`.
+
+```text
+(CPU) TelemetrySnapshot
+       |
+       v  (CPU) TelemetryFunnel
+FunnelActivity (spike_train, potentials)
+       |
+       v  (GPU) GpuAccelerator transfers to VRAM
+(GPU) Spiking Network Kernels (LIF, STDP, etc.)
+       |
+       v  (GPU) Vector Similarity Kernels
+(GPU) Dense embedding [2048]
+       |
+       v  (CPU) OLMoE (stub/dense/spiking sim)
 expert_weights + selected_experts + hidden
 ```
 
@@ -268,6 +290,36 @@ The latent telemetry path:
 - Runs only during calibration passes when generating symbolic regression datasets
 - Keeps the standard `telemetry.csv` contract lightweight and pure
 
+## GPU Routing Telemetry
+
+For high-performance expert routing analysis, the crate utilizes the NVIDIA Blackwell (RTX 5080) GPU to perform two-pass SAT reductions directly in VRAM. This telemetry path captures the final winning scores and walkers for every token processed.
+
+### GPU Routing Snapshot
+
+| Field | Description |
+|-------|-------------|
+| `token_idx` | Sequential index of the processed token |
+| `best_score` | Final optimized SAT score from the second-pass reduction |
+| `best_walker` | ID of the winning walker that achieved the best score |
+
+### Mechanism: Two-Pass Reduction
+
+Unlike the latent calibration path which runs on the CPU, the routing telemetry is powered by the `GpuAccelerator`:
+
+1.  **SAT Extraction**: `satsolver_extract` prepares the initial state in VRAM.
+2.  **Best-Reduction**: `satsolver_aux_reduce_best` performs a massively parallel reduction across the GPU grid to find the global optimum.
+3.  **8-Byte Transfer**: Only the final `best_score` and `best_walker` (8 bytes total) are transferred back to the CPU for logging.
+
+### Output
+
+Rows are appended to `snn_gpu_routing_telemetry.csv` with the header:
+
+```text
+token_idx,best_score,best_walker
+```
+
+This file is created automatically on the first call to `compute_routing_telemetry` and grows sequentially as more tokens are processed.
+
 ## Project layout
 
 | Path | Responsibility |
@@ -285,6 +337,10 @@ The latent telemetry path:
 | `src/funnel.rs` | TelemetryFunnel: encoder + split-bank bridge + sparse GIF hidden layer |
 | `src/hybrid/hybrid.rs` | deterministic front-end + projector + OLMoE orchestration |
 | `src/latent.rs` | `SnnLatentSnapshot`, `SnnLatentCalibrator`, `SnnLatentCsvExporter` for symbolic regression |
+| `src/gpu/mod.rs` | GPU accelerator public API and module switchboard |
+| `src/gpu/kernels/` | CUDA kernels (`.cu`, `.cuh`) for GPU-accelerated tasks |
+| `src/gpu/wrappers/` | Safe Rust wrappers for CUDA context, memory, and kernel launches |
+| `build.rs` | Build script to compile CUDA kernels to PTX |
 | `examples/telemetry_bridge.rs` | end-to-end standalone example |
 | `examples/csv_replay.rs` | canonical CSV replay adapter (funnel-driven) |
 | `examples/saaq_latent_calibration.rs` | calibration-only latent telemetry exporter |
