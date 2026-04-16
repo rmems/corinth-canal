@@ -272,64 +272,34 @@ cargo run --example csv_replay /path/to/canonical.csv
 
 ## Latent Telemetry Calibration
 
-The crate provides a separate calibration-only path for harvesting latent SNN metrics from canonical hardware telemetry. This maintains strict separation of concerns: the standard hardware telemetry file remains a pure, lightweight record of the physical machine, while latent metrics are generated on-demand during calibration passes for symbolic regression.
+The crate provides a separate calibration path for driving the GPU temporal SNN logic with real context embeddings. This ensures the MoE gating and temporal threshold adaptation are tested against actual semantic distributions rather than uniform noise.
 
-### Latent Snapshot
+### Direct Token Embedding Extraction
 
-`SnnLatentSnapshot` captures internal SNN state and teacher targets:
+Rather than bringing in a heavy text tokenizer dependency, the `saaq_latent_calibration` example bypasses text parsing entirely:
 
-| Field | Description |
-|-------|-------------|
-| `timestamp_ms` | Wall-clock timestamp from hardware telemetry |
-| `avg_pop_firing_rate_hz` | Population-average firing rate of hidden neurons |
-| `membrane_dv_dt` | Row-to-row change in mean membrane potential |
-| `routing_entropy` | Normalized entropy of OLMoE expert weights |
-| `saaq_delta_q_prev` | Previous-step quantization delta (teacher history) |
-| `saaq_delta_q_target` | Target quantization delta (teacher signal) |
-
-### Latent Calibrator
-
-`SnnLatentCalibrator` derives latent features from runtime state:
-
-- **`avg_pop_firing_rate_hz`**: Computed from hidden-layer spike count over elapsed wall-clock time
-- **`membrane_dv_dt`**: Computed from row-to-row mean hidden membrane change
-- **`routing_entropy`**: Derived from normalized entropy of `HybridOutput.expert_weights`
-- **`saaq_delta_q_prev` / `saaq_delta_q_target`**: Deterministic first-pass calibration policy for bootstrapping symbolic regression
-
-### Latent CSV Exporter
-
-`SnnLatentCsvExporter` writes latent snapshots to CSV with the header:
-
-```text
-timestamp_ms,avg_pop_firing_rate_hz,membrane_dv_dt,routing_entropy,saaq_delta_q_prev,saaq_delta_q_target
-```
-
-This format is compatible with Julia symbolic regression workflows (e.g., `SymbolicRegression.jl`).
+1. It memory-maps the `token_embd.weight` tensor from the provided OLMoE GGUF checkpoint.
+2. It extracts the raw 2048-dimensional embedding rows for a hard-coded sequence of token IDs (representing the prompt: *"Let's teach this MoE model the language of SNN"*).
+3. It mean-pools these tokens into a single `[f32; 2048]` context vector.
+4. It feeds this single context vector continuously into the direct GPU temporal loop (`tick_gpu_temporal`) for 10,000 ticks.
 
 ### Calibration Runner
 
-The `saaq_latent_calibration` example replays canonical hardware CSV through the funnel/model, computes latent metrics, and writes `snn_latent_telemetry.csv`:
+Run the calibration test by pointing it to your local OLMoE checkpoint:
 
 ```bash
-cargo run --example saaq_latent_calibration /path/to/canonical.csv [output.csv]
+OLMOE_PATH=/path/to/olmoe.gguf cargo run --example saaq_latent_calibration --release
 ```
 
-Default output path: `snn_latent_telemetry.csv`
+The runner will output the per-tick performance and the winning SAAQ walker ID selected by the on-device reduction:
 
-The runner validates the canonical hardware CSV header strictly and prints:
-- `rows_processed`
-- `rows_skipped`
-- `global_step`
-- `olmoe_loaded`
-- Sample latent metrics for first 5 rows and every 100th row
+```text
+tick=1 best_walker=12 elapsed_us=850
+tick=2 best_walker=45 elapsed_us=842
+...
+```
 
-### Separation of Concerns
-
-The latent telemetry path:
-- Does not modify `TelemetrySnapshot` or the canonical hardware telemetry schema
-- Does not affect normal inference or replay performance
-- Runs only during calibration passes when generating symbolic regression datasets
-- Keeps the standard `telemetry.csv` contract lightweight and pure
+This path exercises the pure Spikenaut physics engine (GIF membrane + adaptive thresholds + two-pass SAT reduction) driven by realistic, pooled semantic pressure.
 
 ## GPU Routing Telemetry
 
