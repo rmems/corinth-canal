@@ -19,6 +19,21 @@ const GGUF_VERSION: u32 = 3;
 const GGML_TYPE_F32: u32 = 0;
 const GGML_TYPE_F16: u32 = 1;
 
+#[inline(always)]
+fn f16_to_f32(bits: u16) -> f32 {
+    let sign = ((bits as u32) & 0x8000) << 16;
+    let exp = ((bits as u32) & 0x7C00) >> 10;
+    let mant = ((bits as u32) & 0x03FF) << 13;
+    let val = if exp == 0 {
+        mant
+    } else if exp == 31 {
+        0x7F800000 | mant
+    } else {
+        ((exp + 127 - 15) << 23) | mant
+    };
+    f32::from_bits(sign | val)
+}
+
 const GGUF_VALUE_TYPE_UINT8: u32 = 0;
 const GGUF_VALUE_TYPE_INT8: u32 = 1;
 const GGUF_VALUE_TYPE_UINT16: u32 = 2;
@@ -188,40 +203,64 @@ impl OLMoE {
                 reason: "checkpoint not loaded".into(),
             })?;
 
-        let weights = checkpoint.f32_tensor("token_embd.weight", &path)?;
-        let info = checkpoint.tensor_info("token_embd.weight", &path)?;
-        
+        let info = checkpoint.tensor_info("token_embd.weight", &path)?.clone();
         let d0 = info.dims[0];
         let d1 = info.dims.get(1).copied().unwrap_or(0);
 
-        if d0 == EMBEDDING_DIM {
-            // Memory layout is contiguous per token.
-            if token_id >= d1 {
-                return Err(HybridError::InputLengthMismatch {
-                    expected: d1,
-                    got: token_id,
-                });
+        match info.ggml_type {
+            GGML_TYPE_F32 => {
+                let weights = checkpoint.f32_tensor("token_embd.weight", &path)?;
+                if d0 == EMBEDDING_DIM {
+                    if token_id >= d1 {
+                        return Err(HybridError::InputLengthMismatch { expected: d1, got: token_id });
+                    }
+                    let start = token_id * EMBEDDING_DIM;
+                    Ok(weights[start..start + EMBEDDING_DIM].to_vec())
+                } else if d1 == EMBEDDING_DIM {
+                    if token_id >= d0 {
+                        return Err(HybridError::InputLengthMismatch { expected: d0, got: token_id });
+                    }
+                    Ok((0..EMBEDDING_DIM).map(|dim| weights[dim * d0 + token_id]).collect())
+                } else {
+                    Err(HybridError::UnsupportedFormat(format!(
+                        "tensor 'token_embd.weight' has unexpected dimensions {:?}", info.dims
+                    )))
+                }
             }
-            let start = token_id * EMBEDDING_DIM;
-            let end = start + EMBEDDING_DIM;
-            Ok(weights[start..end].to_vec())
-        } else if d1 == EMBEDDING_DIM {
-            if token_id >= d0 {
-                return Err(HybridError::InputLengthMismatch {
-                    expected: d0,
-                    got: token_id,
-                });
+            GGML_TYPE_F16 => {
+                let byte_start = info.absolute_offset;
+                let byte_end = byte_start + info.n_elements * 2;
+                if byte_end > checkpoint.mmap.len() {
+                    return Err(HybridError::ModelLoad {
+                        path: path.clone(),
+                        reason: "token_embd.weight F16 tensor extends beyond mapped file".into(),
+                    });
+                }
+                let raw = &checkpoint.mmap[byte_start..byte_end];
+                let u16s: Vec<u16> = raw
+                    .chunks_exact(2)
+                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .collect();
+                if d0 == EMBEDDING_DIM {
+                    if token_id >= d1 {
+                        return Err(HybridError::InputLengthMismatch { expected: d1, got: token_id });
+                    }
+                    let start = token_id * EMBEDDING_DIM;
+                    Ok(u16s[start..start + EMBEDDING_DIM].iter().map(|&b| f16_to_f32(b)).collect())
+                } else if d1 == EMBEDDING_DIM {
+                    if token_id >= d0 {
+                        return Err(HybridError::InputLengthMismatch { expected: d0, got: token_id });
+                    }
+                    Ok((0..EMBEDDING_DIM).map(|dim| f16_to_f32(u16s[dim * d0 + token_id])).collect())
+                } else {
+                    Err(HybridError::UnsupportedFormat(format!(
+                        "tensor 'token_embd.weight' has unexpected dimensions {:?}", info.dims
+                    )))
+                }
             }
-            let mut emb = Vec::with_capacity(EMBEDDING_DIM);
-            for dim in 0..EMBEDDING_DIM {
-                emb.push(weights[dim * d0 + token_id]);
-            }
-            Ok(emb)
-        } else {
-            Err(HybridError::UnsupportedFormat(format!(
-                "tensor 'token_embd.weight' has unexpected dimensions {:?}",
-                info.dims
-            )))
+            other => Err(HybridError::UnsupportedFormat(format!(
+                "tensor 'token_embd.weight' has unsupported ggml_type={other}"
+            ))),
         }
     }
 
