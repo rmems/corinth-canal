@@ -178,6 +178,53 @@ impl OLMoE {
         }
     }
 
+    pub fn extract_token_embedding(&mut self, token_id: usize) -> Result<Vec<f32>> {
+        let path = self.model_path.clone();
+        let checkpoint = self
+            .checkpoint
+            .as_mut()
+            .ok_or_else(|| HybridError::ModelLoad {
+                path: path.clone(),
+                reason: "checkpoint not loaded".into(),
+            })?;
+
+        let weights = checkpoint.f32_tensor("token_embd.weight", &path)?;
+        let info = checkpoint.tensor_info("token_embd.weight", &path)?;
+        
+        let d0 = info.dims[0];
+        let d1 = info.dims.get(1).copied().unwrap_or(0);
+
+        if d0 == EMBEDDING_DIM {
+            // Memory layout is contiguous per token.
+            if token_id >= d1 {
+                return Err(HybridError::InputLengthMismatch {
+                    expected: d1,
+                    got: token_id,
+                });
+            }
+            let start = token_id * EMBEDDING_DIM;
+            let end = start + EMBEDDING_DIM;
+            Ok(weights[start..end].to_vec())
+        } else if d1 == EMBEDDING_DIM {
+            if token_id >= d0 {
+                return Err(HybridError::InputLengthMismatch {
+                    expected: d0,
+                    got: token_id,
+                });
+            }
+            let mut emb = Vec::with_capacity(EMBEDDING_DIM);
+            for dim in 0..EMBEDDING_DIM {
+                emb.push(weights[dim * d0 + token_id]);
+            }
+            Ok(emb)
+        } else {
+            Err(HybridError::UnsupportedFormat(format!(
+                "tensor 'token_embd.weight' has unexpected dimensions {:?}",
+                info.dims
+            )))
+        }
+    }
+
     pub(crate) fn registered_gpu_synapse_weights(&mut self, tensor_name: &str) -> Result<&[u16]> {
         let path = self.model_path.clone();
         let checkpoint = self

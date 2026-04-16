@@ -106,7 +106,8 @@ fn main() {
             &nvcc,
             &[
                 "-ptx".into(),
-                "-arch=sm_120".into(),
+                "-gencode=arch=compute_120,code=sm_120".into(),
+                "-gencode=arch=compute_120,code=compute_120".into(),
                 "-O3".into(),
                 "--use_fast_math".into(),
                 "--restrict".into(),

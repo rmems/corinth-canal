@@ -4,7 +4,7 @@ use super::olmoe::OLMoE;
 use super::projector::Projector;
 use crate::error::{HybridError, Result};
 use crate::gpu::{GpuAccelerator, GpuBuffer, GpuError, GpuResult};
-use crate::types::{EMBEDDING_DIM, HybridConfig, HybridOutput, TelemetrySnapshot};
+use crate::types::{HybridConfig, HybridOutput, OlmoeExecutionMode, TelemetrySnapshot, EMBEDDING_DIM};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -348,10 +348,20 @@ impl HybridModel {
         self.global_step
     }
 
+    pub fn olmoe_execution_mode(&self) -> OlmoeExecutionMode {
+        self.config.olmoe_execution_mode
+    }
+
     pub fn olmoe_loaded(&self) -> bool {
         self.olmoe.is_loaded()
     }
 
+    /// Extract the embedding vector for a single token ID from the GGUF `token_embd.weight` tensor.
+    pub fn extract_token_embedding(&mut self, token_id: usize) -> Result<Vec<f32>> {
+        self.olmoe.extract_token_embedding(token_id)
+    }
+
+    /// Number of parameters / experts.
     pub fn config(&self) -> &HybridConfig {
         &self.config
     }

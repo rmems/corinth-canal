@@ -39,9 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     model.prepare_gpu_temporal(&mut accelerator)?;
-    println!("prepared gguf-backed temporal path; beginning 10 direct GPU ticks");
+    println!("prepared gguf-backed temporal path; beginning 10,000 direct GPU ticks");
 
-    for tick in 0..10usize {
+    for tick in 0..10_000usize {
         let phase = tick as f32 * 0.31;
         let input_spikes: Vec<f32> = (0..target_neurons)
             .map(|i| {
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!("completed 10 GPU ticks; dropping model before accelerator");
+    println!("completed 10,000 GPU ticks; dropping model before accelerator");
     drop(model);
     drop(accelerator);
     println!("gpu smoke test finished cleanly");
