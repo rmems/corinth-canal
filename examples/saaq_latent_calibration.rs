@@ -47,6 +47,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pooled[i] /= tokens.len() as f32;
     }
 
+    // Apply L2 Normalization to prevent Routing Collapse from overpowering fatigue
+    let l2_norm = pooled.iter().map(|&v| v * v).sum::<f32>().sqrt();
+    if l2_norm > 1e-8 {
+        for v in pooled.iter_mut() {
+            *v /= l2_norm;
+        }
+    }
+
     let target_neurons = model.projector_mut().input_neurons();
     if pooled.len() != target_neurons {
         return Err(Error::other(format!(
