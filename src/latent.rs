@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{HybridError, Result};
-use crate::funnel::{FUNNEL_HIDDEN_NEURONS, FunnelActivity};
+use crate::funnel::{FunnelActivity, FUNNEL_HIDDEN_NEURONS};
 use crate::types::{ModelOutput, TelemetrySnapshot};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

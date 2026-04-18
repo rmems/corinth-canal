@@ -43,8 +43,8 @@ pub mod types;
 
 pub use error::{HybridError, Result};
 pub use funnel::{
-    FUNNEL_HIDDEN_NEURONS, FUNNEL_INPUT_NEURONS, FunnelActivity, SignedSplitBankBridge,
-    SparseGifHiddenLayer, TelemetryFunnel,
+    FunnelActivity, SignedSplitBankBridge, SparseGifHiddenLayer, TelemetryFunnel,
+    FUNNEL_HIDDEN_NEURONS, FUNNEL_INPUT_NEURONS,
 };
 pub use latent::{SaaqUpdateRule, SnnLatentCalibrator, SnnLatentCsvExporter, SnnLatentSnapshot};
 pub use telemetry::TelemetryEncoder;
