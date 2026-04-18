@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
     let run_id = format!(
         "{}_{}_{}_{}",
-        started_at_unix_ms / 1000,
+        started_at_unix_ms,
         model_slug,
         slugify(&prompt_slug),
         slugify(&run_tag)

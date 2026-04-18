@@ -235,10 +235,11 @@ impl HybridModel {
                     accelerator.load_synapse_weights_f16_registered(&signature, weights)?;
                     return Ok(());
                 }
-                Err(_) => {
+                Err(HybridError::UnsupportedFormat(_)) | Err(HybridError::MissingTensor { .. }) => {
                     // Some GGUF checkpoints keep the routing bridge usable but do not expose a
                     // square F16 attention tensor for direct GPU synapse upload.
                 }
+                Err(e) => return Err(e),
             }
         }
 
