@@ -4,8 +4,14 @@ use corinth_canal::{
     EMBEDDING_DIM, HybridConfig, HybridModel, OlmoeExecutionMode, ProjectionMode, TelemetrySnapshot,
 };
 
+fn model_path() -> String {
+    std::env::var("MOE_GGUF_PATH")
+        .or_else(|_| std::env::var("OLMOE_PATH"))
+        .unwrap_or_default()
+}
+
 fn main() -> corinth_canal::Result<()> {
-    let model_path = std::env::var("OLMOE_PATH").unwrap_or_default();
+    let model_path = model_path();
     let olmoe_execution_mode = match std::env::var("OLMOE_MODE")
         .unwrap_or_else(|_| "spiking".into())
         .to_ascii_lowercase()

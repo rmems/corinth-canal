@@ -4,10 +4,16 @@ use corinth_canal::{
 use std::io::Error;
 use std::time::Instant;
 
+fn model_path() -> String {
+    std::env::var("MOE_GGUF_PATH")
+        .or_else(|_| std::env::var("OLMOE_PATH"))
+        .unwrap_or_default()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = std::env::var("OLMOE_PATH").unwrap_or_default();
+    let model_path = model_path();
     if model_path.trim().is_empty() {
-        eprintln!("OLMOE_PATH must point to a GGUF checkpoint");
+        eprintln!("MOE_GGUF_PATH (or OLMOE_PATH) must point to a GGUF checkpoint");
         std::process::exit(1);
     }
 
@@ -32,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     if !model.olmoe_loaded() {
-        return Err(Error::other("OLMoE model did not load from OLMOE_PATH").into());
+        return Err(Error::other("GGUF model did not load from MOE_GGUF_PATH/OLMOE_PATH").into());
     }
     if !accelerator.is_ready() {
         return Err(Error::other("GpuAccelerator is not ready").into());

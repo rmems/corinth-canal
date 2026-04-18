@@ -57,14 +57,14 @@ TelemetrySnapshot
 
 ## GGUF First-Block Bridge
 
-The current OLMoE integration is intentionally scoped to a first-block bridge:
+The current GGUF integration is intentionally scoped to a first-block bridge:
 
-- `blk.0.ffn_gate_inp.weight` is used as the real routing matrix for `DenseSim` and `SpikingSim`
-- `blk.0.attn_q.weight` is the default recurrent synapse matrix for `forward_gpu_temporal`
-- the GGUF file is memory-mapped and the GPU synapse slice is registered with CUDA via `cuMemHostRegister_v2`
-- the temporal GPU path reuses resident device weights across forwards instead of rebuilding dummy weights
+- `blk.0.ffn_gate_inp.weight` is preferred as the real routing matrix for `DenseSim` and `SpikingSim`
+- `blk.0.ffn_gate.weight` is accepted when it exposes an explicit expert axis compatible with the checkpoint metadata
+- `blk.0.attn_q.weight` remains the default recurrent synapse tensor when the checkpoint exposes a square F16 slice
+- if the checkpoint does not expose a compatible recurrent synapse tensor, the temporal path falls back to the synthetic SNN weight matrix while still using the real GGUF routing bridge
 
-This phase does not implement the full expert MLP block. Hidden outputs remain a route-weighted passthrough of the projector embedding so the repo can exercise real routing without pretending to be a full multi-layer OLMoE runtime.
+This phase does not implement the full expert MLP block. Hidden outputs remain a route-weighted passthrough of the projector embedding so the repo can exercise real routing without pretending to be a full multi-layer MoE runtime.
 
 ## Quick start
 
@@ -214,7 +214,7 @@ let output = model.forward_gpu_temporal(&mut accelerator, &TelemetrySnapshot::de
 To validate the actual Blackwell temporal path on hardware, use the dedicated smoke test:
 
 ```bash
-OLMOE_PATH=/path/to/gguf cargo run --release --example gpu_smoke_test
+MOE_GGUF_PATH=/path/to/gguf cargo run --release --example gpu_smoke_test
 ```
 
 This example exercises:
@@ -225,7 +225,7 @@ This example exercises:
 - the two-pass SAAQ reduction returning `best_walker`
 - per-tick timing output in microseconds
 
-This is the correct example for validating the real GPU temporal path. `saaq_latent_calibration` is CPU-side calibration logic and does not exercise the direct GPU temporal loop.
+This is the correct example for validating the real GPU temporal path.
 
 ## OLMoE Modes
 
@@ -244,7 +244,7 @@ cargo run --example telemetry_bridge
 With a real GGUF checkpoint:
 
 ```bash
-OLMOE_PATH=/models/olmoe.gguf \
+MOE_GGUF_PATH=/models/model.gguf \
   cargo run --example telemetry_bridge --release
 ```
 
@@ -276,22 +276,34 @@ The crate provides a separate calibration path for driving the GPU temporal SNN 
 
 ### Direct Token Embedding Extraction
 
-Rather than bringing in a heavy text tokenizer dependency, the `saaq_latent_calibration` example bypasses text parsing entirely:
+Rather than bringing in a heavy tokenizer dependency, the `saaq_latent_calibration` example accepts model-specific token IDs and works directly from the GGUF checkpoint:
 
-1. It memory-maps the `token_embd.weight` tensor from the provided OLMoE GGUF checkpoint.
-2. It extracts the raw 2048-dimensional embedding rows for a hard-coded sequence of token IDs (representing the prompt: *"Let's teach this MoE model the language of SNN"*).
-3. It mean-pools these tokens into a single `[f32; 2048]` context vector.
-4. It feeds this single context vector continuously into the direct GPU temporal loop (`tick_gpu_temporal`) for 10,000 ticks.
+1. It probes the checkpoint metadata and selects a compatible first-block routing tensor.
+2. It extracts token embeddings from `token_embd.weight`, truncating wider checkpoints down to the 2048-neuron SNN width when necessary.
+3. It mean-pools the selected token rows into a single `[f32; 2048]` context vector.
+4. It feeds this context vector into the direct GPU temporal loop and exports labeled research artifacts for each run.
 
 ### Calibration Runner
 
-Run the calibration test by pointing it to your local OLMoE checkpoint:
+Run the calibration test by pointing it to your local GGUF checkpoint:
 
 ```bash
-OLMOE_PATH=/path/to/olmoe.gguf cargo run --example saaq_latent_calibration --release
+MOE_GGUF_PATH=/path/to/model.gguf \
+PROMPT_SLUG=math_logic \
+PROMPT_TEXT="The derivative of a constant is mathematically zero." \
+PROMPT_TOKEN_IDS=402,11492,286,257,4568,318,12056,4202,13 \
+RUN_OUTPUT_ROOT=/path/to/Metis-SMoE-Latent-Telemetry/routing \
+cargo run --example saaq_latent_calibration --release
 ```
 
-The runner will output the per-tick performance and the winning SAAQ walker ID selected by the on-device reduction:
+The runner writes a labeled run directory:
+
+- `tick_telemetry.txt`
+- `latent_telemetry.csv`
+- `run_manifest.json`
+- expected `routing_map.png` target path for the downstream Julia plot step
+
+It also streams the per-tick performance and the winning SAAQ walker ID selected by the on-device reduction:
 
 ```text
 tick=1 best_walker=12 elapsed_us=850

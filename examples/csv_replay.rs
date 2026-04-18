@@ -10,6 +10,12 @@ use corinth_canal::{
 const EXPECTED_HEADER: &str = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
 const TELEMETRY_THRESHOLDS: [f32; 4] = [1.0, 5.0, 1.0, 5.0];
 
+fn model_path() -> String {
+    std::env::var("MOE_GGUF_PATH")
+        .or_else(|_| std::env::var("OLMOE_PATH"))
+        .unwrap_or_default()
+}
+
 fn parse_u64(v: &str) -> Option<u64> {
     v.parse::<u64>().ok()
 }
@@ -28,7 +34,7 @@ fn main() -> corinth_canal::Result<()> {
     }
 
     let csv_path = &args[1];
-    let model_path = std::env::var("OLMOE_PATH").unwrap_or_default();
+    let model_path = model_path();
 
     let cfg = HybridConfig {
         olmoe_model_path: model_path,
