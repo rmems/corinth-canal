@@ -227,14 +227,19 @@ impl HybridModel {
                 self.olmoe.model_path(),
                 self.config.gpu_synapse_tensor_name
             );
-            let weights = self
+            match self
                 .olmoe
                 .registered_gpu_synapse_weights(&self.config.gpu_synapse_tensor_name)
-                .map_err(|e| {
-                    GpuError::MemoryError(format!("GGUF synapse registration failed: {e}"))
-                })?;
-            accelerator.load_synapse_weights_f16_registered(&signature, weights)?;
-            return Ok(());
+            {
+                Ok(weights) => {
+                    accelerator.load_synapse_weights_f16_registered(&signature, weights)?;
+                    return Ok(());
+                }
+                Err(_) => {
+                    // Some GGUF checkpoints keep the routing bridge usable but do not expose a
+                    // square F16 attention tensor for direct GPU synapse upload.
+                }
+            }
         }
 
         let fallback_signature = format!("synthetic-f32::{neuron_count}");
@@ -354,6 +359,30 @@ impl HybridModel {
 
     pub fn olmoe_loaded(&self) -> bool {
         self.olmoe.is_loaded()
+    }
+
+    pub fn checkpoint_architecture(&self) -> &str {
+        self.olmoe.architecture()
+    }
+
+    pub fn checkpoint_hidden_size(&self) -> usize {
+        self.olmoe.hidden_size()
+    }
+
+    pub fn checkpoint_source_hidden_size(&self) -> usize {
+        self.olmoe.source_hidden_size()
+    }
+
+    pub fn checkpoint_num_experts(&self) -> usize {
+        self.olmoe.checkpoint_num_experts()
+    }
+
+    pub fn checkpoint_expert_used_count(&self) -> Option<usize> {
+        self.olmoe.expert_used_count()
+    }
+
+    pub fn routing_tensor_name(&self) -> &str {
+        self.olmoe.routing_tensor_name()
     }
 
     /// Extract the embedding vector for a single token ID from the GGUF `token_embd.weight` tensor.

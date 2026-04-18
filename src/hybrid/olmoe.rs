@@ -12,12 +12,15 @@ use std::slice;
 const OLMOE_HIDDEN: usize = 2048;
 const OLMOE_NUM_EXPERTS: usize = 64;
 const OLMOE_NUM_LAYERS: usize = 16;
-const ROUTING_TENSOR_NAME: &str = "blk.0.ffn_gate_inp.weight";
-const DEFAULT_GPU_SYNAPSE_TENSOR_NAME: &str = "blk.0.attn_q.weight";
+const ROUTING_TENSOR_CANDIDATES: [&str; 2] =
+    ["blk.0.ffn_gate_inp.weight", "blk.0.ffn_gate.weight"];
 const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
 const GGUF_VERSION: u32 = 3;
 const GGML_TYPE_F32: u32 = 0;
 const GGML_TYPE_F16: u32 = 1;
+const GGML_TYPE_Q8_0: u32 = 8;
+const GGML_Q8_0_BLOCK_SIZE: usize = 32;
+const GGML_Q8_0_BLOCK_BYTES: usize = 34;
 
 #[inline(always)]
 fn f16_to_f32(bits: u16) -> f32 {
@@ -32,6 +35,42 @@ fn f16_to_f32(bits: u16) -> f32 {
         ((exp + 127 - 15) << 23) | mant
     };
     f32::from_bits(sign | val)
+}
+
+fn decode_q8_0_row(
+    raw: &[u8],
+    source_hidden_size: usize,
+    active_hidden_size: usize,
+) -> Result<Vec<f32>> {
+    if !source_hidden_size.is_multiple_of(GGML_Q8_0_BLOCK_SIZE) {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q8_0 row width {source_hidden_size} is not divisible by {}",
+            GGML_Q8_0_BLOCK_SIZE
+        )));
+    }
+
+    let blocks_per_row = source_hidden_size / GGML_Q8_0_BLOCK_SIZE;
+    let expected_bytes = blocks_per_row * GGML_Q8_0_BLOCK_BYTES;
+    if raw.len() < expected_bytes {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q8_0 row is truncated: expected {expected_bytes} bytes, got {}",
+            raw.len()
+        )));
+    }
+
+    let mut out = Vec::with_capacity(active_hidden_size);
+    for block_idx in 0..blocks_per_row {
+        let base = block_idx * GGML_Q8_0_BLOCK_BYTES;
+        let scale = f16_to_f32(u16::from_le_bytes([raw[base], raw[base + 1]]));
+        for q in &raw[base + 2..base + GGML_Q8_0_BLOCK_BYTES] {
+            if out.len() == active_hidden_size {
+                return Ok(out);
+            }
+            out.push((*q as i8 as f32) * scale);
+        }
+    }
+
+    Ok(out)
 }
 
 const GGUF_VALUE_TYPE_UINT8: u32 = 0;
@@ -54,6 +93,7 @@ pub struct OLMoE {
     top_k: usize,
     loaded: bool,
     metadata: OlmoeMetadata,
+    routing_tensor_name: String,
     execution_mode: OlmoeExecutionMode,
     expert_membranes: Vec<f32>,
     hidden_membranes: Vec<f32>,
@@ -64,10 +104,25 @@ pub struct OLMoE {
 
 #[derive(Debug, Clone, Default)]
 struct OlmoeMetadata {
+    pub architecture: String,
     pub hidden_size: usize,
+    pub source_hidden_size: usize,
     pub num_layers: usize,
     pub num_experts: usize,
+    pub expert_used_count: Option<usize>,
     pub quantization: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OlmoeCheckpointMetadata {
+    pub architecture: String,
+    pub hidden_size: usize,
+    pub source_hidden_size: usize,
+    pub num_layers: usize,
+    pub num_experts: usize,
+    pub expert_used_count: Option<usize>,
+    pub quantization: String,
+    pub routing_tensor_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +164,7 @@ struct RegisteredCudaRegion {
 struct ParsedCheckpointLayout {
     metadata: OlmoeMetadata,
     tensors: HashMap<String, GgufTensorInfo>,
+    routing_tensor_name: String,
 }
 
 struct GgufCursor<'a> {
@@ -141,11 +197,15 @@ impl OLMoE {
                 top_k,
                 loaded: false,
                 metadata: OlmoeMetadata {
+                    architecture: "stub".into(),
                     hidden_size: OLMOE_HIDDEN,
+                    source_hidden_size: OLMOE_HIDDEN,
                     num_layers: OLMOE_NUM_LAYERS,
                     num_experts: OLMOE_NUM_EXPERTS,
+                    expert_used_count: None,
                     quantization: "stub".into(),
                 },
+                routing_tensor_name: ROUTING_TENSOR_CANDIDATES[0].into(),
                 execution_mode,
                 expert_membranes: vec![0.0; num_experts],
                 hidden_membranes: vec![0.0; EMBEDDING_DIM],
@@ -155,13 +215,14 @@ impl OLMoE {
             });
         }
 
-        let (metadata, checkpoint) = Self::probe_and_map(model_path)?;
+        let (metadata, routing_tensor_name, checkpoint) = Self::probe_and_map(model_path)?;
         if num_experts > metadata.num_experts {
             return Err(HybridError::InvalidConfig(format!(
                 "num_experts ({num_experts}) exceeds checkpoint expert_count ({})",
                 metadata.num_experts
             )));
         }
+        let hidden_size = metadata.hidden_size;
 
         Ok(Self {
             model_path: model_path.to_owned(),
@@ -169,19 +230,47 @@ impl OLMoE {
             top_k,
             loaded: true,
             metadata,
+            routing_tensor_name,
             execution_mode,
             expert_membranes: vec![0.0; num_experts],
-            hidden_membranes: vec![0.0; EMBEDDING_DIM],
+            hidden_membranes: vec![0.0; hidden_size],
             threshold: 0.75,
             decay: 0.91,
             checkpoint: Some(checkpoint),
         })
     }
 
+    pub fn probe_checkpoint(model_path: &str) -> Result<OlmoeCheckpointMetadata> {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(model_path)
+            .map_err(|e| HybridError::ModelLoad {
+                path: model_path.to_owned(),
+                reason: e.to_string(),
+            })?;
+        let mmap = unsafe { MmapOptions::new().map_copy(&file) }.map_err(|e| {
+            HybridError::ModelLoad {
+                path: model_path.to_owned(),
+                reason: format!("copy-on-write mmap failed: {e}"),
+            }
+        })?;
+        let parsed = parse_checkpoint_layout(&mmap, model_path)?;
+        Ok(OlmoeCheckpointMetadata {
+            architecture: parsed.metadata.architecture,
+            hidden_size: parsed.metadata.hidden_size,
+            source_hidden_size: parsed.metadata.source_hidden_size,
+            num_layers: parsed.metadata.num_layers,
+            num_experts: parsed.metadata.num_experts,
+            expert_used_count: parsed.metadata.expert_used_count,
+            quantization: parsed.metadata.quantization,
+            routing_tensor_name: parsed.routing_tensor_name,
+        })
+    }
+
     pub fn forward(&mut self, embedding: &[f32]) -> Result<OlmoeOutput> {
-        if embedding.len() != EMBEDDING_DIM {
+        if embedding.len() != self.metadata.hidden_size {
             return Err(HybridError::InputLengthMismatch {
-                expected: EMBEDDING_DIM,
+                expected: self.metadata.hidden_size,
                 got: embedding.len(),
             });
         }
@@ -195,6 +284,8 @@ impl OLMoE {
 
     pub fn extract_token_embedding(&mut self, token_id: usize) -> Result<Vec<f32>> {
         let path = self.model_path.clone();
+        let hidden_size = self.metadata.hidden_size;
+        let source_hidden_size = self.metadata.source_hidden_size;
         let checkpoint = self
             .checkpoint
             .as_mut()
@@ -210,17 +301,19 @@ impl OLMoE {
         match info.ggml_type {
             GGML_TYPE_F32 => {
                 let weights = checkpoint.f32_tensor("token_embd.weight", &path)?;
-                if d0 == EMBEDDING_DIM {
+                if d0 == source_hidden_size {
                     if token_id >= d1 {
                         return Err(HybridError::InputLengthMismatch { expected: d1, got: token_id });
                     }
-                    let start = token_id * EMBEDDING_DIM;
-                    Ok(weights[start..start + EMBEDDING_DIM].to_vec())
-                } else if d1 == EMBEDDING_DIM {
+                    let start = token_id * d0;
+                    Ok(weights[start..start + hidden_size].to_vec())
+                } else if d1 == source_hidden_size {
                     if token_id >= d0 {
                         return Err(HybridError::InputLengthMismatch { expected: d0, got: token_id });
                     }
-                    Ok((0..EMBEDDING_DIM).map(|dim| weights[dim * d0 + token_id]).collect())
+                    Ok((0..hidden_size)
+                        .map(|dim| weights[dim * d0 + token_id])
+                        .collect())
                 } else {
                     Err(HybridError::UnsupportedFormat(format!(
                         "tensor 'token_embd.weight' has unexpected dimensions {:?}", info.dims
@@ -241,22 +334,58 @@ impl OLMoE {
                     .chunks_exact(2)
                     .map(|b| u16::from_le_bytes([b[0], b[1]]))
                     .collect();
-                if d0 == EMBEDDING_DIM {
+                if d0 == source_hidden_size {
                     if token_id >= d1 {
                         return Err(HybridError::InputLengthMismatch { expected: d1, got: token_id });
                     }
-                    let start = token_id * EMBEDDING_DIM;
-                    Ok(u16s[start..start + EMBEDDING_DIM].iter().map(|&b| f16_to_f32(b)).collect())
-                } else if d1 == EMBEDDING_DIM {
+                    let start = token_id * d0;
+                    Ok(u16s[start..start + hidden_size]
+                        .iter()
+                        .map(|&b| f16_to_f32(b))
+                        .collect())
+                } else if d1 == source_hidden_size {
                     if token_id >= d0 {
                         return Err(HybridError::InputLengthMismatch { expected: d0, got: token_id });
                     }
-                    Ok((0..EMBEDDING_DIM).map(|dim| f16_to_f32(u16s[dim * d0 + token_id])).collect())
+                    Ok((0..hidden_size)
+                        .map(|dim| f16_to_f32(u16s[dim * d0 + token_id]))
+                        .collect())
                 } else {
                     Err(HybridError::UnsupportedFormat(format!(
                         "tensor 'token_embd.weight' has unexpected dimensions {:?}", info.dims
                     )))
                 }
+            }
+            GGML_TYPE_Q8_0 => {
+                if d0 != source_hidden_size {
+                    return Err(HybridError::UnsupportedFormat(format!(
+                        "Q8_0 token embeddings must be [hidden_size, vocab], got {:?}",
+                        info.dims
+                    )));
+                }
+                if token_id >= d1 {
+                    return Err(HybridError::InputLengthMismatch {
+                        expected: d1,
+                        got: token_id,
+                    });
+                }
+
+                let blocks_per_row = source_hidden_size / GGML_Q8_0_BLOCK_SIZE;
+                let row_bytes = blocks_per_row * GGML_Q8_0_BLOCK_BYTES;
+                let byte_start = info.absolute_offset + token_id * row_bytes;
+                let byte_end = byte_start + row_bytes;
+                if byte_end > checkpoint.mmap.len() {
+                    return Err(HybridError::ModelLoad {
+                        path: path.clone(),
+                        reason: "token_embd.weight Q8_0 tensor extends beyond mapped file".into(),
+                    });
+                }
+
+                decode_q8_0_row(
+                    &checkpoint.mmap[byte_start..byte_end],
+                    source_hidden_size,
+                    hidden_size,
+                )
             }
             other => Err(HybridError::UnsupportedFormat(format!(
                 "tensor 'token_embd.weight' has unsupported ggml_type={other}"
@@ -276,7 +405,7 @@ impl OLMoE {
         checkpoint.registered_f16_tensor(tensor_name, &path)
     }
 
-    fn probe_and_map(path: &str) -> Result<(OlmoeMetadata, MappedOlmoeCheckpoint)> {
+    fn probe_and_map(path: &str) -> Result<(OlmoeMetadata, String, MappedOlmoeCheckpoint)> {
         let file =
             OpenOptions::new()
                 .read(true)
@@ -295,27 +424,24 @@ impl OLMoE {
             })?;
 
         let parsed = parse_checkpoint_layout(&mmap, path)?;
-        let routing =
-            parsed
-                .tensors
-                .get(ROUTING_TENSOR_NAME)
-                .ok_or_else(|| HybridError::MissingTensor {
-                    name: ROUTING_TENSOR_NAME.into(),
-                    path: path.to_owned(),
-                })?;
-        validate_routing_tensor(path, routing)?;
-
-        let synapse = parsed
+        let routing = parsed
             .tensors
-            .get(DEFAULT_GPU_SYNAPSE_TENSOR_NAME)
+            .get(parsed.routing_tensor_name.as_str())
             .ok_or_else(|| HybridError::MissingTensor {
-                name: DEFAULT_GPU_SYNAPSE_TENSOR_NAME.into(),
+                name: parsed.routing_tensor_name.clone(),
                 path: path.to_owned(),
             })?;
-        validate_gpu_synapse_tensor(path, DEFAULT_GPU_SYNAPSE_TENSOR_NAME, synapse)?;
+        validate_routing_tensor(
+            path,
+            parsed.routing_tensor_name.as_str(),
+            routing,
+            parsed.metadata.source_hidden_size,
+            parsed.metadata.num_experts,
+        )?;
 
         Ok((
             parsed.metadata,
+            parsed.routing_tensor_name,
             MappedOlmoeCheckpoint {
                 mmap,
                 tensors: parsed.tensors,
@@ -373,7 +499,7 @@ impl OLMoE {
             .map(|&expert_id| expert_spikes[expert_id] * expert_weights[expert_id])
             .sum();
 
-        let mut hidden = vec![0.0f32; EMBEDDING_DIM];
+        let mut hidden = vec![0.0f32; self.metadata.hidden_size];
         for (j, h) in hidden.iter_mut().enumerate() {
             let input = embedding[j] * active_mass;
             self.hidden_membranes[j] = self.hidden_membranes[j] * self.decay + input;
@@ -400,13 +526,19 @@ impl OLMoE {
 
     fn compute_gate_scores(&self, embedding: &[f32]) -> Result<Vec<f32>> {
         if let Some(checkpoint) = &self.checkpoint {
-            let info = checkpoint.tensor_info(ROUTING_TENSOR_NAME, &self.model_path)?;
-            let weights = checkpoint.f32_tensor(ROUTING_TENSOR_NAME, &self.model_path)?;
+            let info = checkpoint.tensor_info(&self.routing_tensor_name, &self.model_path)?;
+            let weights = checkpoint.f32_tensor(&self.routing_tensor_name, &self.model_path)?;
             let mut gate_scores = Vec::with_capacity(self.num_experts);
             for expert_id in 0..self.num_experts {
                 let mut score = 0.0f32;
                 for (dim, &value) in embedding.iter().enumerate() {
-                    let index = routing_weight_index(info, expert_id, dim, self.num_experts)?;
+                    let index = routing_weight_index(
+                        info,
+                        expert_id,
+                        dim,
+                        self.metadata.source_hidden_size,
+                        self.num_experts,
+                    )?;
                     score += weights[index] * value;
                 }
                 gate_scores.push(score);
@@ -415,11 +547,11 @@ impl OLMoE {
         }
 
         // Deterministic synthetic fallback for DenseSim/SpikingSim when no checkpoint is present.
-        let chunk = (EMBEDDING_DIM / self.num_experts.max(1)).max(1);
+        let chunk = (embedding.len() / self.num_experts.max(1)).max(1);
         let mut gate_scores = Vec::with_capacity(self.num_experts);
         for expert_id in 0..self.num_experts {
-            let start = (expert_id * chunk) % EMBEDDING_DIM;
-            let end = (start + chunk).min(EMBEDDING_DIM);
+            let start = (expert_id * chunk) % embedding.len().max(1);
+            let end = (start + chunk).min(embedding.len());
             gate_scores.push(embedding[start..end].iter().sum());
         }
         Ok(gate_scores)
@@ -429,7 +561,7 @@ impl OLMoE {
         let n = self.num_experts;
         let expert_weights = vec![1.0 / n as f32; n];
         let selected_experts = (0..self.top_k).collect();
-        let hidden = vec![0.0f32; EMBEDDING_DIM];
+        let hidden = vec![0.0f32; self.metadata.hidden_size];
         OlmoeOutput {
             expert_weights,
             selected_experts,
@@ -454,8 +586,16 @@ impl OLMoE {
         &self.metadata.quantization
     }
 
+    pub fn architecture(&self) -> &str {
+        &self.metadata.architecture
+    }
+
     pub fn hidden_size(&self) -> usize {
         self.metadata.hidden_size
+    }
+
+    pub fn source_hidden_size(&self) -> usize {
+        self.metadata.source_hidden_size
     }
 
     pub fn num_layers(&self) -> usize {
@@ -466,8 +606,16 @@ impl OLMoE {
         self.metadata.num_experts
     }
 
+    pub fn expert_used_count(&self) -> Option<usize> {
+        self.metadata.expert_used_count
+    }
+
     pub fn num_experts(&self) -> usize {
         self.num_experts
+    }
+
+    pub fn routing_tensor_name(&self) -> &str {
+        &self.routing_tensor_name
     }
 
     pub fn execution_mode(&self) -> OlmoeExecutionMode {
@@ -626,7 +774,8 @@ fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<ParsedCheckpointL
 
     let mut alignment = 32usize;
     let mut file_type = None;
-    let mut expert_count = OLMOE_NUM_EXPERTS;
+    let mut architecture = "olmoe".to_owned();
+    let mut numeric_metadata = HashMap::new();
 
     for _ in 0..kv_count {
         let key = cursor.read_string(path)?;
@@ -634,8 +783,12 @@ fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<ParsedCheckpointL
         match key.as_str() {
             "general.alignment" => alignment = cursor.read_numeric_as_usize(value_type, path)?,
             "general.file_type" => file_type = Some(cursor.read_numeric_as_u32(value_type, path)?),
-            "olmoe.expert_count" => {
-                expert_count = cursor.read_numeric_as_usize(value_type, path)?
+            "general.architecture" => {
+                architecture = cursor.read_string(path)?;
+            }
+            _ if is_numeric_gguf_value(value_type) => {
+                let value = cursor.read_numeric_as_usize(value_type, path)?;
+                numeric_metadata.insert(key, value);
             }
             _ => cursor.skip_value(value_type, path)?,
         }
@@ -675,51 +828,72 @@ fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<ParsedCheckpointL
         tensor.absolute_offset = tensor_data_offset + tensor.relative_offset;
     }
 
+    let source_hidden_size = numeric_metadata
+        .get(format!("{architecture}.embedding_length").as_str())
+        .copied()
+        .unwrap_or(OLMOE_HIDDEN);
+    if source_hidden_size < EMBEDDING_DIM {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "checkpoint '{path}' hidden size {source_hidden_size} is smaller than required SNN width {EMBEDDING_DIM}"
+        )));
+    }
+    let num_layers = numeric_metadata
+        .get(format!("{architecture}.block_count").as_str())
+        .copied()
+        .unwrap_or(OLMOE_NUM_LAYERS);
+    let num_experts = numeric_metadata
+        .get(format!("{architecture}.expert_count").as_str())
+        .copied()
+        .or_else(|| numeric_metadata.get("olmoe.expert_count").copied())
+        .unwrap_or(OLMOE_NUM_EXPERTS);
+    let expert_used_count = numeric_metadata
+        .get(format!("{architecture}.expert_used_count").as_str())
+        .copied();
+    let routing_tensor_name = resolve_routing_tensor_name(
+        path,
+        &tensors,
+        source_hidden_size,
+        num_experts,
+    )?;
+
     Ok(ParsedCheckpointLayout {
         metadata: OlmoeMetadata {
-            hidden_size: OLMOE_HIDDEN,
-            num_layers: OLMOE_NUM_LAYERS,
-            num_experts: expert_count,
+            architecture,
+            hidden_size: EMBEDDING_DIM,
+            source_hidden_size,
+            num_layers,
+            num_experts,
+            expert_used_count,
             quantization: quantization_label(file_type),
         },
         tensors,
+        routing_tensor_name,
     })
 }
 
-fn validate_routing_tensor(path: &str, tensor: &GgufTensorInfo) -> Result<()> {
+fn validate_routing_tensor(
+    path: &str,
+    tensor_name: &str,
+    tensor: &GgufTensorInfo,
+    hidden_size: usize,
+    num_experts: usize,
+) -> Result<()> {
     if tensor.ggml_type != GGML_TYPE_F32 {
         return Err(HybridError::UnsupportedFormat(format!(
-            "tensor '{ROUTING_TENSOR_NAME}' must be F32 in '{path}'"
+            "tensor '{tensor_name}' must be F32 in '{path}'"
         )));
     }
     if tensor.dims.len() != 2 {
         return Err(HybridError::UnsupportedFormat(format!(
-            "tensor '{ROUTING_TENSOR_NAME}' must be rank-2, got {:?}",
+            "tensor '{tensor_name}' must be rank-2, got {:?}",
             tensor.dims
         )));
     }
-    if tensor.n_elements != OLMOE_HIDDEN * OLMOE_NUM_EXPERTS {
+    let matches = (tensor.dims[0] == hidden_size && tensor.dims[1] == num_experts)
+        || (tensor.dims[0] == num_experts && tensor.dims[1] == hidden_size);
+    if !matches {
         return Err(HybridError::UnsupportedFormat(format!(
-            "tensor '{ROUTING_TENSOR_NAME}' has unexpected size {:?}",
-            tensor.dims
-        )));
-    }
-    Ok(())
-}
-
-fn validate_gpu_synapse_tensor(
-    path: &str,
-    tensor_name: &str,
-    tensor: &GgufTensorInfo,
-) -> Result<()> {
-    if tensor.ggml_type != GGML_TYPE_F16 {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "tensor '{tensor_name}' must be F16 in '{path}'"
-        )));
-    }
-    if tensor.dims != [OLMOE_HIDDEN, OLMOE_HIDDEN] {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "tensor '{tensor_name}' must be [2048, 2048], got {:?}",
+            "tensor '{tensor_name}' must expose expert axis {num_experts} and hidden axis {hidden_size}, got {:?}",
             tensor.dims
         )));
     }
@@ -730,15 +904,16 @@ fn routing_weight_index(
     tensor: &GgufTensorInfo,
     expert_id: usize,
     dim: usize,
+    hidden_size: usize,
     num_experts: usize,
 ) -> Result<usize> {
     let d0 = tensor.dims[0];
     let d1 = tensor.dims[1];
 
-    if d0 == EMBEDDING_DIM && d1 >= num_experts {
+    if d0 == hidden_size && d1 >= num_experts {
         return Ok(dim * d1 + expert_id);
     }
-    if d0 >= num_experts && d1 == EMBEDDING_DIM {
+    if d0 >= num_experts && d1 == hidden_size {
         return Ok(expert_id * d1 + dim);
     }
 
@@ -776,6 +951,45 @@ fn top_k_indices(weights: &[f32], top_k: usize) -> Vec<usize> {
         .take(top_k)
         .map(|(idx, _)| idx)
         .collect()
+}
+
+fn is_numeric_gguf_value(value_type: u32) -> bool {
+    matches!(
+        value_type,
+        GGUF_VALUE_TYPE_UINT8
+            | GGUF_VALUE_TYPE_INT8
+            | GGUF_VALUE_TYPE_UINT16
+            | GGUF_VALUE_TYPE_INT16
+            | GGUF_VALUE_TYPE_UINT32
+            | GGUF_VALUE_TYPE_INT32
+            | GGUF_VALUE_TYPE_UINT64
+            | GGUF_VALUE_TYPE_INT64
+    )
+}
+
+fn resolve_routing_tensor_name(
+    path: &str,
+    tensors: &HashMap<String, GgufTensorInfo>,
+    hidden_size: usize,
+    num_experts: usize,
+) -> Result<String> {
+    for candidate in ROUTING_TENSOR_CANDIDATES {
+        let Some(tensor) = tensors.get(candidate) else {
+            continue;
+        };
+        if validate_routing_tensor(path, candidate, tensor, hidden_size, num_experts).is_ok() {
+            return Ok(candidate.to_owned());
+        }
+    }
+
+    let available: Vec<String> = ROUTING_TENSOR_CANDIDATES
+        .iter()
+        .filter_map(|name| tensors.get(*name).map(|tensor| format!("{name}:{:?}", tensor.dims)))
+        .collect();
+
+    Err(HybridError::UnsupportedFormat(format!(
+        "no compatible first-block routing tensor found in '{path}' for hidden_size={hidden_size} expert_count={num_experts}; candidates={available:?}"
+    )))
 }
 
 fn quantization_label(file_type: Option<u32>) -> String {
@@ -1018,13 +1232,13 @@ mod tests {
         build_test_gguf(
             vec![
                 (
-                    ROUTING_TENSOR_NAME,
+                    ROUTING_TENSOR_CANDIDATES[0],
                     vec![EMBEDDING_DIM, OLMOE_NUM_EXPERTS],
                     GGML_TYPE_F32,
                     gate_payload,
                 ),
                 (
-                    DEFAULT_GPU_SYNAPSE_TENSOR_NAME,
+                    "blk.0.attn_q.weight",
                     vec![OLMOE_HIDDEN, OLMOE_HIDDEN],
                     GGML_TYPE_F16,
                     attn_q_payload,
@@ -1139,12 +1353,24 @@ mod tests {
     #[test]
     fn test_parse_checkpoint_layout_preserves_tensor_offsets() {
         let bytes = build_test_gguf(
-            vec![("demo.weight", vec![2, 2], GGML_TYPE_F32, vec![0u8; 16])],
+            vec![
+                (
+                    ROUTING_TENSOR_CANDIDATES[0],
+                    vec![EMBEDDING_DIM, OLMOE_NUM_EXPERTS],
+                    GGML_TYPE_F32,
+                    vec![0u8; EMBEDDING_DIM * OLMOE_NUM_EXPERTS * 4],
+                ),
+                ("demo.weight", vec![2, 2], GGML_TYPE_F32, vec![0u8; 16]),
+            ],
             64,
         );
         let parsed = parse_checkpoint_layout(&bytes, "test.gguf").unwrap();
+        let routing = parsed
+            .tensors
+            .get(ROUTING_TENSOR_CANDIDATES[0])
+            .unwrap();
         let tensor = parsed.tensors.get("demo.weight").unwrap();
-        assert_eq!(tensor.relative_offset, 0);
+        assert_eq!(tensor.relative_offset, routing.n_elements * std::mem::size_of::<f32>());
         assert_eq!(tensor.absolute_offset % 64, 0);
         assert_eq!(tensor.n_elements, 4);
     }
@@ -1153,7 +1379,7 @@ mod tests {
     fn test_probe_and_map_rejects_missing_routing_tensor() {
         let bytes = build_test_gguf(
             vec![(
-                DEFAULT_GPU_SYNAPSE_TENSOR_NAME,
+                "blk.0.attn_q.weight",
                 vec![OLMOE_HIDDEN, OLMOE_HIDDEN],
                 GGML_TYPE_F16,
                 vec![0u8; OLMOE_HIDDEN * OLMOE_HIDDEN * 2],
@@ -1162,23 +1388,23 @@ mod tests {
         );
         let path = write_temp_file(&bytes, "missing-routing");
         let err = OLMoE::probe_and_map(path.to_str().unwrap()).unwrap_err();
-        assert!(matches!(err, HybridError::MissingTensor { .. }));
+        assert!(matches!(err, HybridError::UnsupportedFormat(_)));
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn test_probe_and_map_rejects_wrong_synapse_type() {
+    fn test_probe_and_map_allows_non_f16_synapse_tensor() {
         let gate_payload = vec![0u8; EMBEDDING_DIM * OLMOE_NUM_EXPERTS * 4];
         let bytes = build_test_gguf(
             vec![
                 (
-                    ROUTING_TENSOR_NAME,
+                    ROUTING_TENSOR_CANDIDATES[0],
                     vec![EMBEDDING_DIM, OLMOE_NUM_EXPERTS],
                     GGML_TYPE_F32,
                     gate_payload,
                 ),
                 (
-                    DEFAULT_GPU_SYNAPSE_TENSOR_NAME,
+                    "blk.0.attn_q.weight",
                     vec![OLMOE_HIDDEN, OLMOE_HIDDEN],
                     GGML_TYPE_F32,
                     vec![0u8; OLMOE_HIDDEN * OLMOE_HIDDEN * 4],
@@ -1187,7 +1413,10 @@ mod tests {
             32,
         );
         let path = write_temp_file(&bytes, "wrong-type");
-        let err = OLMoE::probe_and_map(path.to_str().unwrap()).unwrap_err();
+        let (_, _, mut checkpoint) = OLMoE::probe_and_map(path.to_str().unwrap()).unwrap();
+        let err = checkpoint
+            .registered_f16_tensor("blk.0.attn_q.weight", path.to_str().unwrap())
+            .unwrap_err();
         assert!(matches!(err, HybridError::UnsupportedFormat(_)));
         let _ = std::fs::remove_file(path);
     }
@@ -1251,13 +1480,16 @@ mod tests {
             return;
         };
 
-        let (metadata, checkpoint) = OLMoE::probe_and_map(&path).unwrap();
+        let (metadata, routing_tensor_name, checkpoint) = OLMoE::probe_and_map(&path).unwrap();
         assert_eq!(metadata.hidden_size, 2048);
         assert_eq!(metadata.num_experts, 64);
-        let routing = checkpoint.tensor_info(ROUTING_TENSOR_NAME, &path).unwrap();
+        assert_eq!(routing_tensor_name, ROUTING_TENSOR_CANDIDATES[0]);
+        let routing = checkpoint
+            .tensor_info(ROUTING_TENSOR_CANDIDATES[0], &path)
+            .unwrap();
         assert_eq!(routing.dims, vec![2048, 64]);
         let synapse = checkpoint
-            .tensor_info(DEFAULT_GPU_SYNAPSE_TENSOR_NAME, &path)
+            .tensor_info("blk.0.attn_q.weight", &path)
             .unwrap();
         assert_eq!(synapse.dims, vec![2048, 2048]);
     }
@@ -1279,7 +1511,7 @@ mod tests {
         let mut model = OLMoE::load_with_mode(&path, 8, 1, OlmoeExecutionMode::DenseSim).unwrap();
         accelerator.ensure_temporal_state(OLMOE_HIDDEN).unwrap();
         let weights = model
-            .registered_gpu_synapse_weights(DEFAULT_GPU_SYNAPSE_TENSOR_NAME)
+            .registered_gpu_synapse_weights("blk.0.attn_q.weight")
             .unwrap();
         accelerator
             .load_synapse_weights_f16_registered("env::blk.0.attn_q.weight", weights)
