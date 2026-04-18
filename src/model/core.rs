@@ -21,7 +21,7 @@ pub(super) const GPU_ROUTING_TELEMETRY_PATH: &str = "snn_gpu_routing_telemetry.c
 pub struct Model {
     pub(super) config: ModelConfig,
     pub(super) projector: Projector,
-    pub(crate) router: OlmoeRouter,
+    pub(super) router: OlmoeRouter,
     pub(super) global_step: i64,
 }
 

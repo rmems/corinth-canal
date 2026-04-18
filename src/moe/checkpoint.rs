@@ -152,6 +152,11 @@ pub(super) fn probe_and_map_checkpoint(
             path: path.to_owned(),
             reason: e.to_string(),
         })?;
+    // SAFETY: The file is a valid, readable file descriptor opened above.
+    // `map_copy` creates a private copy-on-write mapping that does not
+    // write back to the underlying file.  The writable mapping is required
+    // by `cuMemHostRegister_v2`, which expects a non-const pointer even
+    // though it does not modify the memory contents.
     let mmap =
         unsafe { MmapOptions::new().map_copy(&file) }.map_err(|e| HybridError::ModelLoad {
             path: path.to_owned(),
@@ -205,8 +210,26 @@ pub(super) fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<Parsed
         )));
     }
 
-    let tensor_count = cursor.read_u64(path)? as usize;
-    let kv_count = cursor.read_u64(path)? as usize;
+    // Sanity-bound the header counts to prevent OOM allocation from malformed files.
+    const MAX_TENSOR_COUNT: usize = 100_000;
+    const MAX_KV_COUNT: usize = 100_000;
+    const MAX_TENSOR_DIMS: usize = 8;
+
+    let tensor_count_raw = cursor.read_u64(path)?;
+    if tensor_count_raw > MAX_TENSOR_COUNT as u64 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "tensor_count {tensor_count_raw} exceeds maximum allowed {MAX_TENSOR_COUNT}"
+        )));
+    }
+    let tensor_count = tensor_count_raw as usize;
+
+    let kv_count_raw = cursor.read_u64(path)?;
+    if kv_count_raw > MAX_KV_COUNT as u64 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "kv_count {kv_count_raw} exceeds maximum allowed {MAX_KV_COUNT}"
+        )));
+    }
+    let kv_count = kv_count_raw as usize;
 
     let mut alignment = 32usize;
     let mut file_type = None;
@@ -228,7 +251,13 @@ pub(super) fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<Parsed
     let mut tensors = HashMap::with_capacity(tensor_count);
     for _ in 0..tensor_count {
         let name = cursor.read_string(path)?;
-        let n_dims = cursor.read_u32(path)? as usize;
+        let n_dims_raw = cursor.read_u32(path)? as usize;
+        if n_dims_raw > MAX_TENSOR_DIMS {
+            return Err(HybridError::UnsupportedFormat(format!(
+                "tensor '{name}' has {n_dims_raw} dims, which exceeds maximum allowed {MAX_TENSOR_DIMS}"
+            )));
+        }
+        let n_dims = n_dims_raw;
         let mut dims = Vec::with_capacity(n_dims);
         for _ in 0..n_dims {
             dims.push(cursor.read_u64(path)? as usize);
@@ -298,6 +327,11 @@ impl MappedOlmoeCheckpoint {
             });
         }
 
+        // SAFETY: `start` is a valid byte offset into the mmap and `end` is
+        // checked against `mmap.len()` above.  F32 alignment is guaranteed
+        // because GGUF aligns all tensor data to at least 32 bytes (enforced
+        // by the `alignment` field parsed from the file header).  The returned
+        // slice borrows `self` for lifetime `'a`, keeping the mmap alive.
         let ptr = unsafe { self.mmap.as_ptr().add(start) as *const f32 };
         Ok(unsafe { slice::from_raw_parts(ptr, info.n_elements) })
     }
@@ -371,9 +405,18 @@ impl RegisteredTensorSliceU16 {
             });
         }
 
+        // SAFETY: `aligned_start` is a page-aligned byte offset within the
+        // mmap (verified by the `aligned_end > mmap.len()` guard above).
+        // The `MmapMut` backing is a private copy-on-write mapping, so the
+        // underlying pages are writable — required by `cuMemHostRegister_v2`
+        // even though it does not modify the memory contents.
         let register_ptr = unsafe { mmap.as_ptr().add(aligned_start) as *mut c_void };
         cuda_host_register(register_ptr, register_len, path, tensor_name)?;
 
+        // SAFETY: `absolute_offset` is within the mmap (covered by the
+        // registered region above) and F16 data is at least 2-byte aligned
+        // due to the GGUF alignment guarantee (min 32 bytes).  `n_elements`
+        // is the exact count of u16 values stored there.
         let tensor_ptr = unsafe { mmap.as_ptr().add(absolute_offset) as *const u16 };
         Ok(Self {
             tensor_name: tensor_name.to_owned(),
@@ -384,15 +427,23 @@ impl RegisteredTensorSliceU16 {
     }
 
     fn as_slice(&self) -> &[u16] {
+        // SAFETY: `ptr` and `len` are set in `register` and satisfy the
+        // invariants of `slice::from_raw_parts`: the pointer is non-null,
+        // correctly aligned (u16 = 2 bytes, GGUF alignment ≥ 32), and the
+        // slice is live as long as the owning `MappedOlmoeCheckpoint` (and
+        // hence the mmap) is alive.
         unsafe { slice::from_raw_parts(self.ptr, self.len) }
     }
 }
 
 impl Drop for RegisteredCudaRegion {
     fn drop(&mut self) {
+        // SAFETY: `ptr` was successfully registered by `cuMemHostRegister_v2`
+        // in `RegisteredTensorSliceU16::register`, so it is valid to unregister.
         let result = unsafe { cust::sys::cuMemHostUnregister(self.ptr) };
         if result != cust::sys::CUresult::CUDA_SUCCESS {
-            // The model remains valid; dropping the registration should not panic.
+            // Silently ignore: panicking inside `drop` is unsound and the
+            // model remains usable even if CUDA pin-registration is leaked.
         }
     }
 }
@@ -447,6 +498,7 @@ fn quantization_label(file_type: Option<u32>) -> String {
 }
 
 fn page_size_bytes(path: &str) -> Result<usize> {
+    // SAFETY: `sysconf` is a pure query with no preconditions; valid to call at any time.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if page_size <= 0 {
         return Err(HybridError::ModelLoad {
@@ -466,6 +518,10 @@ fn align_up(value: usize, alignment: usize) -> usize {
 }
 
 fn cuda_host_register(ptr: *mut c_void, len: usize, path: &str, tensor_name: &str) -> Result<()> {
+    // SAFETY: `ptr` points to a page-aligned region within a live `MmapMut`
+    // (validated by the caller) and `len` covers only that region.  Flags = 0
+    // requests default portable pinned-host registration without any write
+    // semantics imposed on the pages.
     let result = unsafe { cust::sys::cuMemHostRegister_v2(ptr, len, 0) };
     if result == cust::sys::CUresult::CUDA_SUCCESS {
         return Ok(());
