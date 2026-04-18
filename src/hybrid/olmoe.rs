@@ -1,5 +1,8 @@
-//! OLMoE model interface backed by a first-block GGUF mmap bridge.
+//! OLMoE-style routing interface backed by either a GGUF or local Qwen safetensors checkpoint.
 
+use super::qwen_local::{
+    QwenLocalCheckpoint, load_qwen_local_checkpoint, probe_qwen_local_checkpoint,
+};
 use crate::error::{HybridError, Result};
 use crate::types::{EMBEDDING_DIM, OlmoeExecutionMode};
 use memmap2::{MmapMut, MmapOptions};
@@ -7,13 +10,13 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fs::OpenOptions;
+use std::path::Path;
 use std::slice;
 
 const OLMOE_HIDDEN: usize = 2048;
 const OLMOE_NUM_EXPERTS: usize = 64;
 const OLMOE_NUM_LAYERS: usize = 16;
-const ROUTING_TENSOR_CANDIDATES: [&str; 2] =
-    ["blk.0.ffn_gate_inp.weight", "blk.0.ffn_gate.weight"];
+const ROUTING_TENSOR_CANDIDATES: [&str; 2] = ["blk.0.ffn_gate_inp.weight", "blk.0.ffn_gate.weight"];
 const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
 const GGUF_VERSION: u32 = 3;
 const GGML_TYPE_F32: u32 = 0;
@@ -99,11 +102,11 @@ pub struct OLMoE {
     hidden_membranes: Vec<f32>,
     threshold: f32,
     decay: f32,
-    checkpoint: Option<MappedOlmoeCheckpoint>,
+    checkpoint: Option<LoadedCheckpoint>,
 }
 
 #[derive(Debug, Clone, Default)]
-struct OlmoeMetadata {
+pub(crate) struct OlmoeMetadata {
     pub architecture: String,
     pub hidden_size: usize,
     pub source_hidden_size: usize,
@@ -111,6 +114,7 @@ struct OlmoeMetadata {
     pub num_experts: usize,
     pub expert_used_count: Option<usize>,
     pub quantization: String,
+    pub checkpoint_format: String,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +127,7 @@ pub struct OlmoeCheckpointMetadata {
     pub expert_used_count: Option<usize>,
     pub quantization: String,
     pub routing_tensor_name: String,
+    pub checkpoint_format: String,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +142,12 @@ struct MappedOlmoeCheckpoint {
     mmap: MmapMut,
     tensors: HashMap<String, GgufTensorInfo>,
     registered_gpu_synapse: Option<RegisteredTensorSliceU16>,
+}
+
+#[derive(Debug)]
+enum LoadedCheckpoint {
+    Gguf(MappedOlmoeCheckpoint),
+    QwenLocal(QwenLocalCheckpoint),
 }
 
 #[derive(Debug, Clone)]
@@ -174,8 +185,9 @@ struct GgufCursor<'a> {
 
 impl OLMoE {
     pub fn load(model_path: &str, num_experts: usize, top_k: usize) -> Result<Self> {
-        Self::load_with_mode(
+        Self::load_with_mode_and_local(
             model_path,
+            "",
             num_experts,
             top_k,
             OlmoeExecutionMode::StubUniform,
@@ -188,9 +200,20 @@ impl OLMoE {
         top_k: usize,
         execution_mode: OlmoeExecutionMode,
     ) -> Result<Self> {
-        let top_k = top_k.max(1).min(num_experts);
+        Self::load_with_mode_and_local(model_path, "", num_experts, top_k, execution_mode)
+    }
 
-        if model_path.is_empty() {
+    pub fn load_with_mode_and_local(
+        model_path: &str,
+        local_checkpoint_dir: &str,
+        num_experts: usize,
+        top_k: usize,
+        execution_mode: OlmoeExecutionMode,
+    ) -> Result<Self> {
+        let top_k = top_k.max(1).min(num_experts);
+        let active_path = resolve_active_model_path(model_path, local_checkpoint_dir);
+
+        if active_path.is_empty() {
             return Ok(Self {
                 model_path: String::new(),
                 num_experts,
@@ -204,6 +227,7 @@ impl OLMoE {
                     num_experts: OLMOE_NUM_EXPERTS,
                     expert_used_count: None,
                     quantization: "stub".into(),
+                    checkpoint_format: "stub".into(),
                 },
                 routing_tensor_name: ROUTING_TENSOR_CANDIDATES[0].into(),
                 execution_mode,
@@ -215,7 +239,8 @@ impl OLMoE {
             });
         }
 
-        let (metadata, routing_tensor_name, checkpoint) = Self::probe_and_map(model_path)?;
+        let (metadata, routing_tensor_name, checkpoint) =
+            Self::probe_and_map_with_local(model_path, local_checkpoint_dir)?;
         if num_experts > metadata.num_experts {
             return Err(HybridError::InvalidConfig(format!(
                 "num_experts ({num_experts}) exceeds checkpoint expert_count ({})",
@@ -225,7 +250,7 @@ impl OLMoE {
         let hidden_size = metadata.hidden_size;
 
         Ok(Self {
-            model_path: model_path.to_owned(),
+            model_path: active_path.to_owned(),
             num_experts,
             top_k,
             loaded: true,
@@ -241,6 +266,18 @@ impl OLMoE {
     }
 
     pub fn probe_checkpoint(model_path: &str) -> Result<OlmoeCheckpointMetadata> {
+        Self::probe_checkpoint_with_local(model_path, "")
+    }
+
+    pub fn probe_checkpoint_with_local(
+        model_path: &str,
+        local_checkpoint_dir: &str,
+    ) -> Result<OlmoeCheckpointMetadata> {
+        let active_path = resolve_active_model_path(model_path, local_checkpoint_dir);
+        if !local_checkpoint_dir.trim().is_empty() || Path::new(model_path).is_dir() {
+            return probe_qwen_local_checkpoint(active_path);
+        }
+
         let file = OpenOptions::new()
             .read(true)
             .open(model_path)
@@ -248,12 +285,11 @@ impl OLMoE {
                 path: model_path.to_owned(),
                 reason: e.to_string(),
             })?;
-        let mmap = unsafe { MmapOptions::new().map_copy(&file) }.map_err(|e| {
-            HybridError::ModelLoad {
+        let mmap =
+            unsafe { MmapOptions::new().map_copy(&file) }.map_err(|e| HybridError::ModelLoad {
                 path: model_path.to_owned(),
                 reason: format!("copy-on-write mmap failed: {e}"),
-            }
-        })?;
+            })?;
         let parsed = parse_checkpoint_layout(&mmap, model_path)?;
         Ok(OlmoeCheckpointMetadata {
             architecture: parsed.metadata.architecture,
@@ -264,6 +300,7 @@ impl OLMoE {
             expert_used_count: parsed.metadata.expert_used_count,
             quantization: parsed.metadata.quantization,
             routing_tensor_name: parsed.routing_tensor_name,
+            checkpoint_format: parsed.metadata.checkpoint_format,
         })
     }
 
@@ -288,11 +325,19 @@ impl OLMoE {
         let source_hidden_size = self.metadata.source_hidden_size;
         let checkpoint = self
             .checkpoint
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| HybridError::ModelLoad {
                 path: path.clone(),
                 reason: "checkpoint not loaded".into(),
             })?;
+
+        if let LoadedCheckpoint::QwenLocal(checkpoint) = checkpoint {
+            return checkpoint.extract_token_embedding(&path, token_id, hidden_size);
+        }
+
+        let LoadedCheckpoint::Gguf(checkpoint) = checkpoint else {
+            unreachable!("QwenLocal handled above");
+        };
 
         let info = checkpoint.tensor_info("token_embd.weight", &path)?.clone();
         let d0 = info.dims[0];
@@ -303,20 +348,27 @@ impl OLMoE {
                 let weights = checkpoint.f32_tensor("token_embd.weight", &path)?;
                 if d0 == source_hidden_size {
                     if token_id >= d1 {
-                        return Err(HybridError::InputLengthMismatch { expected: d1, got: token_id });
+                        return Err(HybridError::InputLengthMismatch {
+                            expected: d1,
+                            got: token_id,
+                        });
                     }
                     let start = token_id * d0;
                     Ok(weights[start..start + hidden_size].to_vec())
                 } else if d1 == source_hidden_size {
                     if token_id >= d0 {
-                        return Err(HybridError::InputLengthMismatch { expected: d0, got: token_id });
+                        return Err(HybridError::InputLengthMismatch {
+                            expected: d0,
+                            got: token_id,
+                        });
                     }
                     Ok((0..hidden_size)
                         .map(|dim| weights[dim * d0 + token_id])
                         .collect())
                 } else {
                     Err(HybridError::UnsupportedFormat(format!(
-                        "tensor 'token_embd.weight' has unexpected dimensions {:?}", info.dims
+                        "tensor 'token_embd.weight' has unexpected dimensions {:?}",
+                        info.dims
                     )))
                 }
             }
@@ -336,7 +388,10 @@ impl OLMoE {
                     .collect();
                 if d0 == source_hidden_size {
                     if token_id >= d1 {
-                        return Err(HybridError::InputLengthMismatch { expected: d1, got: token_id });
+                        return Err(HybridError::InputLengthMismatch {
+                            expected: d1,
+                            got: token_id,
+                        });
                     }
                     let start = token_id * d0;
                     Ok(u16s[start..start + hidden_size]
@@ -345,14 +400,18 @@ impl OLMoE {
                         .collect())
                 } else if d1 == source_hidden_size {
                     if token_id >= d0 {
-                        return Err(HybridError::InputLengthMismatch { expected: d0, got: token_id });
+                        return Err(HybridError::InputLengthMismatch {
+                            expected: d0,
+                            got: token_id,
+                        });
                     }
                     Ok((0..hidden_size)
                         .map(|dim| f16_to_f32(u16s[dim * d0 + token_id]))
                         .collect())
                 } else {
                     Err(HybridError::UnsupportedFormat(format!(
-                        "tensor 'token_embd.weight' has unexpected dimensions {:?}", info.dims
+                        "tensor 'token_embd.weight' has unexpected dimensions {:?}",
+                        info.dims
                     )))
                 }
             }
@@ -402,7 +461,14 @@ impl OLMoE {
                 path: path.clone(),
                 reason: "checkpoint not loaded".into(),
             })?;
-        checkpoint.registered_f16_tensor(tensor_name, &path)
+        match checkpoint {
+            LoadedCheckpoint::Gguf(checkpoint) => {
+                checkpoint.registered_f16_tensor(tensor_name, &path)
+            }
+            LoadedCheckpoint::QwenLocal(_) => Err(HybridError::UnsupportedFormat(format!(
+                "local safetensors GPTQ checkpoints do not expose a registered F16 recurrent synapse tensor for '{tensor_name}'"
+            ))),
+        }
     }
 
     fn probe_and_map(path: &str) -> Result<(OlmoeMetadata, String, MappedOlmoeCheckpoint)> {
@@ -447,6 +513,29 @@ impl OLMoE {
                 tensors: parsed.tensors,
                 registered_gpu_synapse: None,
             },
+        ))
+    }
+
+    fn probe_and_map_with_local(
+        path: &str,
+        local_checkpoint_dir: &str,
+    ) -> Result<(OlmoeMetadata, String, LoadedCheckpoint)> {
+        let active_path = resolve_active_model_path(path, local_checkpoint_dir);
+        if !local_checkpoint_dir.trim().is_empty() || Path::new(path).is_dir() {
+            let (metadata, routing_tensor_name, checkpoint) =
+                load_qwen_local_checkpoint(active_path)?;
+            return Ok((
+                metadata,
+                routing_tensor_name,
+                LoadedCheckpoint::QwenLocal(checkpoint),
+            ));
+        }
+
+        let (metadata, routing_tensor_name, checkpoint) = Self::probe_and_map(path)?;
+        Ok((
+            metadata,
+            routing_tensor_name,
+            LoadedCheckpoint::Gguf(checkpoint),
         ))
     }
 
@@ -526,24 +615,38 @@ impl OLMoE {
 
     fn compute_gate_scores(&self, embedding: &[f32]) -> Result<Vec<f32>> {
         if let Some(checkpoint) = &self.checkpoint {
-            let info = checkpoint.tensor_info(&self.routing_tensor_name, &self.model_path)?;
-            let weights = checkpoint.f32_tensor(&self.routing_tensor_name, &self.model_path)?;
-            let mut gate_scores = Vec::with_capacity(self.num_experts);
-            for expert_id in 0..self.num_experts {
-                let mut score = 0.0f32;
-                for (dim, &value) in embedding.iter().enumerate() {
-                    let index = routing_weight_index(
-                        info,
-                        expert_id,
-                        dim,
-                        self.metadata.source_hidden_size,
-                        self.num_experts,
-                    )?;
-                    score += weights[index] * value;
+            match checkpoint {
+                LoadedCheckpoint::Gguf(checkpoint) => {
+                    let info =
+                        checkpoint.tensor_info(&self.routing_tensor_name, &self.model_path)?;
+                    let weights =
+                        checkpoint.f32_tensor(&self.routing_tensor_name, &self.model_path)?;
+                    let mut gate_scores = Vec::with_capacity(self.num_experts);
+                    for expert_id in 0..self.num_experts {
+                        let mut score = 0.0f32;
+                        for (dim, &value) in embedding.iter().enumerate() {
+                            let index = routing_weight_index(
+                                info,
+                                expert_id,
+                                dim,
+                                self.metadata.source_hidden_size,
+                                self.num_experts,
+                            )?;
+                            score += weights[index] * value;
+                        }
+                        gate_scores.push(score);
+                    }
+                    return Ok(gate_scores);
                 }
-                gate_scores.push(score);
+                LoadedCheckpoint::QwenLocal(checkpoint) => {
+                    return checkpoint.compute_gate_scores(
+                        &self.model_path,
+                        embedding,
+                        self.num_experts,
+                        self.metadata.source_hidden_size,
+                    );
+                }
             }
-            return Ok(gate_scores);
         }
 
         // Deterministic synthetic fallback for DenseSim/SpikingSim when no checkpoint is present.
@@ -586,6 +689,10 @@ impl OLMoE {
         &self.metadata.quantization
     }
 
+    pub fn checkpoint_format(&self) -> &str {
+        &self.metadata.checkpoint_format
+    }
+
     pub fn architecture(&self) -> &str {
         &self.metadata.architecture
     }
@@ -616,6 +723,14 @@ impl OLMoE {
 
     pub fn routing_tensor_name(&self) -> &str {
         &self.routing_tensor_name
+    }
+
+    pub fn routing_source(&self) -> &str {
+        if self.loaded {
+            "real-first-block"
+        } else {
+            "synthetic-fallback"
+        }
     }
 
     pub fn execution_mode(&self) -> OlmoeExecutionMode {
@@ -849,12 +964,8 @@ fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<ParsedCheckpointL
     let expert_used_count = numeric_metadata
         .get(format!("{architecture}.expert_used_count").as_str())
         .copied();
-    let routing_tensor_name = resolve_routing_tensor_name(
-        path,
-        &tensors,
-        source_hidden_size,
-        num_experts,
-    )?;
+    let routing_tensor_name =
+        resolve_routing_tensor_name(path, &tensors, source_hidden_size, num_experts)?;
 
     Ok(ParsedCheckpointLayout {
         metadata: OlmoeMetadata {
@@ -865,6 +976,7 @@ fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<ParsedCheckpointL
             num_experts,
             expert_used_count,
             quantization: quantization_label(file_type),
+            checkpoint_format: "gguf".into(),
         },
         tensors,
         routing_tensor_name,
@@ -984,7 +1096,11 @@ fn resolve_routing_tensor_name(
 
     let available: Vec<String> = ROUTING_TENSOR_CANDIDATES
         .iter()
-        .filter_map(|name| tensors.get(*name).map(|tensor| format!("{name}:{:?}", tensor.dims)))
+        .filter_map(|name| {
+            tensors
+                .get(*name)
+                .map(|tensor| format!("{name}:{:?}", tensor.dims))
+        })
         .collect();
 
     Err(HybridError::UnsupportedFormat(format!(
@@ -998,6 +1114,14 @@ fn quantization_label(file_type: Option<u32>) -> String {
         Some(1) => "F16".into(),
         Some(other) => format!("GGUF({other})"),
         None => "GGUF".into(),
+    }
+}
+
+fn resolve_active_model_path<'a>(model_path: &'a str, local_checkpoint_dir: &'a str) -> &'a str {
+    if !local_checkpoint_dir.trim().is_empty() {
+        local_checkpoint_dir
+    } else {
+        model_path
     }
 }
 
@@ -1365,12 +1489,12 @@ mod tests {
             64,
         );
         let parsed = parse_checkpoint_layout(&bytes, "test.gguf").unwrap();
-        let routing = parsed
-            .tensors
-            .get(ROUTING_TENSOR_CANDIDATES[0])
-            .unwrap();
+        let routing = parsed.tensors.get(ROUTING_TENSOR_CANDIDATES[0]).unwrap();
         let tensor = parsed.tensors.get("demo.weight").unwrap();
-        assert_eq!(tensor.relative_offset, routing.n_elements * std::mem::size_of::<f32>());
+        assert_eq!(
+            tensor.relative_offset,
+            routing.n_elements * std::mem::size_of::<f32>()
+        );
         assert_eq!(tensor.absolute_offset % 64, 0);
         assert_eq!(tensor.n_elements, 4);
     }

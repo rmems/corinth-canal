@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{HybridError, Result};
-use crate::funnel::{FunnelActivity, FUNNEL_HIDDEN_NEURONS};
+use crate::funnel::{FUNNEL_HIDDEN_NEURONS, FunnelActivity};
 use crate::types::{HybridOutput, TelemetrySnapshot};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -46,10 +46,9 @@ impl SnnLatentCalibrator {
         let previous_mean_membrane = self.prev_mean_membrane.unwrap_or(mean_membrane);
         let membrane_dv_dt = (mean_membrane - previous_mean_membrane) / dt_seconds;
 
-        let expert_weights = output
-            .expert_weights
-            .as_deref()
-            .ok_or_else(|| HybridError::OlmoeForward("missing expert_weights in HybridOutput".into()))?;
+        let expert_weights = output.expert_weights.as_deref().ok_or_else(|| {
+            HybridError::OlmoeForward("missing expert_weights in HybridOutput".into())
+        })?;
         let routing_entropy = normalized_entropy(expert_weights);
 
         let saaq_delta_q_prev = self.prev_delta_q;

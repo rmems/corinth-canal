@@ -121,7 +121,10 @@ impl SparseGifHiddenLayer {
         }
     }
 
-    pub fn run(&mut self, input_spike_train: &[Vec<usize>]) -> (Vec<Vec<usize>>, Vec<f32>, Vec<f32>) {
+    pub fn run(
+        &mut self,
+        input_spike_train: &[Vec<usize>],
+    ) -> (Vec<Vec<usize>>, Vec<f32>, Vec<f32>) {
         let mut spike_train = Vec::with_capacity(input_spike_train.len());
         let mut active = [false; FUNNEL_INPUT_NEURONS];
 
@@ -146,10 +149,12 @@ impl SparseGifHiddenLayer {
                     }
                 }
 
-                self.membrane[hidden] =
-                    self.membrane[hidden] * self.leak + drive * self.drive_scale - self.adaptation[hidden] * 0.05;
+                self.membrane[hidden] = self.membrane[hidden] * self.leak
+                    + drive * self.drive_scale
+                    - self.adaptation[hidden] * 0.05;
 
-                let threshold = self.threshold_base + self.adaptation[hidden] * self.adaptation_scale;
+                let threshold =
+                    self.threshold_base + self.adaptation[hidden] * self.adaptation_scale;
                 if self.membrane[hidden] >= threshold {
                     step_spikes.push(hidden);
                     self.membrane[hidden] -= threshold * self.reset_ratio;

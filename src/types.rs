@@ -25,6 +25,7 @@ impl TelemetrySnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridConfig {
     pub olmoe_model_path: String,
+    pub local_checkpoint_dir: String,
     pub gpu_synapse_tensor_name: String,
     pub num_experts: usize,
     pub top_k_experts: usize,
@@ -37,6 +38,7 @@ impl Default for HybridConfig {
     fn default() -> Self {
         Self {
             olmoe_model_path: String::new(),
+            local_checkpoint_dir: String::new(),
             gpu_synapse_tensor_name: "blk.0.attn_q.weight".into(),
             num_experts: 8,
             top_k_experts: 1,

@@ -10,16 +10,26 @@ fn model_path() -> String {
         .unwrap_or_default()
 }
 
+fn local_checkpoint_dir() -> String {
+    std::env::var("MOE_LOCAL_CHECKPOINT_DIR")
+        .or_else(|_| std::env::var("LOCAL_CHECKPOINT_DIR"))
+        .unwrap_or_default()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model_path = model_path();
-    if model_path.trim().is_empty() {
-        eprintln!("MOE_GGUF_PATH (or OLMOE_PATH) must point to a GGUF checkpoint");
+    let local_checkpoint_dir = local_checkpoint_dir();
+    if model_path.trim().is_empty() && local_checkpoint_dir.trim().is_empty() {
+        eprintln!(
+            "set MOE_GGUF_PATH/OLMOE_PATH for GGUF or MOE_LOCAL_CHECKPOINT_DIR/LOCAL_CHECKPOINT_DIR for a local safetensors checkpoint"
+        );
         std::process::exit(1);
     }
 
     let mut accelerator = GpuAccelerator::new();
     let mut model = HybridModel::new(HybridConfig {
         olmoe_model_path: model_path.clone(),
+        local_checkpoint_dir,
         gpu_synapse_tensor_name: "blk.0.attn_q.weight".into(),
         num_experts: 8,
         top_k_experts: 1,
@@ -30,22 +40,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let target_neurons = model.projector_mut().input_neurons();
     println!(
-        "startup model_path={} olmoe_loaded={} gpu_ready={} target_neurons={}",
-        model_path,
+        "startup model_path={} checkpoint_format={} architecture={} routing_source={} olmoe_loaded={} gpu_ready={} target_neurons={}",
+        if model_path.is_empty() {
+            model.config().local_checkpoint_dir.as_str()
+        } else {
+            model_path.as_str()
+        },
+        model.checkpoint_format(),
+        model.checkpoint_architecture(),
+        model.routing_source(),
         model.olmoe_loaded(),
         accelerator.is_ready(),
         target_neurons,
     );
 
     if !model.olmoe_loaded() {
-        return Err(Error::other("GGUF model did not load from MOE_GGUF_PATH/OLMOE_PATH").into());
+        return Err(Error::other(
+            "checkpoint did not load from the configured GGUF or local directory source",
+        )
+        .into());
     }
     if !accelerator.is_ready() {
         return Err(Error::other("GpuAccelerator is not ready").into());
     }
 
     model.prepare_gpu_temporal(&mut accelerator)?;
-    println!("prepared gguf-backed temporal path; beginning 10,000 direct GPU ticks");
+    println!(
+        "prepared temporal path; recurrent_synapse_source={}; beginning 10,000 direct GPU ticks",
+        model.recurrent_synapse_source()
+    );
 
     for tick in 0..10_000usize {
         let phase = tick as f32 * 0.31;

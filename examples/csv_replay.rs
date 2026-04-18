@@ -16,6 +16,12 @@ fn model_path() -> String {
         .unwrap_or_default()
 }
 
+fn local_checkpoint_dir() -> String {
+    std::env::var("MOE_LOCAL_CHECKPOINT_DIR")
+        .or_else(|_| std::env::var("LOCAL_CHECKPOINT_DIR"))
+        .unwrap_or_default()
+}
+
 fn parse_u64(v: &str) -> Option<u64> {
     v.parse::<u64>().ok()
 }
@@ -38,6 +44,7 @@ fn main() -> corinth_canal::Result<()> {
 
     let cfg = HybridConfig {
         olmoe_model_path: model_path,
+        local_checkpoint_dir: local_checkpoint_dir(),
         gpu_synapse_tensor_name: "blk.0.attn_q.weight".into(),
         snn_steps: 20,
         num_experts: 8,

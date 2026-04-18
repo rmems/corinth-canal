@@ -212,7 +212,10 @@ fn build_myelin_shim(nvcc: &Path, cu_dir: &Path, out_dir: &Path) {
         "myelin_shim.cu",
     );
 
-    cc::Build::new().cpp(true).object(&object).compile("myelin_shim");
+    cc::Build::new()
+        .cpp(true)
+        .object(&object)
+        .compile("myelin_shim");
     println!("cargo:warning=✓ compiled myelin_shim.cu → libmyelin_shim.a");
 }
 

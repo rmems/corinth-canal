@@ -6,7 +6,25 @@ SNN-logic quantization repo focused on the spiking projector and OLMoE routing p
 
 ## Overview
 
-`corinth-canal` keeps the real projector and first-block OLMoE routing bridge, while the old telemetry/SNN front-end is replaced by a deterministic in-repo spike generator. That keeps the crate self-contained and runnable from a fresh clone while still supporting a real GGUF-backed path.
+`corinth-canal` keeps the real projector and first-block OLMoE routing bridge, while the old telemetry/SNN front-end is replaced by a deterministic in-repo spike generator. That keeps the crate self-contained and runnable from a fresh clone while still supporting real GGUF and local Qwen safetensors-backed paths.
+
+## CI and Test Coverage
+
+A GitHub Actions workflow (`.github/workflows/test-coverage.yml`) automatically runs tests and uploads coverage reports to CodeAnt AI on every push and PR to `main`.
+
+**Workflow features:**
+- Runs full test suite with `cargo test --all-features`
+- Generates Cobertura XML coverage using `cargo llvm-cov`
+- Uploads report via `CodeAnt-AI/codeant-coverage-action@v0.0.5`
+- GPU paths use CPU stubs on standard runners (real GPU testing remains manual via examples)
+
+**Setup instructions:**
+1. Generate a GitHub Personal Access Token (classic PAT) with the `repo` scope (or use your CodeAnt access token).
+2. Add it as a repository secret named `ACCESS_TOKEN_GITHUB`:
+   - Go to repo Settings → Secrets and variables → Actions → New repository secret.
+3. Coverage metrics, trends, and PR status checks will appear in your [CodeAnt AI Control Center](https://docs.codeant.ai/control_center/test_coverage/github).
+
+The workflow handles the CUDA build stubs gracefully on `ubuntu-latest`.
 
 ## Origin
 
@@ -110,7 +128,21 @@ use corinth_canal::{HybridConfig, HybridModel};
 
 let cfg = HybridConfig {
     olmoe_model_path: "/models/olmoe.gguf".into(),
+    local_checkpoint_dir: String::new(),
     gpu_synapse_tensor_name: "blk.0.attn_q.weight".into(),
+    ..Default::default()
+};
+
+let mut model = HybridModel::new(cfg)?;
+```
+
+For a local Qwen safetensors GPTQ checkpoint directory instead of GGUF:
+
+```rust
+use corinth_canal::{HybridConfig, HybridModel};
+
+let cfg = HybridConfig {
+    local_checkpoint_dir: "/models/Qwen-MoE-2.7B-Int4".into(),
     ..Default::default()
 };
 

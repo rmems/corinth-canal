@@ -1,4 +1,4 @@
-use crate::tensor::{dot, Tensor};
+use crate::tensor::{Tensor, dot};
 
 pub fn rms_norm(input: &[f32], eps: f32) -> Tensor {
     if input.is_empty() {
