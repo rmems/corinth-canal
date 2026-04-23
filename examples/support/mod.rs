@@ -25,6 +25,10 @@ pub struct ValidationModelSpec {
     pub slug: String,
     pub family: Option<ModelFamily>,
     pub path: String,
+    /// Optional per-model routing mode override. Set by lineup-config entries
+    /// (`configs/saaq15_moe_lineup.toml`); autodiscovered / CLI-injected
+    /// specs leave this `None` and fall back to `ModelConfig::routing_mode`.
+    pub routing_mode: Option<RoutingMode>,
 }
 
 pub fn gguf_checkpoint_path_or_default() -> String {
@@ -98,12 +102,32 @@ pub fn prompt_text_for_profile(profile: &str) -> &'static str {
 
 pub fn model_family_override_from_env() -> Option<ModelFamily> {
     let value = std::env::var("MODEL_FAMILY").ok()?;
-    match value.to_ascii_lowercase().as_str() {
+    parse_family_slug(&value)
+}
+
+/// Shared family-slug parser used by `MODEL_FAMILY` and by lineup-config
+/// `family = "..."` entries. Case-insensitive; returns `None` for unknown
+/// slugs so callers can treat that as a soft validation error.
+pub fn parse_family_slug(value: &str) -> Option<ModelFamily> {
+    match value.trim().to_ascii_lowercase().as_str() {
         "olmoe" => Some(ModelFamily::Olmoe),
         "qwen3moe" | "qwen3_moe" | "qwen" => Some(ModelFamily::Qwen3Moe),
         "gemma4" | "gemma_4" | "gemma" => Some(ModelFamily::Gemma4),
         "deepseek2" | "deepseek_v2" | "deepseek" => Some(ModelFamily::DeepSeek2),
         "llama" | "llama_moe" | "llama3_moe" => Some(ModelFamily::LlamaMoe),
+        _ => None,
+    }
+}
+
+/// Same precedence rules as `routing_mode_override_from_env` but reading
+/// from an arbitrary string (used for lineup-config entries). Returns
+/// `None` for unknown values so callers can treat that as a soft validation
+/// error without aborting the whole sweep.
+pub fn parse_routing_mode(value: &str) -> Option<RoutingMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "dense" | "dense_sim" => Some(RoutingMode::DenseSim),
+        "stub" | "stub_uniform" => Some(RoutingMode::StubUniform),
+        "spiking" | "spiking_sim" => Some(RoutingMode::SpikingSim),
         _ => None,
     }
 }
@@ -209,6 +233,7 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
                 slug: slug_from_path(&path),
                 family,
                 path,
+                routing_mode: None,
             }];
         }
     }
@@ -253,6 +278,7 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
                 slug: slug.into(),
                 family,
                 path: path.to_string_lossy().into_owned(),
+                routing_mode: None,
             })
         })
         .collect()
@@ -684,7 +710,7 @@ fn env_usize(key: &str, default_value: usize) -> usize {
         .unwrap_or(default_value)
 }
 
-fn env_flag(key: &str, default_value: bool) -> bool {
+pub(super) fn env_flag(key: &str, default_value: bool) -> bool {
     std::env::var(key)
         .ok()
         .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))

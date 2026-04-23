@@ -1,0 +1,40 @@
+# corinth-canal SAAQ 1.5 MoE baseline lineup.
+#
+# Loaded by examples/saaq_latent_calibration.rs when LINEUP_CONFIG points at
+# this file. Each [[model]] entry defines one validation target; edit/extend
+# per machine without touching Rust sources.
+#
+# Fields:
+#   slug          directory-safe identifier (used in artifact paths)
+#   family        one of: olmoe | qwen3_moe | gemma4 | deepseek2 | llama_moe
+#   path          absolute path to a GGUF checkpoint
+#   routing_mode  optional: "spiking_sim" | "dense_sim" | "stub_uniform"
+#                 unset => ModelConfig::routing_mode default (SpikingSim)
+#
+# Paths are intentionally machine-local for this baseline. An example/local
+# split can come later if needed.
+
+[[model]]
+slug = "olmoe_baseline"
+family = "olmoe"
+path = "/home/raulmc/Downloads/SNN_Quantization/olmoe-0125-gguf/OLMoE-1B-7B-0125-Instruct-F16.gguf"
+
+[[model]]
+slug = "qwen3_moe_i1_iq3_m"
+family = "qwen3_moe"
+path = "/home/raulmc/Downloads/SNN_Quantization/models/qwen3-moe-i1-GGUF/qwen3-moe.i1-IQ3_M.gguf"
+
+[[model]]
+slug = "gemma4_26b_a4b_iq4_nl"
+family = "gemma4"
+path = "/home/raulmc/Downloads/SNN_Quantization/models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf"
+
+[[model]]
+slug = "deepseek_coder_v2_lite_q6_k_l"
+family = "deepseek2"
+path = "/home/raulmc/Downloads/SNN_Quantization/models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf"
+
+[[model]]
+slug = "llama_3_2_dark_champion_q5_k_m"
+family = "llama_moe"
+path = "/home/raulmc/Downloads/SNN_Quantization/models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf"
