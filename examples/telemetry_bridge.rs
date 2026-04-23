@@ -5,21 +5,16 @@ mod support;
 use corinth_canal::{
     EMBEDDING_DIM, model::Model, moe::RoutingMode, telemetry::TelemetrySnapshot,
 };
-use support::{default_spiking_model_config, gguf_checkpoint_path_or_default};
+use support::{RunConfig, default_spiking_model_config};
 
 fn main() -> corinth_canal::Result<()> {
-    let model_path = gguf_checkpoint_path_or_default();
-    let routing_mode = match std::env::var("ROUTING_MODE")
-        .unwrap_or_else(|_| "spiking".into())
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "dense" => RoutingMode::DenseSim,
-        "stub" => RoutingMode::StubUniform,
-        _ => RoutingMode::SpikingSim,
-    };
+    let _ = dotenvy::from_filename(".env.local");
+    let run_cfg = RunConfig::from_env();
+    let routing_mode = run_cfg
+        .routing_mode_override
+        .unwrap_or(RoutingMode::SpikingSim);
 
-    let mut cfg = default_spiking_model_config(model_path, 20);
+    let mut cfg = default_spiking_model_config(run_cfg.gguf_checkpoint_path.clone(), 20);
     cfg.routing_mode = routing_mode;
 
     let mut model = Model::new(cfg)?;

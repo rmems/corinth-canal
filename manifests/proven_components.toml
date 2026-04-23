@@ -1,0 +1,90 @@
+# Machine-readable mirror of docs/MODULE_STATUS.md.
+#
+# Status ladder: reference < stabilizing < proven < frozen.
+# Target repo is the future rmems crate a module should promote into.
+
+schema_version = 1
+
+[[component]]
+path            = "src/model/core.rs"
+status          = "reference"
+target_repo     = "rmems-model"
+owner_notes     = "Gated on Stage E routing-CSV path refactor."
+last_proven_run = ""
+
+[[component]]
+path            = "src/model/temporal.rs"
+status          = "stabilizing"
+target_repo     = "rmems-model"
+owner_notes     = "GPU temporal loop proven; needs explicit CSV path field."
+last_proven_run = ""
+
+[[component]]
+path            = "src/model/telemetry_io.rs"
+status          = "stabilizing"
+target_repo     = "rmems-model"
+owner_notes     = "Pure helper; blocked on caller passing absolute path."
+last_proven_run = ""
+
+[[component]]
+path            = "src/moe/mod.rs"
+status          = "stabilizing"
+target_repo     = "rmems-moe"
+owner_notes     = "OlmoeRouter host; pending full five-family matrix."
+last_proven_run = ""
+
+[[component]]
+path            = "src/moe/checkpoint.rs"
+status          = "reference"
+target_repo     = "rmems-moe"
+owner_notes     = "WIP parser repaired; needs proper test battery."
+last_proven_run = ""
+
+[[component]]
+path            = "src/moe/adapter.rs"
+status          = "stabilizing"
+target_repo     = "rmems-moe"
+owner_notes     = "Five-family support; needs CI matrix."
+last_proven_run = ""
+
+[[component]]
+path            = "src/moe/routing.rs"
+status          = "stabilizing"
+target_repo     = "rmems-moe"
+owner_notes     = "Stateless math; low-risk promotion candidate."
+last_proven_run = ""
+
+[[component]]
+path            = "src/projector.rs"
+status          = "stabilizing"
+target_repo     = "rmems-projector"
+owner_notes     = "ProjectionMode surface frozen."
+last_proven_run = ""
+
+[[component]]
+path            = "src/funnel.rs"
+status          = "reference"
+target_repo     = "rmems-funnel"
+owner_notes     = "GIF layer shared between CPU and GPU callers."
+last_proven_run = ""
+
+[[component]]
+path            = "src/telemetry.rs"
+status          = "stabilizing"
+target_repo     = "rmems-telemetry"
+owner_notes     = "Schema frozen."
+last_proven_run = ""
+
+[[component]]
+path            = "src/latent.rs"
+status          = "stabilizing"
+target_repo     = "rmems-latent"
+owner_notes     = "Dual-SAAQ working; needs REPEAT_COUNT=2 determinism check."
+last_proven_run = ""
+
+[[component]]
+path            = "src/gpu"
+status          = "reference"
+target_repo     = "rmems-gpu"
+owner_notes     = "Blocked on build.rs portability."
+last_proven_run = ""

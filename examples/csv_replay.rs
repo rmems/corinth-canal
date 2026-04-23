@@ -8,7 +8,7 @@ use corinth_canal::{
     EMBEDDING_DIM, FUNNEL_HIDDEN_NEURONS, HybridError, TelemetryFunnel, model::Model,
     telemetry::TelemetrySnapshot,
 };
-use support::default_spiking_model_config;
+use support::{RunConfig, default_spiking_model_config};
 
 const EXPECTED_HEADER: &str = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
 const TELEMETRY_THRESHOLDS: [f32; 4] = [1.0, 5.0, 1.0, 5.0];
@@ -30,9 +30,11 @@ fn main() -> corinth_canal::Result<()> {
         std::process::exit(1);
     }
 
+    let _ = dotenvy::from_filename(".env.local");
+    let run_cfg = RunConfig::from_env();
+
     let csv_path = &args[1];
-    let model_path = support::gguf_checkpoint_path_or_default();
-    let cfg = default_spiking_model_config(model_path, 20);
+    let cfg = default_spiking_model_config(run_cfg.gguf_checkpoint_path.clone(), 20);
 
     let mut model = Model::new_with_projector_neurons(cfg.clone(), FUNNEL_HIDDEN_NEURONS)?;
     let mut funnel = TelemetryFunnel::new(TELEMETRY_THRESHOLDS, cfg.snn_steps);

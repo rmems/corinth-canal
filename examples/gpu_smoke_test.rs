@@ -3,10 +3,18 @@ mod support;
 use corinth_canal::{gpu::GpuAccelerator, model::Model};
 use std::io::Error;
 use std::time::Instant;
-use support::{default_spiking_model_config, required_gguf_checkpoint_path};
+use support::{RunConfig, default_spiking_model_config};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let model_path = required_gguf_checkpoint_path()?;
+    let _ = dotenvy::from_filename(".env.local");
+    let run_cfg = RunConfig::from_env();
+    if run_cfg.gguf_checkpoint_path.trim().is_empty() {
+        return Err(Error::other(
+            "GGUF_CHECKPOINT_PATH must point to a GGUF checkpoint",
+        )
+        .into());
+    }
+    let model_path = run_cfg.gguf_checkpoint_path.clone();
 
     let mut accelerator = GpuAccelerator::new();
     let mut model = Model::new(default_spiking_model_config(model_path.clone(), 1))?;

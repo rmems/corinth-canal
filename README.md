@@ -12,6 +12,16 @@ SNN-logic quantization repo focused on the spiking projector and OlmoeRouter rou
 
 This repository originated from the `spikenaut-hybrid` codebase and is now organized around feature modules: `src/model`, `src/moe`, `src/projector.rs`, `src/funnel.rs`, `src/telemetry.rs`, and `src/latent.rs`.
 
+Going forward, `corinth-canal` is the **single-crate reference implementation** for the `rmems` modular line. Proven components will graduate into separate `rmems-*` crates per `docs/PROMOTION_RULES.md`; `corinth-canal` itself stays as one crate.
+
+## Documentation
+
+- `docs/ARCHITECTURE.md` — block diagram, module map, and hidden control flow (CWD writes, env-resolved paths, fallback stamping).
+- `docs/RUN_PROFILES.md` — catalog of validated `(prompt, telemetry, heartbeat, SAAQ rule)` tuples with the exact `just` command for each.
+- `docs/PROMOTION_RULES.md` — criteria for graduating a module out of this reference repo.
+- `docs/MODULE_STATUS.md` — live status table; machine-readable mirror in `manifests/proven_components.toml`.
+- `manifests/known_good_runs.md` — append-only log of blessed run IDs.
+
 ## Module Map
 
 - `src/model/*`: end-to-end runtime orchestration, GPU temporal logic, and routing telemetry helpers
@@ -326,7 +336,7 @@ tick=2 best_walker=45 elapsed_us=842
 ...
 ```
 
-This path exercises the pure Spikenaut physics engine (GIF membrane + adaptive thresholds + two-pass SAT reduction) driven by realistic, pooled semantic pressure.
+This path exercises the pure SNN physics engine (GIF membrane + adaptive thresholds + two-pass SAT reduction) driven by realistic, pooled semantic pressure.
 
 ### Validation Sweeps (dual-SAAQ, CSV-replay, repeat-aware)
 
@@ -346,10 +356,10 @@ where `<run_id>` = `<YYYYMMDDTHHMMSS>_<prompt_slug>_r<repeat_idx>` (UTC, sortabl
 | Env | Default | Purpose |
 |-----|---------|---------|
 | `TELEMETRY_SOURCE` | `synthetic` | `synthetic` runs the in-process sinusoid; `csv` replays a canonical telemetry CSV. Must be set explicitly to `csv` for real-corpus runs — defaults are dependency-light on purpose. |
-| `TELEMETRY_CSV_PATH` | `/home/raulmc/Julia/Surrogate_Viz.jl/telemetry.csv` | Canonical-format CSV (`timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w`). Missing/malformed → fallback to synthetic, stamped `synthetic_fallback` in the manifest. |
+| `TELEMETRY_CSV_PATH` | _(unset)_ | Canonical-format CSV (`timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w`). Required when `TELEMETRY_SOURCE=csv`. Missing/malformed → fallback to synthetic, stamped `synthetic_fallback` in the manifest. |
 | `TICKS` | `512` | Per-run tick count. Special case: when `TICKS=0` *and* `TELEMETRY_SOURCE=csv`, uses the exact CSV row count so a SymbolicRegression.jl corpus run covers exactly one loop with zero wraparound contamination. |
 | `REPEAT_COUNT` | `1` | Number of repeats per (model, telemetry, heartbeat) tuple. Deterministic inputs mean repeats should bit-match — divergence indicates scheduler noise. |
-| `VALIDATION_OUTPUT_ROOT` | `/home/raulmc/Julia/Surrogate_Viz.jl/outputs/saaq15` | Top of the per-run output tree. |
+| `VALIDATION_OUTPUT_ROOT` | `./artifacts` | Top of the per-run output tree. Repo-relative by default; set to an absolute path to redirect runs into an external consumer. |
 | `HEARTBEAT_MATRIX` | `off,on` | Kept as-is for this round; amplitude/period sweep is future work. |
 | `SAAQ_RULE` | `saaq_v1_5` | Selects which rule fills the legacy `saaq_delta_q_{prev,target}` columns. Both rules are always emitted in the dual-SAAQ columns regardless. |
 
@@ -484,11 +494,11 @@ If you use `corinth-canal` or the SNN-logic quantization approach in your resear
 
 ```bibtex
 @misc{corinth-canal2026,
-  title        = {corinth-canal: Turning MOE Architecture into SNN Quantization},
+  title        = {corinth-canal: Turning MoE Architectures into SNN Quantization},
   author       = {Raul Montoya Cardenas},
   year         = {2026},
-  howpublished = {\url{https://github.com/Spikenaut/corinth-canal}},
-  note         = {SNN-logic quantization with GIF-Ternary spiking for MoE models}
+  howpublished = {\url{https://github.com/rmems/corinth-canal}},
+  note         = {SNN-logic quantization reference crate with GIF-Ternary spiking for MoE models}
 }
 ```
 

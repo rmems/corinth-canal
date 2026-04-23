@@ -10,11 +10,9 @@ use std::io::{BufWriter, Error, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 use support::{
-    ResolvedTelemetry, TelemetrySource, ValidationModelSpec, default_spiking_model_config,
-    discover_validation_models, heartbeat_gain, heartbeat_modes_for_matrix,
-    model_family_override_from_env, prompt_embedding_for_validation, prompt_profile_slug,
-    prompt_text_for_profile, repeat_count_from_env, resolve_telemetry_source,
-    saaq_update_rule_from_env, telemetry_snapshot_for_tick, ticks_from_env,
+    ResolvedTelemetry, RunConfig, TelemetrySource, ValidationModelSpec,
+    default_spiking_model_config, heartbeat_gain, prompt_embedding_for_validation,
+    telemetry_snapshot_for_tick,
 };
 
 #[derive(Debug, Serialize)]
@@ -66,26 +64,24 @@ struct RunContext<'a> {
     resolved: &'a ResolvedTelemetry,
     run_id: String,
     output_root: PathBuf,
+    model_family_override: Option<corinth_canal::ModelFamily>,
+    saaq_rule: SaaqUpdateRule,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let prompt_profile = prompt_profile_slug();
-    let prompt_text = prompt_text_for_profile(&prompt_profile);
-    let ticks = ticks_from_env(512);
-    let repeat_count = repeat_count_from_env();
-    let resolved = resolve_telemetry_source();
-    let output_root = output_root_from_env();
+    let _ = dotenvy::from_filename(".env.local");
+    let cfg = RunConfig::from_env();
 
     // Effective tick count: when TICKS=0 and CSV replay is live, use the full
     // CSV length so SR.jl corpus runs cover exactly one loop with zero
     // wraparound contamination (per plan: wraparound is for smoke only).
-    let effective_ticks = match (ticks, resolved.source, resolved.row_count()) {
+    let effective_ticks = match (cfg.ticks, cfg.telemetry.source, cfg.telemetry.row_count()) {
         (0, TelemetrySource::Csv, Some(rows)) if rows > 0 => rows,
         (0, _, _) => 1, // degenerate guard; never emit a zero-tick run
         (other, _, _) => other,
     };
 
-    if let Some(rows) = resolved.row_count() {
+    if let Some(rows) = cfg.telemetry.row_count() {
         if effective_ticks > rows {
             eprintln!(
                 "wraparound: ticks={effective_ticks} > rows={rows}; regression corpus may be contaminated by looped endings. Prefer TICKS=0 or TICKS<={rows}.",
@@ -95,35 +91,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "saaq_latent_calibration: telemetry_source={} ticks={} repeat_count={} output_root={}",
-        resolved.source_label,
+        cfg.telemetry.source_label,
         effective_ticks,
-        repeat_count,
-        output_root.display(),
+        cfg.repeat_count,
+        cfg.output_root.display(),
     );
 
-    let models = discover_validation_models();
-    if models.is_empty() {
+    if cfg.validation_models.is_empty() {
         return Err(Error::other(
             "No GGUF validation models discovered. Set GGUF_CHECKPOINT_PATH or place models under ~/Downloads/SNN_Quantization.",
         )
         .into());
     }
 
-    for spec in models {
-        for repeat_idx in 0..repeat_count {
-            for heartbeat_enabled in heartbeat_modes_for_matrix() {
-                let run_id = build_run_id(&prompt_profile, repeat_idx);
+    for spec in &cfg.validation_models {
+        for repeat_idx in 0..cfg.repeat_count {
+            for &heartbeat_enabled in &cfg.heartbeat_matrix {
+                let run_id = build_run_id(&cfg.prompt_profile, repeat_idx);
                 let ctx = RunContext {
-                    spec: &spec,
-                    prompt_profile: &prompt_profile,
-                    prompt_text,
+                    spec,
+                    prompt_profile: &cfg.prompt_profile,
+                    prompt_text: cfg.prompt_text,
                     ticks: effective_ticks,
                     heartbeat_enabled,
                     repeat_idx,
-                    repeat_count,
-                    resolved: &resolved,
+                    repeat_count: cfg.repeat_count,
+                    resolved: &cfg.telemetry,
                     run_id,
-                    output_root: output_root.clone(),
+                    output_root: cfg.output_root.clone(),
+                    model_family_override: cfg.model_family_override,
+                    saaq_rule: cfg.saaq_rule,
                 };
                 run_validation(&ctx)?;
             }
@@ -134,10 +131,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_validation(ctx: &RunContext<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    // Pre-create the run directory so we can anchor the GPU routing
+    // telemetry CSV inside it via ModelConfig and avoid polluting CWD.
+    let run_dir = build_run_dir(ctx)?;
+    fs::create_dir_all(&run_dir)?;
+    let routing_csv_path = run_dir.join("snn_gpu_routing_telemetry.csv");
+
     let mut config = default_spiking_model_config(ctx.spec.path.clone(), 1);
-    config.model_family = model_family_override_from_env().or(ctx.spec.family);
+    config.model_family = ctx.model_family_override.or(ctx.spec.family);
     config.heartbeat.enabled = ctx.heartbeat_enabled;
-    let saaq_rule = saaq_update_rule_from_env();
+    config.gpu_routing_telemetry_path = Some(routing_csv_path.clone());
+    let saaq_rule = ctx.saaq_rule;
 
     let mut accelerator = GpuAccelerator::new();
     let mut model = Model::new(config.clone())?;
@@ -150,8 +154,6 @@ fn run_validation(ctx: &RunContext<'_>) -> Result<(), Box<dyn std::error::Error>
         .into());
     }
 
-    let run_dir = build_run_dir(ctx)?;
-    fs::create_dir_all(&run_dir)?;
     let tick_path = run_dir.join("tick_telemetry.txt");
     let latent_path = run_dir.join("latent_telemetry.csv");
     let manifest_path = run_dir.join("run_manifest.json");
@@ -159,6 +161,11 @@ fn run_validation(ctx: &RunContext<'_>) -> Result<(), Box<dyn std::error::Error>
         tick_path.file_name().unwrap().to_string_lossy().into_owned(),
         latent_path.file_name().unwrap().to_string_lossy().into_owned(),
         manifest_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        routing_csv_path
             .file_name()
             .unwrap()
             .to_string_lossy()
@@ -406,10 +413,12 @@ fn build_manifest(
         output_root: ctx.output_root.to_string_lossy().into_owned(),
         repeat_idx: ctx.repeat_idx,
         repeat_count: ctx.repeat_count,
-        // `snn_gpu_routing_telemetry.csv` is written to CWD by
-        // `forward_gpu_temporal` / `compute_routing_telemetry` only; this
-        // runner uses `tick_gpu_temporal`, which does not touch that file.
-        cwd_routing_csv_contaminated: false,
+        // True iff the routing CSV would land in CWD. Since Stage E this
+        // runner always sets `ModelConfig::gpu_routing_telemetry_path` to
+        // an absolute path inside `run_dir`, so CWD contamination is
+        // impossible regardless of whether `tick_gpu_temporal` or
+        // `forward_gpu_temporal` is used.
+        cwd_routing_csv_contaminated: config.gpu_routing_telemetry_path.is_none(),
         generated_files,
     }
 }
@@ -427,16 +436,6 @@ fn saaq_rule_label(rule: SaaqUpdateRule) -> &'static str {
         SaaqUpdateRule::LegacyV1_0 => "LegacyV1_0",
         SaaqUpdateRule::SaaqV1_5SqrtRate => "SaaqV1_5SqrtRate",
     }
-}
-
-fn output_root_from_env() -> PathBuf {
-    if let Ok(value) = std::env::var("VALIDATION_OUTPUT_ROOT") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
-    PathBuf::from("/home/raulmc/Julia/Surrogate_Viz.jl/outputs/saaq15")
 }
 
 fn build_run_id(prompt_profile: &str, repeat_idx: usize) -> String {

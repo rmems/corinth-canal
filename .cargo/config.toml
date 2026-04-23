@@ -1,0 +1,14 @@
+# Cargo aliases for corinth-canal.
+#
+# These are pure cargo shortcuts — the end-to-end workflow recipes
+# (telemetry-source switching, dotenv loading, artifact cleanup) live in
+# the top-level `justfile`. Keep this file scoped to cargo-only wrappers
+# that stay useful even without `just`.
+
+[alias]
+ck          = "check --all-targets"
+smoke       = "run --release --example gpu_smoke_test"
+replay      = "run --release --example csv_replay"
+saaq        = "run --release --example saaq_latent_calibration"
+bridge      = "run --release --example telemetry_bridge"
+ex-check    = "check --examples"

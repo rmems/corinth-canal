@@ -1,7 +1,6 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # IDE
 .idea/
@@ -19,3 +18,10 @@ Thumbs.db
 
 # Agent notes
 AGENTS.md
+
+# Local env overrides (contributors create their own, never tracked)
+.env.local
+
+# Generated per-run artifacts (tracked via .gitkeep only)
+/artifacts/*
+!/artifacts/.gitkeep

@@ -1,5 +1,7 @@
 //! Public data types for `corinth-canal`.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 /// Dimensionality of the dense embedding the projector hands to OlmoeRouter.
@@ -82,6 +84,13 @@ pub struct ModelConfig {
     pub snn_steps: usize,
     pub projection_mode: ProjectionMode,
     pub heartbeat: HeartbeatConfig,
+    /// Destination path for the GPU routing telemetry CSV written by
+    /// `Model::forward_gpu_temporal` (and `Model::forward` on the GPU path).
+    /// When `None`, the runtime falls back to the legacy CWD-relative
+    /// filename `snn_gpu_routing_telemetry.csv`. Prefer an absolute path
+    /// anchored in the caller's per-run artifact directory.
+    #[serde(default)]
+    pub gpu_routing_telemetry_path: Option<PathBuf>,
 }
 
 impl Default for ModelConfig {
@@ -96,6 +105,7 @@ impl Default for ModelConfig {
             snn_steps: 20,
             projection_mode: ProjectionMode::SpikingTernary,
             heartbeat: HeartbeatConfig::default(),
+            gpu_routing_telemetry_path: None,
         }
     }
 }
