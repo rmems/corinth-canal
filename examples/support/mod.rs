@@ -1,6 +1,10 @@
 //! Shared helper functions for the example binaries.
 #![allow(dead_code)]
 
+pub mod config;
+
+pub use config::{DEFAULT_OUTPUT_ROOT, DEFAULT_TICKS, RunConfig, output_root_from_env};
+
 use corinth_canal::{
     HeartbeatConfig, HeartbeatInjector, ModelFamily, SaaqUpdateRule, EMBEDDING_DIM,
     model::ModelConfig,
@@ -519,19 +523,40 @@ pub fn heartbeat_injector_from_env() -> HeartbeatInjector {
 }
 
 fn llama_embedding_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    llama_embedding_binary_optional()
+        .ok_or_else(|| Error::other("LLAMA_EMBEDDING_BIN must point to llama.cpp's llama-embedding binary").into())
+}
+
+/// Non-erroring variant used by [`RunConfig::from_env`]: returns `None`
+/// when neither `LLAMA_EMBEDDING_BIN` nor the author's local build path is
+/// present. Callers that actually need the binary (e.g. prompt-embedding
+/// generation) should still go through [`llama_embedding_binary`].
+pub fn llama_embedding_binary_optional() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("LLAMA_EMBEDDING_BIN") {
         let binary = PathBuf::from(path);
         if binary.exists() {
-            return Ok(binary);
+            return Some(binary);
         }
     }
 
     let local = PathBuf::from("/home/raulmc/llama.cpp/build/bin/llama-embedding");
     if local.exists() {
-        return Ok(local);
+        return Some(local);
     }
 
-    Err(Error::other("LLAMA_EMBEDDING_BIN must point to llama.cpp's llama-embedding binary").into())
+    None
+}
+
+/// Parse `ROUTING_MODE` into a [`RoutingMode`]. Returns `None` when the env
+/// var is unset so callers can keep the config-provided default.
+pub fn routing_mode_override_from_env() -> Option<RoutingMode> {
+    let raw = std::env::var("ROUTING_MODE").ok()?;
+    match raw.to_ascii_lowercase().as_str() {
+        "dense" => Some(RoutingMode::DenseSim),
+        "stub" => Some(RoutingMode::StubUniform),
+        "spiking" | "spiking_sim" => Some(RoutingMode::SpikingSim),
+        _ => None,
+    }
 }
 
 fn parse_llama_embedding_payload(
