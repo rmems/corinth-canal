@@ -367,6 +367,16 @@ where `<run_id>` = `<YYYYMMDDTHHMMSS>_<prompt_slug>_r<repeat_idx>` (UTC, sortabl
 | `RUN_TAG` | _(unset)_ | Optional tag to append to the generated `run_id` (e.g. producing `YYYYMMDDTHHMMSS_prompt_r0_tag`). |
 | `STRICT_REPEAT_CHECK` | `false` | When true, strict bit-for-bit CSV comparison is performed across all repeats in a group. Mismatches are flagged in `summary.json`. |
 
+#### SAAQ 1.5 Experiment MoE Lineup
+
+The following models are used in the SAAQ 1.5 baseline campaign:
+
+- `OMLoE-1B-7B.gguf` (baseline)
+- `L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf`
+- `qwen3-moe-i1-IQ3_M.gguf`
+- `gemma-4-26B-A4B-it-UD-IQ4_NL.gguf`
+- `DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf`
+
 #### Wraparound hygiene
 
 For `TELEMETRY_SOURCE=csv`, if `TICKS > rows.len()` the runner emits a warning:
