@@ -1,13 +1,12 @@
 //! GPU temporal loop helpers for [`Model`](super::Model).
 
 use super::{
-    core::{GPU_ROUTING_TELEMETRY_PATH, IZ_NEURONS, N_NEURONS},
+    core::{IZ_NEURONS, N_NEURONS, resolve_gpu_routing_telemetry_path},
     telemetry_io::append_gpu_routing_telemetry_row,
 };
 use super::Model;
 use crate::gpu::{GpuAccelerator, GpuError, GpuResult};
 use crate::types::{ModelOutput, TelemetrySnapshot};
-use std::path::Path;
 
 impl Model {
     /// GPU-only temporal simulation with GIF (Generalized Integrate-and-Fire).
@@ -87,8 +86,9 @@ impl Model {
             0.0
         };
         let mean_adaptation = 0.25f32;
+        let target = resolve_gpu_routing_telemetry_path(&self.config);
         let _ = append_gpu_routing_telemetry_row(
-            Path::new(GPU_ROUTING_TELEMETRY_PATH),
+            &target,
             self.global_step as usize,
             0,
             best_walker as i32,

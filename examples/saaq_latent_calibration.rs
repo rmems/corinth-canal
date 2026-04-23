@@ -131,9 +131,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_validation(ctx: &RunContext<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    // Pre-create the run directory so we can anchor the GPU routing
+    // telemetry CSV inside it via ModelConfig and avoid polluting CWD.
+    let run_dir = build_run_dir(ctx)?;
+    fs::create_dir_all(&run_dir)?;
+    let routing_csv_path = run_dir.join("snn_gpu_routing_telemetry.csv");
+
     let mut config = default_spiking_model_config(ctx.spec.path.clone(), 1);
     config.model_family = ctx.model_family_override.or(ctx.spec.family);
     config.heartbeat.enabled = ctx.heartbeat_enabled;
+    config.gpu_routing_telemetry_path = Some(routing_csv_path.clone());
     let saaq_rule = ctx.saaq_rule;
 
     let mut accelerator = GpuAccelerator::new();
@@ -147,8 +154,6 @@ fn run_validation(ctx: &RunContext<'_>) -> Result<(), Box<dyn std::error::Error>
         .into());
     }
 
-    let run_dir = build_run_dir(ctx)?;
-    fs::create_dir_all(&run_dir)?;
     let tick_path = run_dir.join("tick_telemetry.txt");
     let latent_path = run_dir.join("latent_telemetry.csv");
     let manifest_path = run_dir.join("run_manifest.json");
@@ -156,6 +161,11 @@ fn run_validation(ctx: &RunContext<'_>) -> Result<(), Box<dyn std::error::Error>
         tick_path.file_name().unwrap().to_string_lossy().into_owned(),
         latent_path.file_name().unwrap().to_string_lossy().into_owned(),
         manifest_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        routing_csv_path
             .file_name()
             .unwrap()
             .to_string_lossy()
@@ -403,10 +413,12 @@ fn build_manifest(
         output_root: ctx.output_root.to_string_lossy().into_owned(),
         repeat_idx: ctx.repeat_idx,
         repeat_count: ctx.repeat_count,
-        // `snn_gpu_routing_telemetry.csv` is written to CWD by
-        // `forward_gpu_temporal` / `compute_routing_telemetry` only; this
-        // runner uses `tick_gpu_temporal`, which does not touch that file.
-        cwd_routing_csv_contaminated: false,
+        // True iff the routing CSV would land in CWD. Since Stage E this
+        // runner always sets `ModelConfig::gpu_routing_telemetry_path` to
+        // an absolute path inside `run_dir`, so CWD contamination is
+        // impossible regardless of whether `tick_gpu_temporal` or
+        // `forward_gpu_temporal` is used.
+        cwd_routing_csv_contaminated: config.gpu_routing_telemetry_path.is_none(),
         generated_files,
     }
 }

@@ -62,6 +62,7 @@ pub fn default_spiking_model_config(gguf_checkpoint_path: String, snn_steps: usi
         snn_steps,
         projection_mode: ProjectionMode::SpikingTernary,
         heartbeat: heartbeat_config_from_env(),
+        gpu_routing_telemetry_path: None,
     }
 }
 

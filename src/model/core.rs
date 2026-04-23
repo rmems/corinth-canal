@@ -8,13 +8,25 @@ use crate::projector::Projector;
 use crate::types::{
     EMBEDDING_DIM, ModelConfig, ModelFamily, ModelOutput, RoutingMode, TelemetrySnapshot,
 };
-use std::path::Path;
 
 pub(super) const N_NEURONS: usize = 2048;
 pub(super) const IZ_NEURONS: usize = 5;
 pub(super) const GPU_ROUTING_TELEMETRY_HEADER: &str =
     "token_idx,best_score,best_walker,spike_count,mean_adaptation,active_fraction";
 pub(super) const GPU_ROUTING_TELEMETRY_PATH: &str = "snn_gpu_routing_telemetry.csv";
+
+/// Resolve the effective routing-telemetry CSV path for a model.
+///
+/// Returns an owned [`PathBuf`] pointing at either the caller-configured
+/// absolute path (via `ModelConfig::gpu_routing_telemetry_path`) or the
+/// legacy CWD-relative `snn_gpu_routing_telemetry.csv` fallback. Kept as a
+/// free function so both `core.rs` and `temporal.rs` share one contract.
+pub(super) fn resolve_gpu_routing_telemetry_path(config: &ModelConfig) -> std::path::PathBuf {
+    config
+        .gpu_routing_telemetry_path
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from(GPU_ROUTING_TELEMETRY_PATH))
+}
 
 /// Standalone runtime that keeps the projector and router logic real while
 /// replacing the original front-end with deterministic synthetic spikes.
@@ -177,8 +189,9 @@ impl Model {
                 GpuError::MemoryError("best_walker buffer returned no values".into())
             })?;
 
+        let target = resolve_gpu_routing_telemetry_path(&self.config);
         append_gpu_routing_telemetry_row(
-            Path::new(GPU_ROUTING_TELEMETRY_PATH),
+            &target,
             token_idx,
             final_score,
             final_walker,
