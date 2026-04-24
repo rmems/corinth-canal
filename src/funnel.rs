@@ -8,6 +8,18 @@ const BANK_WIDTH: usize = 2;
 const GIF_FAN_IN: usize = 4;
 const GIF_IZ_NEURONS: usize = 5;
 
+pub fn active_neuron_indices<T>(spikes: &[T]) -> Vec<usize>
+where
+    T:PartialEq + Default,
+{
+    let zero = T::default();
+
+    spikes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, value)| (value != &zero).then_some(idx))
+        .collect()   
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunnelActivity {
     pub ternary_events: [i8; 4],
