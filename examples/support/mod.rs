@@ -229,7 +229,9 @@ pub fn pooled_prompt_embedding_from_llama_cpp(
 pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
     if let Ok(path) = std::env::var("GGUF_CHECKPOINT_PATH") {
         if !path.trim().is_empty() {
-            let family = OlmoeRouter::probe_model(&path, None).ok().map(|metadata| metadata.family);
+            let family = OlmoeRouter::probe_model(&path, None)
+                .ok()
+                .map(|metadata| metadata.family);
             return vec![ValidationModelSpec {
                 slug: slug_from_path(&path),
                 family,
