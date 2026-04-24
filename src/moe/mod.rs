@@ -106,6 +106,7 @@ pub struct RouterMetadata {
     pub routing_tensor_name: String,
     pub preferred_gpu_synapse_tensor_name: Option<String>,
     pub synapse_source: String,
+    pub real_gpu_synapse_tensor_name: Option<String>
 }
 
 #[derive(Debug, Clone)]
