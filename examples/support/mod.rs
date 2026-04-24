@@ -642,8 +642,20 @@ fn resample_embedding(input: &[f32], target_len: usize) -> Vec<f32> {
         return vec![input.iter().sum::<f32>() / input.len() as f32];
     }
 
-    let scale:f32 = (input.len() - 1) as f32 / (target_len - 1) as f32;
-    let out: Vec<f32> = Vec::with_capacity(target_len);
+    let scale = (input.len() - 1) as f32 / (target_len - 1) as f32;
+    let mut out= Vec::with_capacity(target_len);
+
+for idx in 0..target_len {
+    let source = idx as f32 * scale;
+    let lo = source.floor() as usize;
+    let hi = source.ceil().min((input.len() - 1) as f32) as usize;
+    if lo == hi {
+        out.push(input[lo]);
+        ) else {
+            let t = (source - lo as f32) / (hi as f32 - lo as f32);
+            out.push((1.0 - t) * input[lo] + t * input[hi]);
+        }
+    }
     out
 }
 
