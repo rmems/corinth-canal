@@ -3,14 +3,9 @@
 
 pub mod config;
 
-pub use config::RunConfig;
-
 use corinth_canal::{
-    HeartbeatConfig, HeartbeatInjector, ModelFamily, SaaqUpdateRule, EMBEDDING_DIM,
-    model::ModelConfig,
-    moe::RoutingMode,
-    moe::OlmoeRouter,
-    projector::ProjectionMode,
+    EMBEDDING_DIM, HeartbeatConfig, HeartbeatInjector, ModelFamily, SaaqUpdateRule,
+    model::ModelConfig, moe::OlmoeRouter, moe::RoutingMode, projector::ProjectionMode,
 };
 use std::io::Error;
 use std::path::{Path, PathBuf};
@@ -56,9 +51,12 @@ pub fn default_spiking_model_config(gguf_checkpoint_path: String, snn_steps: usi
         model_family: probe.as_ref().map(|metadata| metadata.family),
         gpu_synapse_tensor_name: probe
             .as_ref()
-            .and_then(|metadata| metadata.preferred_gpu_synapse_tensor_name.clone())
+            .and_then(|metadata| metadata.real_gpu_synapse_tensor_name.clone())
             .unwrap_or_default(),
-        num_experts: probe.as_ref().map(|metadata| metadata.num_experts).unwrap_or(8),
+        num_experts: probe
+            .as_ref()
+            .map(|metadata| metadata.num_experts)
+            .unwrap_or(8),
         top_k_experts: probe
             .as_ref()
             .map(|metadata| metadata.expert_used_count.max(1))
@@ -245,7 +243,9 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
     let Some(home) = std::env::var_os("HOME") else {
         return Vec::new();
     };
-    let root = PathBuf::from(home).join("Downloads").join("SNN_Quantization");
+    let root = PathBuf::from(home)
+        .join("Downloads")
+        .join("SNN_Quantization");
     let candidates = [
         (
             "olmoe_baseline",
@@ -265,12 +265,16 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
         (
             "deepseek_coder_v2_lite_q6_k_l",
             Some(ModelFamily::DeepSeek2),
-            PathBuf::from("models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf"),
+            PathBuf::from(
+                "models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf",
+            ),
         ),
         (
             "llama_3_2_dark_champion_q5_k_m",
             Some(ModelFamily::LlamaMoe),
-            PathBuf::from("models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf"),
+            PathBuf::from(
+                "models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf",
+            ),
         ),
     ];
 
@@ -334,7 +338,7 @@ pub fn telemetry_source_from_env() -> TelemetrySource {
         .trim()
     {
         "csv" => TelemetrySource::Csv,
-        // Empty string and any unrecognised value fall back to Synthetic so
+        // Empty string and any unrecognised value fall back to Synthetic
         // contributors never get surprised by a missing CSV path.
         _ => TelemetrySource::Synthetic,
     }
@@ -530,7 +534,11 @@ pub fn telemetry_snapshot_for_tick(
 
 fn parse_finite_f32(value: &str) -> Option<f32> {
     let parsed = value.parse::<f32>().ok()?;
-    if parsed.is_finite() { Some(parsed) } else { None }
+    if parsed.is_finite() {
+        Some(parsed)
+    } else {
+        None
+    }
 }
 
 pub fn synthetic_base_snapshot(tick: usize) -> corinth_canal::TelemetrySnapshot {
@@ -555,8 +563,9 @@ pub fn heartbeat_injector_from_env() -> HeartbeatInjector {
 }
 
 fn llama_embedding_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    llama_embedding_binary_optional()
-        .ok_or_else(|| Error::other("LLAMA_EMBEDDING_BIN must point to llama.cpp's llama-embedding binary").into())
+    llama_embedding_binary_optional().ok_or_else(|| {
+        Error::other("LLAMA_EMBEDDING_BIN must point to llama.cpp's llama-embedding binary").into()
+    })
 }
 
 /// Non-erroring variant used by [`RunConfig::from_env`]: returns `None`
@@ -591,9 +600,7 @@ pub fn routing_mode_override_from_env() -> Option<RoutingMode> {
     }
 }
 
-fn parse_llama_embedding_payload(
-    stdout: &str,
-) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+fn parse_llama_embedding_payload(stdout: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     #[derive(serde::Deserialize)]
     struct JsonEmbeddingRow {
         embedding: Vec<f32>,
@@ -643,16 +650,16 @@ fn resample_embedding(input: &[f32], target_len: usize) -> Vec<f32> {
     }
 
     let scale = (input.len() - 1) as f32 / (target_len - 1) as f32;
-    let mut out= Vec::with_capacity(target_len);
+    let mut out = Vec::with_capacity(target_len);
 
-for idx in 0..target_len {
-    let source = idx as f32 * scale;
-    let lo = source.floor() as usize;
-    let hi = source.ceil().min((input.len() - 1) as f32) as usize;
-    if lo == hi {
-        out.push(input[lo]);
-    } else {
-            let t = (source - lo as f32);
+    for idx in 0..target_len {
+        let source = idx as f32 * scale;
+        let lo = source.floor() as usize;
+        let hi = source.ceil().min((input.len() - 1) as f32) as usize;
+        if lo == hi {
+            out.push(input[lo]);
+        } else {
+            let t = source - lo as f32;
             out.push(input[lo] * (1.0 - t) + input[hi]);
         }
     }
@@ -719,7 +726,12 @@ fn env_usize(key: &str, default_value: usize) -> usize {
 pub(super) fn env_flag(key: &str, default_value: bool) -> bool {
     std::env::var(key)
         .ok()
-        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(default_value)
 }
 
@@ -827,7 +839,7 @@ mod tests {
             rows: None,
         };
         let snap = telemetry_snapshot_for_tick(5, &resolved);
-        // Synthetic path writes its own timestamp then we overwrite to tick+1.
+        // Synthetic path writes its own timestamp, then we overwrite to tick+1.
         assert_eq!(snap.timestamp_ms, 6);
         // And the synthetic sinusoid produces non-zero, finite values.
         assert!(snap.gpu_temp_c.is_finite() && snap.gpu_temp_c > 0.0);
@@ -836,7 +848,9 @@ mod tests {
     #[test]
     fn csv_source_label_maps_telemetry_stem_to_csv_re4() {
         assert_eq!(
-            csv_source_label(Path::new("/home/raulmc/Julia/Surrogate_Viz.jl/telemetry.csv")),
+            csv_source_label(Path::new(
+                "/home/raulmc/Julia/Surrogate_Viz.jl/telemetry.csv"
+            )),
             "csv_re4"
         );
         assert_eq!(

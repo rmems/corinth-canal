@@ -14,7 +14,7 @@ use std::io::{BufWriter, Error, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use support::{
-    ResolvedTelemetry, RunConfig, TelemetrySource, ValidationModelSpec,
+    ResolvedTelemetry, TelemetrySource, ValidationModelSpec,
     default_spiking_model_config, heartbeat_gain, prompt_embedding_for_validation,
     telemetry_snapshot_for_tick,
 };
@@ -130,7 +130,11 @@ struct PendingIndexRow {
 }
 
 fn heartbeat_slug_for(enabled: bool) -> &'static str {
-    if enabled { "heartbeat_on" } else { "heartbeat_off" }
+    if enabled {
+        "heartbeat_on"
+    } else {
+        "heartbeat_off"
+    }
 }
 
 struct RunContext<'a> {
@@ -197,32 +201,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // exactly once at the end of main() after strict-repeat stamping.
     let mut pending: Vec<PendingIndexRow> = Vec::new();
 
-    let sweep_result = (|pending: &mut Vec<PendingIndexRow>| -> Result<(), Box<dyn std::error::Error>> {
-        for spec in &cfg.validation_models {
-            for repeat_idx in 0..cfg.repeat_count {
-                for &heartbeat_enabled in &cfg.heartbeat_matrix {
-                    let run_id = build_run_id(&cfg.prompt_profile, repeat_idx, run_tag_ref);
-                    let ctx = RunContext {
-                        spec,
-                        prompt_profile: &cfg.prompt_profile,
-                        prompt_text: cfg.prompt_text,
-                        ticks: effective_ticks,
-                        heartbeat_enabled,
-                        repeat_idx,
-                        repeat_count: cfg.repeat_count,
-                        resolved: &cfg.telemetry,
-                        run_id,
-                        output_root: cfg.output_root.clone(),
-                        model_family_override: cfg.model_family_override,
-                        saaq_rule: cfg.saaq_rule,
-                        run_tag: run_tag_ref,
-                    };
-                    run_validation(&ctx, pending)?;
+    let sweep_result =
+        (|pending: &mut Vec<PendingIndexRow>| -> Result<(), Box<dyn std::error::Error>> {
+            for spec in &cfg.validation_models {
+                for repeat_idx in 0..cfg.repeat_count {
+                    for &heartbeat_enabled in &cfg.heartbeat_matrix {
+                        let run_id = build_run_id(&cfg.prompt_profile, repeat_idx, run_tag_ref);
+                        let ctx = RunContext {
+                            spec,
+                            prompt_profile: &cfg.prompt_profile,
+                            prompt_text: cfg.prompt_text,
+                            ticks: effective_ticks,
+                            heartbeat_enabled,
+                            repeat_idx,
+                            repeat_count: cfg.repeat_count,
+                            resolved: &cfg.telemetry,
+                            run_id,
+                            output_root: cfg.output_root.clone(),
+                            model_family_override: cfg.model_family_override,
+                            saaq_rule: cfg.saaq_rule,
+                            run_tag: run_tag_ref,
+                        };
+                        run_validation(&ctx, pending)?;
+                    }
                 }
             }
-        }
-        Ok(())
-    })(&mut pending);
+            Ok(())
+        })(&mut pending);
 
     // Strict-repeat verdict only runs on a clean sweep; partial sweeps can't
     // give a trustworthy grouping. On opt-in + success, stamp verdicts into
@@ -284,8 +289,16 @@ fn run_validation(
     let manifest_path = run_dir.join("run_manifest.json");
     let summary_path = run_dir.join("summary.json");
     let generated_files = vec![
-        tick_path.file_name().unwrap().to_string_lossy().into_owned(),
-        latent_path.file_name().unwrap().to_string_lossy().into_owned(),
+        tick_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        latent_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
         manifest_path
             .file_name()
             .unwrap()
@@ -481,8 +494,7 @@ fn run_validation(
     // Finalize mean-tick metric (f64 microseconds). Safe for any
     // elapsed_count <= usize::MAX; `as f64` lossiness is acceptable here.
     if elapsed_count > 0 {
-        metrics.mean_tick_elapsed_us =
-            Some(elapsed_sum_us as f64 / elapsed_count as f64);
+        metrics.mean_tick_elapsed_us = Some(elapsed_sum_us as f64 / elapsed_count as f64);
     }
 
     if let Err(error) = run_result {
@@ -785,8 +797,7 @@ fn pending_row_from_state(
     }
 }
 
-const INDEX_CSV_HEADER: &str =
-    "run_id,run_tag,model_slug,model_family,telemetry_source,heartbeat_enabled,repeat_idx,repeat_count,saaq_rule,validation_status,run_dir,ticks_completed,latent_rows,mean_tick_elapsed_us,repeat_determinism";
+const INDEX_CSV_HEADER: &str = "run_id,run_tag,model_slug,model_family,telemetry_source,heartbeat_enabled,repeat_idx,repeat_count,saaq_rule,validation_status,run_dir,ticks_completed,latent_rows,mean_tick_elapsed_us,repeat_determinism";
 
 /// Append every buffered row to `<output_root>/index.csv`. The file is
 /// opened once per `main()` invocation with `append(true)`; if it's empty
@@ -1011,9 +1022,7 @@ fn format_local_timestamp_compact() -> String {
     // and sortable without depending on the machine's TZ configuration; the
     // full ISO-ish form is still human-readable in the path.
     let (year, month, day, hour, minute, second) = civil_from_unix_secs(secs as i64);
-    format!(
-        "{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}"
-    )
+    format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}")
 }
 
 /// Civil (Y, M, D, h, m, s) in UTC from a unix timestamp.

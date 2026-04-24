@@ -144,7 +144,7 @@ fn infer_family(
         other => {
             return Err(HybridError::UnsupportedFormat(format!(
                 "unsupported GGUF architecture '{other}' in '{path}'"
-            )))
+            )));
         }
     };
 

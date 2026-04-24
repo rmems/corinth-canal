@@ -11,7 +11,6 @@ use corinth_canal::{
     EMBEDDING_DIM, FUNNEL_HIDDEN_NEURONS, HybridError, TelemetryFunnel, model::Model,
     telemetry::TelemetrySnapshot,
 };
-use support::{RunConfig, default_spiking_model_config};
 
 const EXPECTED_HEADER: &str = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
 const TELEMETRY_THRESHOLDS: [f32; 4] = [1.0, 5.0, 1.0, 5.0];
@@ -82,6 +81,7 @@ fn main() -> corinth_canal::Result<()> {
     let mut rows_skipped = 0_usize;
     let mut total_input_spikes = 0_usize;
     let mut total_hidden_spikes = 0_usize;
+    let target = vec![0.0_f32; EMBEDDING_DIM];
 
     for (idx, raw_line) in lines.enumerate() {
         let line_number = idx + 2;

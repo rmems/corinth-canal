@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{HybridError, Result};
-use crate::funnel::{FunnelActivity, FUNNEL_HIDDEN_NEURONS};
+use crate::funnel::{FUNNEL_HIDDEN_NEURONS, FunnelActivity};
 use crate::types::{ModelOutput, TelemetrySnapshot};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -469,7 +469,10 @@ mod tests {
             let merged = dual.observe(&snap, &activity, &output).unwrap();
 
             assert_eq!(merged.saaq_delta_q_legacy_prev, legacy.saaq_delta_q_prev);
-            assert_eq!(merged.saaq_delta_q_legacy_target, legacy.saaq_delta_q_target);
+            assert_eq!(
+                merged.saaq_delta_q_legacy_target,
+                legacy.saaq_delta_q_target
+            );
             assert_eq!(merged.saaq_delta_q_v15_prev, v15.saaq_delta_q_prev);
             assert_eq!(merged.saaq_delta_q_v15_target, v15.saaq_delta_q_target);
             // Primary rule is v1.5, so legacy compatibility columns should
@@ -502,7 +505,10 @@ mod tests {
         // Legacy primary -> saaq_delta_q_{prev,target} should equal the
         // *_legacy_* fields, not the *_v15_* fields.
         assert_eq!(merged.saaq_delta_q_prev, merged.saaq_delta_q_legacy_prev);
-        assert_eq!(merged.saaq_delta_q_target, merged.saaq_delta_q_legacy_target);
+        assert_eq!(
+            merged.saaq_delta_q_target,
+            merged.saaq_delta_q_legacy_target
+        );
     }
 
     #[test]

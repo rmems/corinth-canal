@@ -9,10 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::from_filename(".env.local");
     let run_cfg = RunConfig::from_env();
     if run_cfg.gguf_checkpoint_path.trim().is_empty() {
-        return Err(Error::other(
-            "GGUF_CHECKPOINT_PATH must point to a GGUF checkpoint",
-        )
-        .into());
+        return Err(Error::other("GGUF_CHECKPOINT_PATH must point to a GGUF checkpoint").into());
     }
     let model_path = run_cfg.gguf_checkpoint_path.clone();
 
@@ -29,7 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     if !model.router_loaded() {
-        return Err(Error::other("OlmoeRouter model did not load from GGUF_CHECKPOINT_PATH").into());
+        return Err(
+            Error::other("OlmoeRouter model did not load from GGUF_CHECKPOINT_PATH").into(),
+        );
     }
     if !accelerator.is_ready() {
         return Err(Error::other("GpuAccelerator is not ready").into());

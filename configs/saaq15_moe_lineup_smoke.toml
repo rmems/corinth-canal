@@ -1,0 +1,4 @@
+[[model]]
+slug = "olmoe_baseline"
+family = "olmoe"
+path = "/home/raulmc/Downloads/SNN_Quantization/olmoe-0125-gguf/OLMoE-1B-7B-0125-Instruct-F16.gguf"

@@ -18,8 +18,8 @@ use self::routing::{
     softmax, synthetic_gate_scores, top_k_indices,
 };
 use crate::error::{HybridError, Result};
-use crate::types::{EMBEDDING_DIM, ModelFamily};
 pub use crate::types::RoutingMode;
+use crate::types::{EMBEDDING_DIM, ModelFamily};
 
 pub(super) const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
 pub(super) const GGUF_VERSION: u32 = 3;
@@ -44,26 +44,22 @@ pub(super) const GGUF_VALUE_TYPE_FLOAT64: u32 = 12;
 
 impl RouterMetadata {
     fn synthetic(family: ModelFamily, num_experts: usize, top_k: usize) -> Self {
-        Self { family, architecture: "stub".into(), hidden_size: EMBEDDING_DIM, num_layers: 0, num_experts: num_experts.max(1), expert_used_count: top_k.max(1), quantization: "stub".into(), routing_tensor_name: "synthetic".into(), preferred_gpu_synapse_tensor_name: None, synapse_source: "synthetic-fallback".into(), real_gpu_synapse_tensor_name: None, }
+        Self {
+            family,
+            architecture: "stub".into(),
+            hidden_size: EMBEDDING_DIM,
+            num_layers: 0,
+            num_experts: num_experts.max(1),
+            expert_used_count: top_k.max(1),
+            quantization: "stub".into(),
+            routing_tensor_name: "synthetic".into(),
+            preferred_gpu_synapse_tensor_name: None,
+            synapse_source: "synthetic-fallback".into(),
+            real_gpu_synapse_tensor_name: None,
+        }
     }
 
     fn from_adapter(adapter: &ModelAdapter) -> Self {
-        Self {
-            family: adapter.family.clone(),
-            architecture: adapter.architecture.clone(),
-            hidden_size: adapter.hidden_size,
-            num_layers: adapter.num_layers,
-            num_experts: adapter.num_experts,
-            expert_used_count: adapter.expert_used_count,
-            quantization: adapter.quantization.clone(),
-            routing_tensor_name: adapter.routing_tensor.clone(),
-            preferred_gpu_synapse_tensor_name: adapter.preferred_gpu_synapse_tensor.clone(),
-            synapse_source: adapter.synapse_source_label().into(),
-            real_gpu_synapse_tensor_name: adapter.real_gpu_synapse_tensor.clone(),
-        }
-    }
-    adapter: ModelAdapter,
-    ) -> Self {
         Self {
             family: adapter.family,
             architecture: adapter.architecture.clone(),
@@ -77,15 +73,16 @@ impl RouterMetadata {
             synapse_source: adapter.synapse_source_label().into(),
             real_gpu_synapse_tensor_name: adapter.real_gpu_synapse_tensor.clone(),
         }
-    }    
-            
+    }
+}
+
 pub struct OlmoeRouter {
+    metadata: RouterMetadata,
+    adapter: Option<ModelAdapter>,
     model_path: String,
     num_experts: usize,
     top_k: usize,
     loaded: bool,
-    metadata: RouterMetadata,
-    adapter: Option<ModelAdapter>,
     routing_mode: RoutingMode,
     expert_membranes: Vec<f32>,
     hidden_membranes: Vec<f32>,
@@ -106,7 +103,7 @@ pub struct RouterMetadata {
     pub routing_tensor_name: String,
     pub preferred_gpu_synapse_tensor_name: Option<String>,
     pub synapse_source: String,
-    pub real_gpu_synapse_tensor_name: Option<String>
+    pub real_gpu_synapse_tensor_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -151,7 +148,7 @@ impl OlmoeRouter {
                 num_experts: inferred_experts,
                 top_k: inferred_top_k,
                 loaded: false,
-                metadata: RouterMetadata::synthetic (
+                metadata: RouterMetadata::synthetic(
                     family_override.unwrap_or(ModelFamily::Olmoe),
                     inferred_experts,
                     inferred_top_k,
@@ -228,10 +225,13 @@ impl OlmoeRouter {
     }
 
     pub fn extract_token_embedding(&mut self, token_id: usize) -> Result<Vec<f32>> {
-        let adapter = self.adapter.as_ref().ok_or_else(|| HybridError::ModelLoad {
-            path: self.model_path.clone(),
-            reason: "checkpoint not loaded".into(),
-        })?;
+        let adapter = self
+            .adapter
+            .as_ref()
+            .ok_or_else(|| HybridError::ModelLoad {
+                path: self.model_path.clone(),
+                reason: "checkpoint not loaded".into(),
+            })?;
         let checkpoint = self
             .checkpoint
             .as_mut()

@@ -49,7 +49,10 @@ impl Model {
         if config.snn_steps == 0 {
             return Err(HybridError::InvalidConfig("snn_steps must be ≥ 1".into()));
         }
-        if config.num_experts > 0 && config.top_k_experts > 0 && config.top_k_experts > config.num_experts {
+        if config.num_experts > 0
+            && config.top_k_experts > 0
+            && config.top_k_experts > config.num_experts
+        {
             return Err(HybridError::InvalidConfig(format!(
                 "top_k_experts ({}) > num_experts ({})",
                 config.top_k_experts, config.num_experts
@@ -184,15 +187,7 @@ impl Model {
             })?;
 
         let target = resolve_gpu_routing_telemetry_path(&self.config);
-        append_gpu_routing_telemetry_row(
-            &target,
-            token_idx,
-            final_score,
-            final_walker,
-            0,
-            0.0,
-            0.0,
-        )
+        append_gpu_routing_telemetry_row(&target, token_idx, final_score, final_walker, 0, 0.0, 0.0)
     }
 
     pub fn reset(&mut self) {

@@ -146,7 +146,9 @@ fn main() {
             panic!("nvcc completed but {fatbin_name} was not produced");
         }
 
-        println!("cargo:warning=✓ compiled {cu_name} → {fatbin_name} (sm_120 SASS + compute_120 PTX)");
+        println!(
+            "cargo:warning=✓ compiled {cu_name} → {fatbin_name} (sm_120 SASS + compute_120 PTX)"
+        );
     }
 
     build_myelin_shim(&nvcc, &cu_dir, &out_dir);
@@ -214,7 +216,10 @@ fn build_myelin_shim(nvcc: &Path, cu_dir: &Path, out_dir: &Path) {
         "myelin_shim.cu",
     );
 
-    cc::Build::new().cpp(true).object(&object).compile("myelin_shim");
+    cc::Build::new()
+        .cpp(true)
+        .object(&object)
+        .compile("myelin_shim");
     println!("cargo:warning=✓ compiled myelin_shim.cu → libmyelin_shim.a");
 }
 

@@ -135,9 +135,7 @@ impl MappedGgufCheckpoint {
     }
 }
 
-pub(super) fn probe_and_map_checkpoint(
-    path: &str,
-) -> Result<(GgufMetadata, MappedGgufCheckpoint)> {
+pub(super) fn probe_and_map_checkpoint(path: &str) -> Result<(GgufMetadata, MappedGgufCheckpoint)> {
     let file = OpenOptions::new()
         .read(true)
         .open(path)
@@ -380,18 +378,18 @@ impl MappedGgufCheckpoint {
         }
 
         let row_size = tensor_row_size(info.ggml_type, info.dims[0])?;
-        let start = info
-            .absolute_offset
-            .checked_add(row_idx.checked_mul(row_size).ok_or_else(|| {
-                HybridError::ModelLoad {
+        let start =
+            info.absolute_offset
+                .checked_add(row_idx.checked_mul(row_size).ok_or_else(|| {
+                    HybridError::ModelLoad {
+                        path: path.to_owned(),
+                        reason: format!("tensor '{tensor_name}' row offset overflow"),
+                    }
+                })?)
+                .ok_or_else(|| HybridError::ModelLoad {
                     path: path.to_owned(),
                     reason: format!("tensor '{tensor_name}' row offset overflow"),
-                }
-            })?)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' row offset overflow"),
-            })?;
+                })?;
         let end = start + row_size;
         if end > self.mmap.len() {
             return Err(HybridError::ModelLoad {
@@ -452,12 +450,13 @@ impl RegisteredTensorSliceU16 {
         n_elements: usize,
         path: &str,
     ) -> Result<Self> {
-        let byte_len = n_elements
-            .checked_mul(size_of::<u16>())
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' byte length overflow"),
-            })?;
+        let byte_len =
+            n_elements
+                .checked_mul(size_of::<u16>())
+                .ok_or_else(|| HybridError::ModelLoad {
+                    path: path.to_owned(),
+                    reason: format!("tensor '{tensor_name}' byte length overflow"),
+                })?;
 
         let page_size = page_size_bytes(path)?;
         let aligned_start = absolute_offset / page_size * page_size;
@@ -508,7 +507,7 @@ impl Drop for RegisteredCudaRegion {
         // in `RegisteredTensorSliceU16::register`, so it is valid to unregister.
         let result = unsafe { cust::sys::cuMemHostUnregister(self.ptr) };
         if result != cust::sys::CUresult::CUDA_SUCCESS {
-            // Silently ignore: panicking inside `drop` is unsound and the
+            // Silently ignore: panicking inside `drop` is unsound, and the
             // model remains usable even if CUDA pin-registration is leaked.
         }
     }

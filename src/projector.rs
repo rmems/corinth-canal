@@ -84,7 +84,6 @@ pub struct Projector {
     ema_alpha: f32,
 
     // ── SpikingTernary state (GIF membrane) ───────────────────────────────────
-
     /// Per-output GIF membrane potential.  Shape: `[EMBEDDING_DIM]`.
     /// Only mutated when `mode == SpikingTernary`; always allocated so that
     /// switching modes at runtime has zero cost.
@@ -131,8 +130,8 @@ impl Projector {
             rate_ema: vec![0.0; snn_neurons],
             ema_alpha: 0.1,
             membrane: vec![0.0; EMBEDDING_DIM],
-            threshold: 0.8,   // saliency threshold (SpikeLLM / NSLLM style)
-            decay: 0.92,      // GIF leak (close to biological membrane RC)
+            threshold: 0.8, // saliency threshold (SpikeLLM / NSLLM style)
+            decay: 0.92,    // GIF leak (close to biological membrane RC)
         }
     }
 
@@ -248,8 +247,7 @@ impl Projector {
             }
             ProjectionMode::MembraneSnapshot => {
                 // Use membrane directly as primary signal
-                let membrane_primary: Vec<f32> =
-                    membrane.iter().map(|v| v * 2.0).collect();
+                let membrane_primary: Vec<f32> = membrane.iter().map(|v| v * 2.0).collect();
                 features.extend_from_slice(&rates);
                 features.extend_from_slice(&hist);
                 features.extend_from_slice(&membrane_primary);
@@ -311,7 +309,7 @@ impl Projector {
             self.membrane[out_i] = self.membrane[out_i] * self.decay + drive * 0.35;
             if self.membrane[out_i] > self.threshold {
                 *spike = 1.0;
-                self.membrane[out_i] -= self.threshold;   // reset-with-refractory
+                self.membrane[out_i] -= self.threshold; // reset-with-refractory
             } else if self.membrane[out_i] < -self.threshold {
                 *spike = -1.0;
                 self.membrane[out_i] += self.threshold;
@@ -450,7 +448,7 @@ mod tests {
     fn test_spiking_ternary_fires_after_warmup() {
         let mut proj = Projector::new(ProjectionMode::SpikingTernary);
         let spikes = dummy_spike_train(20, SNN_NEURONS);
-        let potentials = vec![0.9; SNN_NEURONS];   // high activity to charge membranes
+        let potentials = vec![0.9; SNN_NEURONS]; // high activity to charge membranes
         let iz_pots = vec![28.0; IZ_NEURONS];
 
         // Run several steps to let membranes charge past threshold
@@ -459,7 +457,10 @@ mod tests {
             let emb = proj.project(&spikes, &potentials, &iz_pots).unwrap();
             fired += emb.iter().filter(|&&v| v.abs() > 0.5).count();
         }
-        assert!(fired > 0, "SpikingTernary should have fired at least one spike across 10 steps");
+        assert!(
+            fired > 0,
+            "SpikingTernary should have fired at least one spike across 10 steps"
+        );
     }
 
     #[test]
@@ -476,7 +477,10 @@ mod tests {
 
         // After reset all membrane values should be 0
         proj.reset_membrane();
-        assert!(proj.membrane.iter().all(|&v| v == 0.0), "membrane should be zeroed after reset");
+        assert!(
+            proj.membrane.iter().all(|&v| v == 0.0),
+            "membrane should be zeroed after reset"
+        );
     }
 
     #[test]

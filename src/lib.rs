@@ -40,12 +40,13 @@ pub mod model;
 pub mod moe;
 pub mod projector;
 pub mod telemetry;
+mod transformer;
 pub mod types;
 
 pub use error::{HybridError, Result};
 pub use funnel::{
-    FunnelActivity, SignedSplitBankBridge, SparseGifHiddenLayer, TelemetryFunnel,
-    FUNNEL_HIDDEN_NEURONS, FUNNEL_INPUT_NEURONS,
+    FUNNEL_HIDDEN_NEURONS, FUNNEL_INPUT_NEURONS, FunnelActivity, SignedSplitBankBridge,
+    SparseGifHiddenLayer, TelemetryFunnel,
 };
 pub use heartbeat::HeartbeatInjector;
 pub use latent::{
@@ -55,8 +56,8 @@ pub use latent::{
 pub use telemetry::TelemetryEncoder;
 pub use types::{EMBEDDING_DIM, HeartbeatConfig, ModelFamily, TelemetrySnapshot};
 
-//! Transformer/mod.rs missing tensor crate
+// Transformer/mod.rs missing tensor crate
 pub mod tensor;
 
-//! New folder name metric, came out of triple code duplication
+// New folder name metric, came out of triple code duplication
 pub(crate) mod metric;
