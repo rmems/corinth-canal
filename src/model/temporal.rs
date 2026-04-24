@@ -1,4 +1,4 @@
-//! GPU temporal loop helpers for [`Model`](super::Model).
+//! GPU temporal loop helpers for [`Model`](Model).
 
 use super::{
     core::{IZ_NEURONS, N_NEURONS, resolve_gpu_routing_telemetry_path},
