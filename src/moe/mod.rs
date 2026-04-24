@@ -62,8 +62,10 @@ impl RouterMetadata {
             real_gpu_synapse_tensor_name: None,
         }
     }
-}
-    fn from_adapter(adapter: &ModelAdapter) -> Self {
+
+    fn from_adapter(
+        adapter: ModelAdapter,
+    ) -> Self {
         Self {
             family: adapter.family,
             architecture: adapter.architecture.clone(),
