@@ -63,6 +63,7 @@ struct ValidationManifest {
 /// alongside `run_manifest.json` inside every run directory.
 #[derive(Debug, Serialize)]
 struct RunSummary {
+    synapse_source: String,
     run_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     run_tag: Option<String>,
@@ -104,6 +105,7 @@ struct RunMetrics {
 /// stamp `repeat_determinism`.
 #[derive(Debug, Clone)]
 struct PendingIndexRow {
+    synapse_source: String,
     run_id: String,
     run_tag: Option<String>,
     model_slug: String,
@@ -790,7 +792,7 @@ fn pending_row_from_state(
     }
 }
 
-const INDEX_CSV_HEADER: &str = "run_id,run_tag,model_slug,model_family,telemetry_source,heartbeat_enabled,repeat_idx,repeat_count,saaq_rule,validation_status,run_dir,ticks_completed,latent_rows,mean_tick_elapsed_us,repeat_determinism";
+const INDEX_CSV_HEADER: &str = "synapse_source,run_id,run_tag,model_slug,model_family,telemetry_source,heartbeat_enabled,repeat_idx,repeat_count,saaq_rule,validation_status,run_dir,ticks_completed,latent_rows,mean_tick_elapsed_us,repeat_determinism";
 
 /// Append every buffered row to `<output_root>/index.csv`. The file is
 /// opened once per `main()` invocation with `append(true)`; if it's empty

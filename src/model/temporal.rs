@@ -123,44 +123,46 @@ impl Model {
                 self.config.gpu_synapse_tensor_name
             );
             if !self.config.gpu_synapse_tensor_name.trim().is_empty() {
-                let weights = self
-                    .router
-                    .registered_gpu_synapse_weights(&self.config.gpu_synapse_tensor_name)
-                    .map_err(|e| {
-                        GpuError::MemoryError(format!("GGUF synapse registration failed: {e}"))
-                    })?;
-                accelerator.load_synapse_weights_f16_registered(&signature, weights)?;
+                match self.router.registered_gpu_synapse_weights(&self.config.gpu_synapse_tensor_name) {
+                    Ok(weights) => {
+                        accelerator.load_synapse_weights_f16_registered(&signature, weights)?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprint!(
+                            "quantized GGUF synapse weights '{}' is not F16-registerable for '{}': {e}; falling back to synthetic weights",
+                            self.config.model_path(),
+                            self.config.gpu_synapse_tensor_name,
+                        );
+                    }
+                }
+            }
+            let fallback_signature = format!("synthetic-f32::{neuron_count}");
+            if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
                 return Ok(());
             }
+
+            let synthetic_weights = vec![0.0f32; neuron_count * neuron_count];
+            accelerator.load_synapse_weights_named(&fallback_signature, &synthetic_weights)?;
+            Ok(())
         }
+        pub(super) fn synthetic_activity(
+            &self,
+            snap: &TelemetrySnapshot,
+        ) -> (Vec<Vec<usize>>, Vec<f32>, Vec<f32>) {
+            let temp_offset = snap.gpu_temp_c.max(0.0).round() as usize % N_NEURONS;
 
-        let fallback_signature = format!("synthetic-f32::{neuron_count}");
-        if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
-            return Ok(());
+            let spike_train = (0..self.config.snn_steps)
+                .map(|step| {
+                    let lead = (step + temp_offset) % N_NEURONS;
+                    let trail = (lead + 5) % N_NEURONS;
+                    vec![lead, trail]
+                })
+                .collect();
+
+            let potentials = vec![0.25 + 0.5 * snap.thermal_stress(); N_NEURONS];
+            let iz_potentials = vec![0.0; IZ_NEURONS];
+
+            (spike_train, potentials, iz_potentials)
         }
-
-        let synthetic_weights = vec![0.0f32; neuron_count * neuron_count];
-        accelerator.load_synapse_weights_named(&fallback_signature, &synthetic_weights)?;
-        Ok(())
     }
-
-    pub(super) fn synthetic_activity(
-        &self,
-        snap: &TelemetrySnapshot,
-    ) -> (Vec<Vec<usize>>, Vec<f32>, Vec<f32>) {
-        let temp_offset = snap.gpu_temp_c.max(0.0).round() as usize % N_NEURONS;
-
-        let spike_train = (0..self.config.snn_steps)
-            .map(|step| {
-                let lead = (step + temp_offset) % N_NEURONS;
-                let trail = (lead + 5) % N_NEURONS;
-                vec![lead, trail]
-            })
-            .collect();
-
-        let potentials = vec![0.25 + 0.5 * snap.thermal_stress(); N_NEURONS];
-        let iz_potentials = vec![0.0; IZ_NEURONS];
-
-        (spike_train, potentials, iz_potentials)
-    }
-}

@@ -1,5 +1,4 @@
 //! Shared helper functions for the example binaries.
-#![allow(dead_code)]
 
 pub mod config;
 
@@ -284,7 +283,7 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
             let path = root.join(rel);
             path.exists().then(|| ValidationModelSpec {
                 slug: slug.into(),
-                family,
+                family: None,
                 path: path.to_string_lossy().into_owned(),
                 routing_mode: None,
                 real_gpu_tensor_name: None,
