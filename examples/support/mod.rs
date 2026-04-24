@@ -29,7 +29,7 @@ pub struct ValidationModelSpec {
     /// (`configs/saaq15_moe_lineup.toml`); autodiscovered / CLI-injected
     /// specs leave this `None` and fall back to `ModelConfig::routing_mode`.
     pub routing_mode: Option<RoutingMode>,
-    pub real_gpu_tensor_name: Option<String>,
+    pub real_gpu_tensor_name: Option<String>, // ValidationModelSpec is not RouterMetadata
 }
 
 pub fn gguf_checkpoint_path_or_default() -> String {
