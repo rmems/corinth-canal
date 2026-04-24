@@ -235,6 +235,7 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
                 family,
                 path,
                 routing_mode: None,
+                real_gpu_tensor_name: None,
             }];
         }
     }
