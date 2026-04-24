@@ -43,25 +43,26 @@ pub(super) const GGUF_VALUE_TYPE_INT64: u32 = 11;
 pub(super) const GGUF_VALUE_TYPE_FLOAT64: u32 = 12;
 
 impl RouterMetadata {
-   fn synthetic(
-       family: ModelFamily,
-       num_experts: usize,
-       top_k: usize,
-   ) -> Self {
-       Self {
-           family,
-           architecture: "stub".into(),
-           hidden_size: EMBEDDING_DIM,
-           num_layers: 0,
-           num_experts,
-           expert_used_count: top_k.max(1) ,
-           quantization: "stub".into(),
-           routing_tensor_name: "synthetic".into(),
-           preferred_gpu_synapse_tensor_name: None,
-           synapse_source: "synthetic-fallback".into(),
-           real_gpu_synapse_tensor_name: None,
-       }
-   }
+    fn synthetic(
+        family: ModelFamily,
+        num_experts: usize,
+        top_k: usize,
+    ) -> Self {
+        Self {
+            family,
+            architecture: "stub".into(),
+            hidden_size: EMBEDDING_DIM,
+            num_layers: 0,
+            num_experts: num_experts.max(1),
+            expert_used_count: top_k.max(1),
+            quantization: "stub".into(),
+            routing_tensor_name: "synthetic".into(),
+            preferred_gpu_synapse_tensor_name: None,
+            synapse_source: "synthetic-fallback".into(),
+            real_gpu_synapse_tensor_name: None,
+        }
+    }
+}
     fn from_adapter(adapter: &ModelAdapter) -> Self {
         Self {
             family: adapter.family,
