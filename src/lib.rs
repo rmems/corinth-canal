@@ -54,3 +54,6 @@ pub use latent::{
 };
 pub use telemetry::TelemetryEncoder;
 pub use types::{EMBEDDING_DIM, HeartbeatConfig, ModelFamily, TelemetrySnapshot};
+
+//! Transformer/mod.rs missing tensor crate
+pub mod tensor;
