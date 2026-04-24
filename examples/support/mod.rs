@@ -652,8 +652,8 @@ for idx in 0..target_len {
     if lo == hi {
         out.push(input[lo]);
         ) else {
-            let t = (source - lo as f32) / (hi as f32 - lo as f32);
-            out.push((1.0 - t) * input[lo] + t * input[hi]);
+            let t = (source - lo as f32);
+            out.push(input[lo] * (1.0 - t) + input[hi]);
         }
     }
     out
