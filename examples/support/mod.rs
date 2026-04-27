@@ -2,6 +2,9 @@
 
 pub mod config;
 
+#[allow(unused_imports)]
+pub use config::RunConfig;
+
 use corinth_canal::{
     model::ModelConfig, moe::OlmoeRouter, moe::RoutingMode, projector::ProjectionMode,
     HeartbeatConfig, HeartbeatInjector, ModelFamily, SaaqUpdateRule, EMBEDDING_DIM,

@@ -100,6 +100,12 @@ impl Model {
         accelerator: &mut GpuAccelerator,
         neuron_count: usize,
     ) -> GpuResult<()> {
+        // Capability is decided by the adapter/probe layer via
+        // `real_gpu_synapse_tensor_name()`. The runtime must not re-discover
+        // F16 support from `self.config.gpu_synapse_tensor_name`: doing so
+        // can hit quantized (IQ/Q) tensors on non-F16 GGUF checkpoints and
+        // abort the SAAQ campaign. If no real F16 tensor is validated, fall
+        // through directly to the synthetic-fallback path below.
         if let Some(tensor_name) = self
             .router
             .real_gpu_synapse_tensor_name()

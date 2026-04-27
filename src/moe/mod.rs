@@ -637,6 +637,48 @@ mod tests {
     }
 
     #[test]
+    fn test_quantized_attn_q_does_not_advertise_real_gpu_synapse_tensor() {
+        let gate_payload = vec![0u8; EMBEDDING_DIM * 64 * 4];
+        let attn_q_payload = vec![0u8; 16];
+
+        let checkpoint = build_test_gguf(
+            vec![
+                (
+                    "blk.0.ffn_gate_inp.weight",
+                    vec![EMBEDDING_DIM, 64],
+                    GGML_TYPE_F32,
+                    gate_payload,
+                ),
+                (
+                    "blk.0.attn_q.weight",
+                    vec![EMBEDDING_DIM, EMBEDDING_DIM],
+                    GGML_TYPE_IQ3_S,
+                    attn_q_payload,
+                ),
+                (
+                    "token_embd.weight",
+                    vec![EMBEDDING_DIM, 32],
+                    GGML_TYPE_F16,
+                    vec![0u8; EMBEDDING_DIM * 32 * 2],
+                ),
+            ],
+            32,
+        );
+
+        let path = write_temp_file(&checkpoint, "quantized-attn-q");
+        let metadata = OlmoeRouter::probe_model(path.to_str().unwrap(), None).unwrap();
+
+        assert_eq!(
+            metadata.preferred_gpu_synapse_tensor_name.as_deref(),
+            Some("blk.0.attn_q.weight")
+        );
+        assert_eq!(metadata.real_gpu_synapse_tensor_name, None);
+        assert_eq!(metadata.synapse_source, "synthetic-fallback");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn test_spiking_sim_state_can_reset() {
         let mut model = OlmoeRouter::load_with_mode("", 8, 2, RoutingMode::SpikingSim).unwrap();
         let _ = model.forward(&vec![1.0; EMBEDDING_DIM]).unwrap();
