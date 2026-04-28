@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use support::{
     ResolvedTelemetry, RunConfig, TelemetrySource, ValidationModelSpec,
-    default_spiking_model_config, heartbeat_gain, prompt_embedding_for_validation,
+    default_spiking_model_config, heartbeat_gain, observability, prompt_embedding_for_validation,
     telemetry_snapshot_for_tick,
 };
 
@@ -130,6 +130,30 @@ fn heartbeat_slug_for(enabled: bool) -> &'static str {
     if enabled { "heartbeat_on" } else { "heartbeat_off" }
 }
 
+fn emit_validation_finish(
+    ctx: &RunContext<'_>,
+    started: Instant,
+    status: &'static str,
+    error: Option<&str>,
+) {
+    tracing::info!(
+        event = "validation_finish",
+        repo = "corinth-canal",
+        command = "saaq_latent_calibration",
+        run_id = %ctx.run_id,
+        git_sha = %observability::git_sha(),
+        model_slug = %ctx.spec.slug,
+        heartbeat_enabled = ctx.heartbeat_enabled,
+        repeat_idx = ctx.repeat_idx,
+        repeat_count = ctx.repeat_count,
+        ticks = ctx.ticks,
+        latency_ms = started.elapsed().as_millis() as u64,
+        success = status == "completed",
+        error_category = observability::error_category(Some(status), error),
+        "validation_finish"
+    );
+}
+
 struct RunContext<'a> {
     spec: &'a ValidationModelSpec,
     prompt_profile: &'a str,
@@ -150,6 +174,38 @@ struct RunContext<'a> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::from_filename(".env.local");
+    observability::init_tracing();
+    let command_run_id = observability::run_id();
+    let git_sha = observability::git_sha();
+    let started = Instant::now();
+
+    tracing::info!(
+        event = "command_start",
+        repo = "corinth-canal",
+        command = "saaq_latent_calibration",
+        run_id = %command_run_id,
+        git_sha = %git_sha,
+        "command_start"
+    );
+
+    let result = run_main();
+    let error = result.as_ref().err().map(|error| error.to_string());
+    tracing::info!(
+        event = "command_finish",
+        repo = "corinth-canal",
+        command = "saaq_latent_calibration",
+        run_id = %command_run_id,
+        git_sha = %git_sha,
+        latency_ms = started.elapsed().as_millis() as u64,
+        success = result.is_ok(),
+        error_category = observability::error_category(None, error.as_deref()),
+        "command_finish"
+    );
+
+    result
+}
+
+fn run_main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = RunConfig::from_env();
 
     // Effective tick count: when TICKS=0 and CSV replay is live, use the full
@@ -194,32 +250,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // exactly once at the end of main() after strict-repeat stamping.
     let mut pending: Vec<PendingIndexRow> = Vec::new();
 
-    let sweep_result = (|pending: &mut Vec<PendingIndexRow>| -> Result<(), Box<dyn std::error::Error>> {
-        for spec in &cfg.validation_models {
-            for repeat_idx in 0..cfg.repeat_count {
-                for &heartbeat_enabled in &cfg.heartbeat_matrix {
-                    let run_id = build_run_id(&cfg.prompt_profile, repeat_idx, run_tag_ref);
-                    let ctx = RunContext {
-                        spec,
-                        prompt_profile: &cfg.prompt_profile,
-                        prompt_text: cfg.prompt_text,
-                        ticks: effective_ticks,
-                        heartbeat_enabled,
-                        repeat_idx,
-                        repeat_count: cfg.repeat_count,
-                        resolved: &cfg.telemetry,
-                        run_id,
-                        output_root: cfg.output_root.clone(),
-                        model_family_override: cfg.model_family_override,
-                        saaq_rule: cfg.saaq_rule,
-                        run_tag: run_tag_ref,
-                    };
-                    run_validation(&ctx, pending)?;
+    let sweep_result =
+        (|pending: &mut Vec<PendingIndexRow>| -> Result<(), Box<dyn std::error::Error>> {
+            for spec in &cfg.validation_models {
+                for repeat_idx in 0..cfg.repeat_count {
+                    for &heartbeat_enabled in &cfg.heartbeat_matrix {
+                        let run_id = build_run_id(&cfg.prompt_profile, repeat_idx, run_tag_ref);
+                        let ctx = RunContext {
+                            spec,
+                            prompt_profile: &cfg.prompt_profile,
+                            prompt_text: cfg.prompt_text,
+                            ticks: effective_ticks,
+                            heartbeat_enabled,
+                            repeat_idx,
+                            repeat_count: cfg.repeat_count,
+                            resolved: &cfg.telemetry,
+                            run_id,
+                            output_root: cfg.output_root.clone(),
+                            model_family_override: cfg.model_family_override,
+                            saaq_rule: cfg.saaq_rule,
+                            run_tag: run_tag_ref,
+                        };
+                        run_validation(&ctx, pending)?;
+                    }
                 }
             }
-        }
-        Ok(())
-    })(&mut pending);
+            Ok(())
+        })(&mut pending);
 
     // Strict-repeat verdict only runs on a clean sweep; partial sweeps can't
     // give a trustworthy grouping. On opt-in + success, stamp verdicts into
@@ -249,6 +306,21 @@ fn run_validation(
     ctx: &RunContext<'_>,
     pending: &mut Vec<PendingIndexRow>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let validation_started = Instant::now();
+    tracing::info!(
+        event = "validation_start",
+        repo = "corinth-canal",
+        command = "saaq_latent_calibration",
+        run_id = %ctx.run_id,
+        git_sha = %observability::git_sha(),
+        model_slug = %ctx.spec.slug,
+        heartbeat_enabled = ctx.heartbeat_enabled,
+        repeat_idx = ctx.repeat_idx,
+        repeat_count = ctx.repeat_count,
+        ticks = ctx.ticks,
+        "validation_start"
+    );
+
     // Pre-create the run directory so we can anchor the GPU routing
     // telemetry CSV inside it via ModelConfig and avoid polluting CWD.
     let run_dir = build_run_dir(ctx)?;
@@ -266,14 +338,24 @@ fn run_validation(
     let saaq_rule = ctx.saaq_rule;
 
     let mut accelerator = GpuAccelerator::new();
-    let mut model = Model::new(config.clone())?;
+    let mut model = match Model::new(config.clone()) {
+        Ok(model) => model,
+        Err(error) => {
+            let error_message = error.to_string();
+            emit_validation_finish(
+                ctx,
+                validation_started,
+                "model_setup_failed",
+                Some(&error_message),
+            );
+            return Err(Box::new(error));
+        }
+    };
 
     if !model.router_loaded() {
-        return Err(Error::other(format!(
-            "router did not load for checkpoint '{}'",
-            ctx.spec.path
-        ))
-        .into());
+        let error = format!("router did not load for checkpoint '{}'", ctx.spec.path);
+        emit_validation_finish(ctx, validation_started, "router_load_failed", Some(&error));
+        return Err(Error::other(error).into());
     }
 
     let tick_path = run_dir.join("tick_telemetry.txt");
@@ -290,6 +372,7 @@ fn run_validation(
         match prompt_embedding_for_validation(&ctx.spec.path, ctx.prompt_text, target_neurons) {
             Ok(result) => result,
             Err(error) => {
+                let error_message = error.to_string();
                 write_manifest_and_summary(
                     ctx,
                     &config,
@@ -302,7 +385,7 @@ fn run_validation(
                     "unavailable",
                     saaq_rule,
                     "prompt_embedding_failed",
-                    Some(error.to_string()),
+                    Some(error_message.clone()),
                     &metrics,
                     collect_generated_files(
                         &manifest_path,
@@ -319,6 +402,12 @@ fn run_validation(
                     &metrics,
                     "prompt_embedding_failed",
                 ));
+                emit_validation_finish(
+                    ctx,
+                    validation_started,
+                    "prompt_embedding_failed",
+                    Some(&error_message),
+                );
                 return Err(error);
             }
         };
@@ -345,6 +434,7 @@ fn run_validation(
     )?;
 
     if let Err(error) = model.prepare_gpu_temporal(&mut accelerator) {
+        let error_message = error.to_string();
         write_manifest_and_summary(
             ctx,
             &config,
@@ -357,7 +447,7 @@ fn run_validation(
             &prompt_embedding_source,
             saaq_rule,
             "gpu_setup_failed",
-            Some(error.to_string()),
+            Some(error_message.clone()),
             &metrics,
             collect_generated_files(
                 &manifest_path,
@@ -374,6 +464,12 @@ fn run_validation(
             &metrics,
             "gpu_setup_failed",
         ));
+        emit_validation_finish(
+            ctx,
+            validation_started,
+            "gpu_setup_failed",
+            Some(&error_message),
+        );
         return Err(Box::new(error));
     }
 
@@ -476,6 +572,7 @@ fn run_validation(
     }
 
     if let Err(error) = run_result {
+        let error_message = error.to_string();
         let _ = latent_exporter.flush();
         let _ = tick_writer.flush();
         drop(latent_exporter);
@@ -492,7 +589,7 @@ fn run_validation(
             &prompt_embedding_source,
             saaq_rule,
             "tick_failed",
-            Some(error.to_string()),
+            Some(error_message.clone()),
             &metrics,
             collect_generated_files(
                 &manifest_path,
@@ -509,6 +606,7 @@ fn run_validation(
             &metrics,
             "tick_failed",
         ));
+        emit_validation_finish(ctx, validation_started, "tick_failed", Some(&error_message));
         return Err(error);
     }
 
@@ -550,6 +648,8 @@ fn run_validation(
         ctx.repeat_count,
         run_dir.display()
     );
+
+    emit_validation_finish(ctx, validation_started, "completed", None);
 
     drop(model);
     drop(accelerator);

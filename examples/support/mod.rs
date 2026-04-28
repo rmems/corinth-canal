@@ -1,6 +1,7 @@
 //! Shared helper functions for the example binaries.
 
 pub mod config;
+pub mod observability;
 
 #[allow(unused_imports)]
 pub use config::RunConfig;
