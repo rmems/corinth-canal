@@ -3,26 +3,61 @@ on:
   pull_request:
     branches:
       - '**'
+  push:
+    branches:
+      - '**'
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
 
+concurrency:
+  group: ci-cpu-${{github.workflow}}-${{github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  
 jobs:
-  cpu-tests:
+  cpu-tests-github:
     runs-on: ubuntu-latest
-    name: CPU Tests
+    name: CPU Tests (GitHub hosted)
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cpu-ci-v1"
+          cache-on-failure: true
+
+      - name: Format check
+        run: cargo fmt --all -- --check    
+
+      - name: Lint 
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+      - name: Build library (CPU-only)
+        run: cargo test --lib --no-default-features --locked -- --nocapture
+
+      - name: Check examples (CPU-only)
+        run: cargo check --examples --no-default-features --locked
+  
+  cpu-tests-ryzen:
+    name: CPU Heavy (Self-hosted Ryzen)
+    needs: cpu-tests-github
+    # Run on only trusted contexts
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux, x64, ryzen]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-<<<<<<< HEAD
-        uses: dtolnay/rust-toolchain@stable
-      
-=======
-        uses: dtolnay/rust-action@stable
-
->>>>>>> 17c7821 (chore(ci): normalize workflow yaml)
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build & Test (CPU only, no CUDA)
-        run: |
-          cargo test --lib --no-default-features
-          cargo check --examples --no-default-features
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -all-targets --no-default-features --locked
