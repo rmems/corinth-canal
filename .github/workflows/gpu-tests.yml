@@ -1,0 +1,56 @@
+name: GPU Tests (CUDA 13.0 + sm_120)
+
+on:
+  pull_request:
+    branches: ['**']
+
+jobs:
+  gpu-tests:
+    runs-on: [self-hosted, Linux, X64, cuda-13, sm_120, gpu]
+    name: GPU Integration Tests
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+      
+      - name: Verify CUDA Environment
+        run: |
+          nvidia-smi
+          nvcc --version | grep "release" || exit 1
+          echo "CUDA_HOME=$CUDA_HOME" >> $GITHUB_ENV
+      
+      - name: Check CUDA Version >= 13.0
+        run: |
+          CUDA_VERSION=$(nvcc --version | grep -oP 'release \K[0-9.]+' | head -1)
+          REQUIRED="13.0"
+          if [ "$(printf '%s\n' "$REQUIRED" "$CUDA_VERSION" | sort -V | head -n1)" != "$REQUIRED" ]; then
+            echo "❌ CUDA $CUDA_VERSION < 13.0 required"
+            exit 1
+          fi
+          echo "✅ CUDA $CUDA_VERSION verified"
+      
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Build & Test (CUDA enabled)
+        run: |
+          cargo test --lib --features cuda
+          cargo check --examples --features cuda
+      
+      - name: PR Comment on Success/Failure
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const emoji = status === 'success' ? '✅' : '❌';
+            const title = status === 'success' ? 'GPU Tests Passed' : 'GPU Tests Failed';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nCUDA: 13.0+ (sm_120)\n[View logs](${context.payload.repository.url}/actions/runs/${context.runId})`
+            });

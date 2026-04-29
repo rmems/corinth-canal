@@ -1,0 +1,23 @@
+name: CI (CPU)
+
+on:
+  pull_request:
+    branches: ['**']
+
+jobs:
+  cpu-tests:
+    runs-on: ubuntu-latest
+    name: CPU Tests
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+      
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Build & Test (no CUDA)
+        run: |
+          cargo test --lib --no-default-features --features ci
+          cargo check --examples --no-default-features --features ci
