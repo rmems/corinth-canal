@@ -12,8 +12,8 @@ readme = "README.md"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
-cust    = "0.3.2"
-anyhow  = { version = "1", features = ["backtrace"] }
+cust = { version = "0.3.2", optional = true }
+anyhow = { version = "1", features = ["backtrace"] }
 tracing = "0.1"
 memmap2 = "0.9"
 libc = "0.2"
@@ -28,11 +28,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 cc = "1.0"
 
 [features]
-default = []
+default = ["cuda"]
 gguf = []
-# Allow `cargo build` to succeed without nvcc by writing empty fatbin files.
-# GPU paths will fail at runtime; CPU fallbacks remain available.
-gpu-stub = []
+cuda = ["cust"]
+# Allows building without CUDA Toolkit by creating empty fatbin files. The cuda
+# dependency is still present (CPU runtime required), but GPU execution fails at
+# runtime. CPU fallbacks remain available.
+gpu-stub = ["cuda"]
+# CI-friendly profile: no cuda dependencies, minimal build for testing CI pipeline.
+ci = []
 
 [profile.release]
 opt-level = 3
