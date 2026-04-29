@@ -315,6 +315,7 @@ impl OlmoeRouter {
         Ok(normalize_to_internal_embedding_dim(&embedding))
     }
 
+    #[cfg(feature = "cuda")]
     pub(crate) fn registered_gpu_synapse_weights(&mut self, tensor_name: &str) -> Result<&[u16]> {
         let checkpoint = self
             .checkpoint
@@ -813,10 +814,10 @@ mod tests {
                     out[blk_start + 16 + i] = 0x00;
                 }
 
-                // ql: low 4 bits for each quant value
-                // We want all quant values to be 1, so low 4 bits = 0x01
+                // ql: each byte packs two 4-bit quant values (low nibble + high nibble).
+                // 0x11 sets both nibbles to 1, so every quant value decodes as 1.
                 for i in 0..128 {
-                    out[blk_start + 48 + i] = 0x01;
+                    out[blk_start + 48 + i] = 0x11;
                 }
             }
         }
@@ -1127,6 +1128,17 @@ mod tests {
         for &v in &weights {
             assert!(v.is_finite(), "expected finite value, got {v}");
         }
+
+        // Verify deterministic values from the known payload:
+        // - The payload sets d=1.0, dmin=0.0, ql=0x11 (both nibbles = 1), qh=0x00.
+        // - scale_min_k4 indices 0-3 have sc=1, so ql_chunks 0-1 (elements 0-127)
+        //   produce d * 1 - 0 = 1.0.
+        // - scale_min_k4 indices 4-7 have sc=0, so ql_chunks 2-3 (elements 128-255)
+        //   produce 0.0 * 1 - 0 = 0.0.
+        assert_eq!(weights[0], 1.0_f32, "element 0 should be 1.0");
+        assert_eq!(weights[127], 1.0_f32, "element 127 should be 1.0");
+        assert_eq!(weights[128], 0.0_f32, "element 128 should be 0.0");
+        assert_eq!(weights[255], 0.0_f32, "element 255 should be 0.0");
 
         let _ = std::fs::remove_file(path);
     }

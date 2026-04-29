@@ -79,6 +79,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
     println!("cargo:rerun-if-env-changed=NVCC");
 
+    // Skip all CUDA compilation for non-CUDA builds (e.g. `--no-default-features`).
+    let cuda_enabled = env::var_os("CARGO_FEATURE_CUDA").is_some();
+    if !cuda_enabled {
+        return;
+    }
+
     // Each entry: (CUDA source, output fatbin name embedded by the loader).
     // We deliberately ship fatbin (SASS for sm_120 + PTX for compute_120 as a
     // forward-compat fallback) so that the driver loads precompiled SASS by

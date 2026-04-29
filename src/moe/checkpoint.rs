@@ -10,6 +10,7 @@ use super::{
 use crate::error::{HybridError, Result};
 use memmap2::{MmapMut, MmapOptions};
 use std::collections::HashMap;
+#[cfg(feature = "cuda")]
 use std::ffi::c_void;
 use std::fs::OpenOptions;
 use std::slice;
@@ -164,6 +165,7 @@ pub(super) fn probe_and_map_checkpoint(path: &str) -> Result<(GgufMetadata, Mapp
         MappedGgufCheckpoint {
             mmap,
             tensors: parsed.tensors,
+            #[cfg(feature = "cuda")]
             registered_gpu_synapse: None,
             metadata: parsed.metadata,
         },
@@ -403,6 +405,7 @@ impl MappedGgufCheckpoint {
         Ok(&self.mmap[start..end])
     }
 
+    #[cfg(feature = "cuda")]
     pub(super) fn registered_f16_tensor<'a>(
         &'a mut self,
         name: &str,

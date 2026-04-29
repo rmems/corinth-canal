@@ -8,12 +8,13 @@ jobs:
   gpu-tests:
     runs-on: [self-hosted, Linux, X64, cuda-13, sm_120, gpu]
     name: GPU Integration Tests
+    if: github.event.pull_request.head.repo.full_name == github.repository
     
     steps:
       - uses: actions/checkout@v4
       
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
       
       - name: Verify CUDA Environment
         run: |
@@ -52,5 +53,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nCUDA: 13.0+ (sm_120)\n[View logs](${context.payload.repository.url}/actions/runs/${context.runId})`
+              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nCUDA: 13.0+ (sm_120)\n[View logs](${context.payload.repository.html_url}/actions/runs/${context.runId})`
             });
