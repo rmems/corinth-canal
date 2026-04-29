@@ -17,7 +17,7 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
       
-      - name: Build & Test (no CUDA)
+      - name: Build & Test (GPU stub)
         run: |
-          cargo test --lib --no-default-features --features ci
-          cargo check --examples --no-default-features --features ci
+          cargo test --lib --features gpu-stub
+          cargo check --examples --features gpu-stub

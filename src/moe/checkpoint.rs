@@ -18,6 +18,7 @@ use std::slice;
 pub(super) struct MappedGgufCheckpoint {
     mmap: MmapMut,
     tensors: HashMap<String, GgufTensorInfo>,
+    #[cfg(feature = "cuda")]
     registered_gpu_synapse: Option<RegisteredTensorSliceU16>,
     metadata: GgufMetadata,
 }
@@ -31,6 +32,7 @@ pub(super) struct GgufTensorInfo {
     pub(super) n_elements: usize,
 }
 
+#[cfg(feature = "cuda")]
 #[derive(Debug)]
 struct RegisteredTensorSliceU16 {
     tensor_name: String,
@@ -39,6 +41,7 @@ struct RegisteredTensorSliceU16 {
     len: usize,
 }
 
+#[cfg(feature = "cuda")]
 #[derive(Debug)]
 struct RegisteredCudaRegion {
     ptr: *mut c_void,
@@ -512,6 +515,7 @@ impl MappedGgufCheckpoint {
     }
 }
 
+#[cfg(feature = "cuda")]
 impl RegisteredTensorSliceU16 {
     fn register(
         tensor_name: &str,
@@ -571,6 +575,7 @@ impl RegisteredTensorSliceU16 {
     }
 }
 
+#[cfg(feature = "cuda")]
 impl Drop for RegisteredCudaRegion {
     fn drop(&mut self) {
         // SAFETY: `ptr` was successfully registered by `cuMemHostRegister_v2`
@@ -716,6 +721,7 @@ fn align_up(value: usize, alignment: usize) -> usize {
     }
 }
 
+#[cfg(feature = "cuda")]
 fn cuda_host_register(ptr: *mut c_void, len: usize, path: &str, tensor_name: &str) -> Result<()> {
     // SAFETY: `ptr` points to a page-aligned region within a live `MmapMut`
     // (validated by the caller) and `len` covers only that region.  Flags = 0

@@ -37,6 +37,7 @@ pub mod funnel;
 pub mod gpu;
 pub mod heartbeat;
 pub mod latent;
+#[cfg(feature = "cuda")]
 pub mod model;
 pub mod moe;
 pub mod projector;
