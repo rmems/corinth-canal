@@ -1,8 +1,8 @@
 name: GPU Tests (CUDA 13.0 + sm_120)
-
 on:
   pull_request:
-    branches: ['**']
+    branches:
+      - '**'
 
 jobs:
   gpu-tests:
@@ -12,10 +12,15 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
+<<<<<<< HEAD
         uses: dtolnay/rust-toolchain@stable
       
+=======
+        uses: dtolnay/rust-action@stable
+
+>>>>>>> 17c7821 (chore(ci): normalize workflow yaml)
       - name: Verify CUDA Environment
         run: |
           nvidia-smi
@@ -34,7 +39,7 @@ jobs:
       
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
-      
+
       - name: Build & Test (CUDA enabled)
         run: |
           cargo test --lib --features cuda

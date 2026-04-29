@@ -1,10 +1,11 @@
 name: Docker Build
-
 on:
   pull_request:
-    branches: ['**']
+    branches:
+      - '**'
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   docker:
@@ -15,7 +16,7 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set Docker tags
         id: tags
         run: |

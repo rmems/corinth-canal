@@ -1,8 +1,8 @@
 name: CI (CPU)
-
 on:
   pull_request:
-    branches: ['**']
+    branches:
+      - '**'
 
 jobs:
   cpu-tests:
@@ -10,13 +10,18 @@ jobs:
     name: CPU Tests
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
+<<<<<<< HEAD
         uses: dtolnay/rust-toolchain@stable
       
+=======
+        uses: dtolnay/rust-action@stable
+
+>>>>>>> 17c7821 (chore(ci): normalize workflow yaml)
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
-      
+
       - name: Build & Test (CPU only, no CUDA)
         run: |
           cargo test --lib --no-default-features
