@@ -17,12 +17,12 @@ ENV PATH=/root/.cargo/bin:$PATH
 WORKDIR /app
 COPY . .
 
-RUN cargo build --release --features cuda
+RUN cargo build --release --features cuda --example gpu_smoke_test
 
 # Runtime stage
 FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
 
 WORKDIR /app
-COPY --from=builder /app/target/release/corinth-canal /app/
+COPY --from=builder /app/target/release/examples/gpu_smoke_test /app/
 
-ENTRYPOINT ["/app/corinth-canal"]
+ENTRYPOINT ["/app/gpu_smoke_test"]
