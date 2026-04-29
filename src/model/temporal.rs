@@ -140,7 +140,9 @@ impl Model {
                     .map_err(|e| {
                         GpuError::MemoryError(format!("Q8_0 dequantization failed: {e}"))
                     })?;
-                let expected = neuron_count * neuron_count;
+                let expected = neuron_count
+                    .checked_mul(neuron_count)
+                    .ok_or_else(|| GpuError::MemoryError("neuron_count² overflows usize".into()))?;
                 if weights.len() == expected {
                     accelerator.load_synapse_weights_named(&signature, &weights)?;
                     return Ok(());

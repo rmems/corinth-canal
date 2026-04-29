@@ -454,9 +454,20 @@ impl MappedGgufCheckpoint {
                 info.ggml_type
             )));
         }
+        if info.dims.is_empty() {
+            return Err(HybridError::UnsupportedFormat(format!(
+                "tensor '{name}' has no dimensions"
+            )));
+        }
         let width = info.dims[0];
         let n_rows = info.dims.get(1).copied().unwrap_or(1);
-        let mut out = Vec::with_capacity(width * n_rows);
+        let capacity = width.checked_mul(n_rows).ok_or_else(|| {
+            HybridError::ModelLoad {
+                path: path.to_owned(),
+                reason: format!("tensor '{name}' element count overflow ({width}×{n_rows})"),
+            }
+        })?;
+        let mut out = Vec::with_capacity(capacity);
         for row in 0..n_rows {
             let row_bytes = self.row_bytes(&info, row, path, name)?;
             let dequantized = dequantize_row_q8_0(row_bytes, width)?;
