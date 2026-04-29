@@ -12,10 +12,12 @@
 mod support;
 
 use std::fs;
+use std::io::{BufWriter, Write};
 
 use serde::Serialize;
 
-use corinth_canal::moe::{OlmoeRouter, RoutingMode};
+use corinth_canal::moe::{GpuSynapseTensorDescriptor, OlmoeRouter, RoutingMode};
+use corinth_canal::ModelFamily;
 use support::config::RunConfig;
 use support::ValidationModelSpec;
 
@@ -38,7 +40,10 @@ struct SynapseDiagnosticRow {
     error: Option<String>,
 }
 
-fn probe_one(spec: &ValidationModelSpec) -> SynapseDiagnosticRow {
+fn probe_one(
+    spec: &ValidationModelSpec,
+    model_family_override: Option<ModelFamily>,
+) -> SynapseDiagnosticRow {
     let mut row = SynapseDiagnosticRow {
         model_slug: spec.slug.clone(),
         checkpoint_path: spec.path.clone(),
@@ -58,12 +63,17 @@ fn probe_one(spec: &ValidationModelSpec) -> SynapseDiagnosticRow {
 
     // StubUniform routing keeps the load cheap: no gate-score precompute, no
     // membrane state, no GPU bring-up. We only need the metadata + checkpoint
-    // map that `OlmoeRouter::load_with_family_and_mode` already builds.
+    // map that `OlmoeRouter::load_with_family_and_mode` already builds. Apply
+    // the same `model_family_override.or(spec.family)` precedence as the SAAQ
+    // runner (`run_validation` in `examples/saaq_latent_calibration.rs`) so
+    // the diagnostic agrees with production routing on lineups that rely on
+    // a global `MODEL_FAMILY` override.
+    let effective_family = model_family_override.or(spec.family);
     match OlmoeRouter::load_with_family_and_mode(
         &spec.path,
         0,
         0,
-        spec.family,
+        effective_family,
         RoutingMode::StubUniform,
     ) {
         Ok(router) => {
@@ -79,10 +89,17 @@ fn probe_one(spec: &ValidationModelSpec) -> SynapseDiagnosticRow {
             row.real_f16_available = router.real_gpu_synapse_tensor_name().is_some();
 
             if let Some(descriptor) = router.preferred_gpu_synapse_tensor_descriptor() {
-                row.preferred_tensor_dims = Some(descriptor.dims);
-                row.preferred_tensor_ggml_type_id = Some(descriptor.ggml_type_id);
-                row.preferred_tensor_ggml_type_label = Some(descriptor.ggml_type_label);
-                row.dequant_supported_by_current_code = descriptor.has_dequant_path;
+                let GpuSynapseTensorDescriptor {
+                    name: _,
+                    ggml_type_id,
+                    ggml_type_label,
+                    dims,
+                    has_dequant_path,
+                } = descriptor;
+                row.preferred_tensor_dims = Some(dims);
+                row.preferred_tensor_ggml_type_id = Some(ggml_type_id);
+                row.preferred_tensor_ggml_type_label = Some(ggml_type_label);
+                row.dequant_supported_by_current_code = has_dequant_path;
             }
         }
         Err(err) => {
@@ -150,13 +167,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut report = Vec::with_capacity(cfg.validation_models.len());
     for spec in &cfg.validation_models {
-        let row = probe_one(spec);
+        let row = probe_one(spec, cfg.model_family_override);
         print_row(&row);
         report.push(row);
     }
 
+    // Stream the JSON report through a buffered writer so peak memory stays
+    // bounded as the lineup grows beyond the current 5-model fixture.
     let json_path = cfg.output_root.join("synapse_diagnostic.json");
-    fs::write(&json_path, serde_json::to_string_pretty(&report)?)?;
+    let file = fs::File::create(&json_path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, &report)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
     println!("ok: wrote {}", json_path.display());
 
     Ok(())
