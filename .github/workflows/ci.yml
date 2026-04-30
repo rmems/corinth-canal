@@ -49,8 +49,6 @@ jobs:
   cpu-tests-ryzen:
     name: CPU Heavy (Self-hosted Ryzen)
     needs: cpu-tests-github
-    # Run on only trusted contexts
-    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64, ryzen]
     timeout-minutes: 60
     steps:
