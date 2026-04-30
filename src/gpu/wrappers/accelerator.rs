@@ -809,7 +809,9 @@ mod tests {
         assert_eq!(best, 5 * TEMPORAL_BLOCK_SIZE + 9);
 
         // Synchronize stream to ensure first reduction completes
-        stream.synchronize().expect("stream synchronization should succeed");
+        stream
+            .synchronize()
+            .expect("stream synchronization should succeed");
 
         membrane.fill(0.0);
         adaptation.fill(0.0);
