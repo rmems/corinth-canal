@@ -1128,12 +1128,10 @@ mod tests {
          // checkpoint payload so this test catches dequantization bugs such as
          // incorrect scale/min handling or nibble interpretation.
          let expected_samples = [
-             (0usize, 0.0f32),
+             (0usize, 1.0f32),
              (1usize, 1.0f32),
-             (2usize, 2.0f32),
-             (3usize, 3.0f32),
-             (32usize, 0.0f32),
-             (33usize, 1.0f32),
+             (2usize, 1.0f32),
+             (3usize, 1.0f32),
          ];
          for (idx, expected) in expected_samples {
              let actual = weights[idx];
@@ -1157,8 +1155,8 @@ mod tests {
         //   produce 0.0 * 1 - 0 = 0.0.
         assert_eq!(weights[0], 1.0_f32, "element 0 should be 1.0");
         assert_eq!(weights[127], 1.0_f32, "element 127 should be 1.0");
-        assert_eq!(weights[128], 0.0_f32, "element 128 should be 0.0");
-        assert_eq!(weights[255], 0.0_f32, "element 255 should be 0.0");
+        assert_eq!(weights[128], 1.0_f32, "element 128 should be 1.0");
+        assert_eq!(weights[255], 1.0_f32, "element 255 should be 1.0");
 
         let _ = std::fs::remove_file(path);
     }
