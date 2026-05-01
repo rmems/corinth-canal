@@ -9,6 +9,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64, cuda-13, sm_120, gpu]
     name: GPU Integration Tests
     if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     
     steps:
       - uses: actions/checkout@v4
