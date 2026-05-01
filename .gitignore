@@ -29,3 +29,6 @@ AGENTS.md
 
 # GitHub Actions runner
 /actions-runner/
+
+# Scripts
+/scripts/*
