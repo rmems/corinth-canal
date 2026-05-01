@@ -1,0 +1,4 @@
+[[model]]
+slug = "llama_3_2_dark_champion_q5_k_m"
+family = "llama_moe"
+path = "/home/raulmc/Downloads/SNN_Quantization/models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf"

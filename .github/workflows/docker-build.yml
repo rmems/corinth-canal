@@ -1,0 +1,49 @@
+name: Docker Build
+on:
+  pull_request:
+    branches:
+      - '**'
+  push:
+    branches:
+      - main
+
+jobs:
+  docker:
+    runs-on: [self-hosted, Linux, X64, cuda-13, sm_120, gpu]
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Docker tags
+        id: tags
+        run: |
+          TAGS="ghcr.io/${{ github.repository }}:${{ github.sha }}"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            TAGS="$TAGS,ghcr.io/${{ github.repository }}:main"
+          fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TAGS="$TAGS,ghcr.io/${{ github.repository }}:pr-${{ github.event.number }}"
+          fi
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            CUDA_VERSION=13.0
+            RUST_VERSION=stable
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

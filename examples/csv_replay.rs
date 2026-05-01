@@ -8,8 +8,8 @@ use support::config::RunConfig;
 use support::default_spiking_model_config;
 
 use corinth_canal::{
-    model::Model, telemetry::TelemetrySnapshot, HybridError, TelemetryFunnel, EMBEDDING_DIM,
-    FUNNEL_HIDDEN_NEURONS,
+    EMBEDDING_DIM, FUNNEL_HIDDEN_NEURONS, HybridError, TelemetryFunnel, model::Model,
+    telemetry::TelemetrySnapshot,
 };
 
 const EXPECTED_HEADER: &str = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
@@ -21,11 +21,7 @@ fn parse_u64(v: &str) -> Option<u64> {
 
 fn parse_f32(v: &str) -> Option<f32> {
     let n = v.parse::<f32>().ok()?;
-    if n.is_finite() {
-        Some(n)
-    } else {
-        None
-    }
+    if n.is_finite() { Some(n) } else { None }
 }
 
 fn mean_squared_error(output: &[f32], target: &[f32]) -> f32 {

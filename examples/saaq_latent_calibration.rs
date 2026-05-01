@@ -127,7 +127,11 @@ struct PendingIndexRow {
 }
 
 fn heartbeat_slug_for(enabled: bool) -> &'static str {
-    if enabled { "heartbeat_on" } else { "heartbeat_off" }
+    if enabled {
+        "heartbeat_on"
+    } else {
+        "heartbeat_off"
+    }
 }
 
 fn emit_validation_finish(
@@ -567,8 +571,7 @@ fn run_validation(
     // Finalize mean-tick metric (f64 microseconds). Safe for any
     // elapsed_count <= usize::MAX; `as f64` lossiness is acceptable here.
     if elapsed_count > 0 {
-        metrics.mean_tick_elapsed_us =
-            Some(elapsed_sum_us as f64 / elapsed_count as f64);
+        metrics.mean_tick_elapsed_us = Some(elapsed_sum_us as f64 / elapsed_count as f64);
     }
 
     if let Err(error) = run_result {
@@ -922,8 +925,7 @@ fn collect_generated_files(
     files
 }
 
-const INDEX_CSV_HEADER: &str =
-    "run_id,run_tag,model_slug,model_family,telemetry_source,heartbeat_enabled,repeat_idx,repeat_count,saaq_rule,validation_status,run_dir,ticks_completed,latent_rows,mean_tick_elapsed_us,repeat_determinism";
+const INDEX_CSV_HEADER: &str = "run_id,run_tag,model_slug,model_family,telemetry_source,heartbeat_enabled,repeat_idx,repeat_count,saaq_rule,validation_status,run_dir,ticks_completed,latent_rows,mean_tick_elapsed_us,repeat_determinism";
 
 /// Append every buffered row to `<output_root>/index.csv`. The file is
 /// opened once per `main()` invocation with `append(true)`; if it's empty
@@ -1187,9 +1189,7 @@ fn format_local_timestamp_compact() -> String {
     // and sortable without depending on the machine's TZ configuration; the
     // full ISO-ish form is still human-readable in the path.
     let (year, month, day, hour, minute, second) = civil_from_unix_secs(secs as i64);
-    format!(
-        "{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}"
-    )
+    format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}")
 }
 
 /// Civil (Y, M, D, h, m, s) in UTC from a unix timestamp.

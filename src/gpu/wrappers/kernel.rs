@@ -197,10 +197,10 @@ fn capture_jit_log(bytes: &[u8]) -> String {
     // fit in a void*. Buffer pointers are passed as their actual pointers.
     let mut option_values: [*mut c_void; 5] = [
         error_buf.as_mut_ptr() as *mut c_void,
-        LOG_CAP as usize as *mut c_void,
+        LOG_CAP as *mut c_void,
         info_buf.as_mut_ptr() as *mut c_void,
-        LOG_CAP as usize as *mut c_void,
-        1usize as *mut c_void,
+        LOG_CAP as *mut c_void,
+        0usize as *mut c_void,
     ];
 
     let mut module: cuda::CUmodule = ptr::null_mut();
@@ -255,7 +255,7 @@ mod tests {
     use crate::gpu::wrappers::context::GpuContext;
 
     #[test]
-    #[ignore] // requires GPU + driver ≥ 570
+    #[cfg(feature = "cuda")] // requires GPU + driver ≥ 570
     fn test_load_kernels() {
         let _ctx = GpuContext::init().expect("Failed to initialize GPU context");
         let kernels = KernelModule::load().expect("Failed to load kernels");

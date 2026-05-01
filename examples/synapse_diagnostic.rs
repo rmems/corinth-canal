@@ -16,10 +16,10 @@ use std::io::{BufWriter, Write};
 
 use serde::Serialize;
 
-use corinth_canal::moe::{GpuSynapseTensorDescriptor, OlmoeRouter, RoutingMode};
 use corinth_canal::ModelFamily;
-use support::config::RunConfig;
+use corinth_canal::moe::{GpuSynapseTensorDescriptor, OlmoeRouter, RoutingMode};
 use support::ValidationModelSpec;
+use support::config::RunConfig;
 
 #[derive(Debug, Serialize)]
 struct SynapseDiagnosticRow {

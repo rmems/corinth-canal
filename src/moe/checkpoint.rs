@@ -10,6 +10,7 @@ use super::{
 use crate::error::{HybridError, Result};
 use memmap2::{MmapMut, MmapOptions};
 use std::collections::HashMap;
+#[cfg(feature = "cuda")]
 use std::ffi::c_void;
 use std::fs::OpenOptions;
 use std::slice;
@@ -18,6 +19,7 @@ use std::slice;
 pub(super) struct MappedGgufCheckpoint {
     mmap: MmapMut,
     tensors: HashMap<String, GgufTensorInfo>,
+    #[cfg(feature = "cuda")]
     registered_gpu_synapse: Option<RegisteredTensorSliceU16>,
     metadata: GgufMetadata,
 }
@@ -31,6 +33,7 @@ pub(super) struct GgufTensorInfo {
     pub(super) n_elements: usize,
 }
 
+#[cfg(feature = "cuda")]
 #[derive(Debug)]
 struct RegisteredTensorSliceU16 {
     tensor_name: String,
@@ -39,6 +42,7 @@ struct RegisteredTensorSliceU16 {
     len: usize,
 }
 
+#[cfg(feature = "cuda")]
 #[derive(Debug)]
 struct RegisteredCudaRegion {
     ptr: *mut c_void,
@@ -161,6 +165,7 @@ pub(super) fn probe_and_map_checkpoint(path: &str) -> Result<(GgufMetadata, Mapp
         MappedGgufCheckpoint {
             mmap,
             tensors: parsed.tensors,
+            #[cfg(feature = "cuda")]
             registered_gpu_synapse: None,
             metadata: parsed.metadata,
         },
@@ -400,6 +405,7 @@ impl MappedGgufCheckpoint {
         Ok(&self.mmap[start..end])
     }
 
+    #[cfg(feature = "cuda")]
     pub(super) fn registered_f16_tensor<'a>(
         &'a mut self,
         name: &str,
@@ -446,6 +452,7 @@ impl MappedGgufCheckpoint {
     /// Iterates over every row of the tensor and applies the Q8_0
     /// block-scale dequantization, producing `dims[0] * dims[1]` output
     /// elements laid out row-major. `dims[0]` must be divisible by 32.
+    #[allow(dead_code)]
     pub(super) fn dequantize_q8_0_tensor(&self, name: &str, path: &str) -> Result<Vec<f32>> {
         let info = self.tensor_info(name, path)?.clone();
         if info.ggml_type != GGML_TYPE_Q8_0 {
@@ -461,12 +468,12 @@ impl MappedGgufCheckpoint {
         }
         let width = info.dims[0];
         let n_rows = info.dims.get(1).copied().unwrap_or(1);
-        let capacity = width.checked_mul(n_rows).ok_or_else(|| {
-            HybridError::ModelLoad {
+        let capacity = width
+            .checked_mul(n_rows)
+            .ok_or_else(|| HybridError::ModelLoad {
                 path: path.to_owned(),
                 reason: format!("tensor '{name}' element count overflow ({width}×{n_rows})"),
-            }
-        })?;
+            })?;
         let mut out = Vec::with_capacity(capacity);
         for row in 0..n_rows {
             let row_bytes = self.row_bytes(&info, row, path, name)?;
@@ -475,8 +482,44 @@ impl MappedGgufCheckpoint {
         }
         Ok(out)
     }
+
+    /// Dequantize a full Q5_K tensor to a flat `Vec<f32>`.
+    ///
+    /// Iterates over every row of the tensor and applies the Q5_K
+    /// block-scale dequantization, producing `dims[0] * dims[1]` output
+    /// elements laid out row-major. `dims[0]` must be divisible by 256.
+    pub(super) fn dequantize_q5_k_tensor(&self, name: &str, path: &str) -> Result<Vec<f32>> {
+        let info = self.tensor_info(name, path)?.clone();
+        if info.ggml_type != GGML_TYPE_Q5_K {
+            return Err(HybridError::UnsupportedFormat(format!(
+                "tensor '{name}' must be Q5_K, got ggml_type={}",
+                info.ggml_type
+            )));
+        }
+        if info.dims.is_empty() {
+            return Err(HybridError::UnsupportedFormat(format!(
+                "tensor '{name}' has no dimensions"
+            )));
+        }
+        let width = info.dims[0];
+        let n_rows = info.dims.get(1).copied().unwrap_or(1);
+        let capacity = width
+            .checked_mul(n_rows)
+            .ok_or_else(|| HybridError::ModelLoad {
+                path: path.to_owned(),
+                reason: format!("tensor '{name}' element count overflow ({width}×{n_rows})"),
+            })?;
+        let mut out = Vec::with_capacity(capacity);
+        for row in 0..n_rows {
+            let row_bytes = self.row_bytes(&info, row, path, name)?;
+            let dequantized = dequantize_row_q5_k(row_bytes, width)?;
+            out.extend_from_slice(&dequantized);
+        }
+        Ok(out)
+    }
 }
 
+#[cfg(feature = "cuda")]
 impl RegisteredTensorSliceU16 {
     fn register(
         tensor_name: &str,
@@ -536,6 +579,7 @@ impl RegisteredTensorSliceU16 {
     }
 }
 
+#[cfg(feature = "cuda")]
 impl Drop for RegisteredCudaRegion {
     fn drop(&mut self) {
         // SAFETY: `ptr` was successfully registered by `cuMemHostRegister_v2`
@@ -551,7 +595,7 @@ impl Drop for RegisteredCudaRegion {
 fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
     match ggml_type {
         GGML_TYPE_Q8_0 => {
-            if width % 32 != 0 {
+            if !width.is_multiple_of(32) {
                 return Err(HybridError::UnsupportedFormat(format!(
                     "Q8_0 tensor width {width} is not divisible by 32"
                 )));
@@ -559,7 +603,7 @@ fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
             Ok((width / 32) * (2 + 32))
         }
         GGML_TYPE_Q5_K => {
-            if width % 256 != 0 {
+            if !width.is_multiple_of(256) {
                 return Err(HybridError::UnsupportedFormat(format!(
                     "Q5_K tensor width {width} is not divisible by 256"
                 )));
@@ -573,7 +617,7 @@ fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
 }
 
 fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if width % 32 != 0 {
+    if !width.is_multiple_of(32) {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q8_0 width {width} is not divisible by 32"
         )));
@@ -590,7 +634,7 @@ fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
 }
 
 fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if width % 256 != 0 {
+    if !width.is_multiple_of(256) {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q5_K width {width} is not divisible by 256"
         )));
@@ -661,6 +705,7 @@ fn quantization_label(file_type: Option<u32>) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn page_size_bytes(path: &str) -> Result<usize> {
     // SAFETY: `sysconf` is a pure query with no preconditions; valid to call at any time.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -681,6 +726,7 @@ fn align_up(value: usize, alignment: usize) -> usize {
     }
 }
 
+#[cfg(feature = "cuda")]
 fn cuda_host_register(ptr: *mut c_void, len: usize, path: &str, tensor_name: &str) -> Result<()> {
     // SAFETY: `ptr` points to a page-aligned region within a live `MmapMut`
     // (validated by the caller) and `len` covers only that region.  Flags = 0

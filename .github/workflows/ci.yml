@@ -1,0 +1,61 @@
+name: CI (CPU)
+on:
+  pull_request:
+    branches:
+      - '**'
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+
+concurrency:
+  group: ci-cpu-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  
+jobs:
+  cpu-tests-github:
+    runs-on: ubuntu-latest
+    name: CPU Tests (GitHub hosted)
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install components (rustfmt, clippy)
+        run: rustup component add rustfmt clippy
+
+      - name: Cache Cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cpu-ci-v1"
+          cache-on-failure: true
+
+      - name: Format check
+        run: cargo fmt --all -- --check    
+
+      - name: Lint 
+        run: cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code
+
+      - name: Build library (CPU-only)
+        run: cargo test --lib --no-default-features --locked -- --nocapture
+
+      - name: Check examples (CPU-only)
+        run: cargo check --examples --no-default-features --locked
+  
+  cpu-tests-ryzen:
+    name: CPU Heavy (Self-hosted Ryzen)
+    needs: cpu-tests-github
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, ryzen]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          rustup component add rustfmt clippy
+          cargo test --all-targets --no-default-features --locked

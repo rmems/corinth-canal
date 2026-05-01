@@ -7,8 +7,8 @@ pub mod observability;
 pub use config::RunConfig;
 
 use corinth_canal::{
-    model::ModelConfig, moe::OlmoeRouter, moe::RoutingMode, projector::ProjectionMode,
-    HeartbeatConfig, ModelFamily, SaaqUpdateRule,
+    HeartbeatConfig, ModelFamily, SaaqUpdateRule, model::ModelConfig, moe::OlmoeRouter,
+    moe::RoutingMode, projector::ProjectionMode,
 };
 use std::io::Error;
 use std::path::{Path, PathBuf};
@@ -19,8 +19,7 @@ pub const DEFAULT_MATH_PROMPT_TEXT: &str = "The derivative of a constant is math
 pub const DEFAULT_RUST_SYNTAX_PROMPT_TEXT: &str =
     "fn main() { println!(\"Hello from a spiking MoE model.\"); }";
 
-pub const DEFAULT_ENGLISH_SNN_PROMPT_TEXT: &str =
-    "Let's teach this MoE model about SNN.";
+pub const DEFAULT_ENGLISH_SNN_PROMPT_TEXT: &str = "Let's teach this MoE model about SNN.";
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]

@@ -1,5 +1,6 @@
 # Rust
 /target/
+actions-runner/
 **/*.rs.bk
 
 # IDE
@@ -25,3 +26,6 @@ AGENTS.md
 # Generated per-run artifacts (tracked via .gitkeep only)
 /artifacts/*
 !/artifacts/.gitkeep
+
+# GitHub Actions runner
+/actions-runner/

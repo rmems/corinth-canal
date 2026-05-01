@@ -2,7 +2,7 @@
 
 use super::Model;
 use super::{
-    core::{resolve_gpu_routing_telemetry_path, IZ_NEURONS, N_NEURONS},
+    core::{IZ_NEURONS, N_NEURONS, resolve_gpu_routing_telemetry_path},
     telemetry_io::append_gpu_routing_telemetry_row,
 };
 use crate::funnel::active_neuron_indices;
@@ -131,14 +131,58 @@ impl Model {
             .dequantized_q8_0_synapse_tensor_name()
             .map(str::to_owned)
         {
-            let signature =
-                format!("dequantized-q8_0::{}::{tensor_name}", self.router.model_path());
+            let fallback_signature = format!("synthetic-f32::{neuron_count}");
+            if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
+                return Ok(());
+            }
+            let signature = format!(
+                "dequantized-q8_0::{}::{tensor_name}",
+                self.router.model_path()
+            );
             if accelerator.synapse_signature() != Some(signature.as_str()) {
                 let weights = self
                     .router
                     .dequantized_q8_0_synapse_weights(&tensor_name)
                     .map_err(|e| {
                         GpuError::MemoryError(format!("Q8_0 dequantization failed: {e}"))
+                    })?;
+                let expected = neuron_count
+                    .checked_mul(neuron_count)
+                    .ok_or_else(|| GpuError::MemoryError("neuron_count² overflows usize".into()))?;
+                if weights.len() == expected {
+                    accelerator.load_synapse_weights_named(&signature, &weights)?;
+                    return Ok(());
+                }
+                // Tensor element count does not match neuron_count²; fall
+                // through to the synthetic-fallback below.
+            } else {
+                return Ok(());
+            }
+        }
+
+        // Q5_K dequantized path: only invoked when the adapter confirmed that
+        // the preferred tensor is Q5_K with width divisible by 256.  We check
+        // the GPU signature before dequantizing to avoid the allocation cost
+        // on repeated calls.
+        if let Some(tensor_name) = self
+            .router
+            .dequantized_q5_k_synapse_tensor_name()
+            .map(str::to_owned)
+        {
+            let fallback_signature = format!("synthetic-f32::{neuron_count}");
+            if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
+                return Ok(());
+            }
+            let signature = format!(
+                "dequantized-q5_k::{}::{tensor_name}",
+                self.router.model_path()
+            );
+            if accelerator.synapse_signature() != Some(signature.as_str()) {
+                let weights = self
+                    .router
+                    .dequantized_q5_k_synapse_weights(&tensor_name)
+                    .map_err(|e| {
+                        GpuError::MemoryError(format!("Q5_K dequantization failed: {e}"))
                     })?;
                 let expected = neuron_count
                     .checked_mul(neuron_count)

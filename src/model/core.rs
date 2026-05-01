@@ -6,7 +6,7 @@ use crate::gpu::{GpuAccelerator, GpuBuffer, GpuError, GpuResult};
 use crate::moe::{GpuSynapseTensorDescriptor, OlmoeRouter};
 use crate::projector::Projector;
 use crate::types::{
-    ModelConfig, ModelFamily, ModelOutput, RoutingMode, TelemetrySnapshot, EMBEDDING_DIM,
+    EMBEDDING_DIM, ModelConfig, ModelFamily, ModelOutput, RoutingMode, TelemetrySnapshot,
 };
 
 pub(super) const N_NEURONS: usize = 2048;

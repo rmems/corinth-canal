@@ -12,8 +12,8 @@ readme = "README.md"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
-cust    = "0.3.2"
-anyhow  = { version = "1", features = ["backtrace"] }
+cust = { version = "0.3.2", optional = true }
+anyhow = { version = "1", features = ["backtrace"] }
 tracing = "0.1"
 memmap2 = "0.9"
 libc = "0.2"
@@ -28,11 +28,34 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 cc = "1.0"
 
 [features]
-default = []
+default = ["cuda"]
 gguf = []
-# Allow `cargo build` to succeed without nvcc by writing empty fatbin files.
-# GPU paths will fail at runtime; CPU fallbacks remain available.
+cuda = ["cust"]
+# Allows building without CUDA Toolkit by creating empty fatbin files.
+# Does NOT depend on cuda feature to enable CPU-only builds.
 gpu-stub = []
+# CI-friendly profile: no cuda dependencies, minimal build for testing CI pipeline.
+ci = []
+[[example]]
+name = "gpu_smoke_test"
+required-features = ["cuda"]
+
+[[example]]
+name = "telemetry_bridge"
+required-features = ["cuda"]
+
+[[example]]
+name = "csv_replay"
+required-features = ["cuda"]
+
+[[example]]
+name = "saaq_latent_calibration"
+required-features = ["cuda"]
+
+[[example]]
+name = "synapse_diagnostic"
+required-features = ["cuda"]
+
 
 [profile.release]
 opt-level = 3

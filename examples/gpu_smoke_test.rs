@@ -3,10 +3,7 @@ mod support;
 use corinth_canal::{gpu::GpuAccelerator, model::Model};
 use std::io::Error;
 use std::time::Instant;
-use support::{
-    config::RunConfig,
-    default_spiking_model_config,
-};
+use support::{config::RunConfig, default_spiking_model_config};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::from_filename(".env.local");
     let run_cfg = RunConfig::from_env();
