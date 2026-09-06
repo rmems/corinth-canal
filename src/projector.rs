@@ -42,6 +42,28 @@ fn feature_dim_for(snn_neurons: usize) -> usize {
     snn_neurons + (snn_neurons * TEMPORAL_BINS) + snn_neurons + IZ_NEURONS
 }
 
+/// SplitMix64 — a deterministic, dependency-free finalising hash.
+///
+/// Used to derive Xavier-uniform weights from a flat index without pulling in
+/// an RNG crate. Every call is pure, so a given index always yields the same
+/// weight and `Projector` construction stays reproducible across runs.
+fn splitmix64(index: u64) -> u64 {
+    let mut z = index.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Map a 64-bit hash onto `[-1.0, 1.0)`.
+///
+/// Only the top 24 bits are consumed, so every produced value is exactly
+/// representable in `f32` and the mapping introduces no rounding bias.
+fn unit_symmetric(hash: u64) -> f32 {
+    const SCALE: f32 = 1.0 / (1u32 << 23) as f32;
+    let bits = (hash >> 40) as u32;
+    (bits as f32) * SCALE - 1.0
+}
+
 // ── Projector ─────────────────────────────────────────────────────────────────
 
 /// Converts Spikenaut SNN output into a dense embedding for Router.
@@ -112,13 +134,17 @@ impl Projector {
         let fan_in = feature_dim as f32;
         let fan_out = EMBEDDING_DIM as f32;
         let limit = (6.0_f32 / (fan_in + fan_out)).sqrt();
-        const GOLDEN_RATIO_FRAC: f32 = 1.618_034;
 
         // Deterministic Xavier-uniform init (no external rng dep needed).
+        //
+        // The index is hashed rather than scaled: an earlier
+        // `(i as f32 * PHI) % 1.0` formulation lost all fractional precision
+        // once `i * PHI` passed 2^23, which collapsed 86% of the default
+        // 2048x12293 matrix onto `-limit` and left only 423 of 2048 output
+        // rows distinct.
         let mut weights = Vec::with_capacity(EMBEDDING_DIM * feature_dim);
         for i in 0..(EMBEDDING_DIM * feature_dim) {
-            // Simple deterministic pseudo-random from index hash.
-            let t = ((i as f32 * GOLDEN_RATIO_FRAC) % 1.0) * 2.0 - 1.0;
+            let t = unit_symmetric(splitmix64(i as u64));
             weights.push(t * limit);
         }
 
@@ -394,6 +420,53 @@ impl Default for Projector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn weight_init_does_not_collapse_at_scale() {
+        // Regression guard for the degenerate index-hash init: the previous
+        // `(i as f32 * PHI) % 1.0` formula lost all fractional precision once
+        // `i * PHI` passed 2^23, so 21,719,774 of 25,176,064 weights equalled
+        // `-limit`, the matrix held only 3,731 distinct values, and just 423
+        // of 2048 output rows were distinct. This asserts none of that holds.
+        let projector = Projector::new(ProjectionMode::RateSum);
+        let feature_dim = projector.feature_dim;
+        assert_eq!(projector.weights.len(), EMBEDDING_DIM * feature_dim);
+
+        let distinct: std::collections::HashSet<u32> =
+            projector.weights.iter().map(|w| w.to_bits()).collect();
+        assert!(
+            distinct.len() > 1_000_000,
+            "weight matrix collapsed to {} distinct values",
+            distinct.len()
+        );
+
+        // The tail of the matrix is where the old formula degenerated first.
+        let last_row = &projector.weights[projector.weights.len() - feature_dim..];
+        assert!(
+            last_row.iter().any(|w| *w != last_row[0]),
+            "final output row is constant"
+        );
+    }
+
+    #[test]
+    fn weight_init_stays_within_xavier_limit_and_is_reproducible() {
+        let a = Projector::with_input_neurons(ProjectionMode::RateSum, 64);
+        let b = Projector::with_input_neurons(ProjectionMode::RateSum, 64);
+        assert_eq!(a.weights, b.weights, "init must be deterministic");
+
+        let fan_in = a.feature_dim as f32;
+        let limit = (6.0_f32 / (fan_in + EMBEDDING_DIM as f32)).sqrt();
+        assert!(
+            a.weights.iter().all(|w| w.abs() <= limit),
+            "weight escaped the Xavier limit"
+        );
+
+        let mean = a.weights.iter().sum::<f32>() / a.weights.len() as f32;
+        assert!(
+            mean.abs() < limit * 0.05,
+            "init is badly off-centre: {mean}"
+        );
+    }
 
     fn dummy_spike_train(n_steps: usize, neurons: usize) -> Vec<Vec<usize>> {
         (0..n_steps)
