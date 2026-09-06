@@ -6,18 +6,17 @@ loaded.  Importing this module is therefore safe in the CPU-only CI profile.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Mapping
 import importlib
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import subprocess  # nosec B404
 import warnings
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
-
 
 # llama-cli default subprocess timeout when no generation/manifest limit is set.
 # Cold GGUF load plus a short completion commonly exceeds 30s; 600s is generous
@@ -326,7 +325,10 @@ class LlamaCppAdapter(ModelAdapter):
             )
         max_tokens, temperature, top_p = _validate_generation(generation)
         if self._mode == "python":
-            assert self._model is not None
+            if self._model is None:
+                raise BackendUnavailableError(
+                    "llama.cpp python backend reported loaded but holds no model"
+                )
             result = self._model(
                 prompt,
                 max_tokens=max_tokens,
@@ -335,7 +337,10 @@ class LlamaCppAdapter(ModelAdapter):
                 echo=False,
             )
             return str(result["choices"][0]["text"])
-        assert self._executable is not None
+        if self._executable is None:
+            raise BackendUnavailableError(
+                "llama.cpp cli backend reported loaded but holds no executable"
+            )
         timeout = _llama_cli_timeout(generation, self.options, self.manifest)
         return _invoke_llama_cli(
             self._executable,
@@ -549,19 +554,72 @@ def _backend_from_artifact(source: str, model_path_str: str) -> str | None:
     return None
 
 
+# Caller-supplied override. No producer in this repository writes it, but it
+# lets a runner force a backend without touching artifact metadata.
+_RUNTIME_OVERRIDE_FIELD = "runtime_format"
+
+# Metadata fields that describe the artifact, most specific first:
+#
+#   loader_hint        ModelAdapterConfig  (configs/model_adapter_configs.toml)
+#   checkpoint_format  ExperimentManifest  (run_manifest.json)
+#   source_format      RunMatrix entries
+#   format             ModelAdapterConfig
+#
+# The *value* is authoritative, not the field name: `loader_hint` is documented
+# as a loader hint but every entry on disk carries "safetensors" or "gguf",
+# which are artifact formats. So each value is tried as a runtime name first and
+# as an artifact format second.
+_BACKEND_HINT_FIELDS = (
+    "loader_hint",
+    "checkpoint_format",
+    "source_format",
+    "format",
+)
+
+
+def _normalized_field(manifest: Mapping[str, Any] | object, name: str) -> str:
+    value = _field(manifest, name, "")
+    if not value:
+        return ""
+    return str(value).strip().lower().replace("-", "_")
+
+
 def detect_backend(manifest: Mapping[str, Any] | object) -> str:
-    """Choose a backend from explicit runtime and artifact format metadata."""
-    runtime = str(_field(manifest, "runtime_format", "") or "").lower().replace("-", "_")
-    if runtime:
-        backend = _backend_from_runtime(runtime)
+    """Choose a backend from explicit runtime and artifact format metadata.
+
+    Accepts the field vocabulary the Rust producers actually emit
+    (`checkpoint_format`, `source_format`, `format`, `loader_hint`) rather than
+    a single key nothing writes.
+    """
+    override = _normalized_field(manifest, _RUNTIME_OVERRIDE_FIELD)
+    if override:
+        backend = _backend_from_runtime(override)
         if backend is None:
-            raise ValueError(f"unsupported runtime_format {runtime!r}")
+            raise ValueError(
+                f"unsupported {_RUNTIME_OVERRIDE_FIELD} {override!r}; expected one of "
+                f"{sorted(set(_EXPLICIT_RUNTIMES))}"
+            )
         return backend
-    source = str(_field(manifest, "source_format", "") or "").lower()
-    backend = _backend_from_artifact(source, _resolved_model_path_lower(manifest))
+
+    for field in _BACKEND_HINT_FIELDS:
+        value = _normalized_field(manifest, field)
+        if not value:
+            continue
+        if value == "custom_artifact":
+            raise ValueError(
+                f"{field} 'custom_artifact' names no inference runtime; set "
+                f"{_RUNTIME_OVERRIDE_FIELD} explicitly for this model"
+            )
+        backend = _backend_from_runtime(value) or _backend_from_artifact(value, "")
+        if backend is not None:
+            return backend
+
+    backend = _backend_from_artifact("", _resolved_model_path_lower(manifest))
     if backend is None:
         raise ValueError(
-            "cannot detect inference backend; set manifest runtime_format or source_format"
+            "cannot detect inference backend; set "
+            f"{_RUNTIME_OVERRIDE_FIELD} or one of {list(_BACKEND_HINT_FIELDS)} "
+            "(saw none, and the model path has no recognised suffix)"
         )
     return backend
 
