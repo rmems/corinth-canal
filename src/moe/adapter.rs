@@ -44,6 +44,12 @@ pub(super) struct ModelAdapter {
     pub(super) quantization: String,
 }
 
+/// The `synapse_source` string used when no checkpoint synapse tensor is in
+/// play. Defined once here because it is a value `run_manifest.json` persists
+/// and CLAUDE.md pins; it was previously spelled out separately in
+/// `RouterMetadata::synthetic` and again in the temporal fallback.
+pub(crate) const SYNTHETIC_FALLBACK_SOURCE: &str = "synthetic-fallback";
+
 impl ModelAdapter {
     pub(super) fn synapse_source_label(&self) -> &'static str {
         match self.synapse_source {
@@ -54,7 +60,7 @@ impl ModelAdapter {
             SynapseSource::DequantizedIQ3M => "dequantized-iq3_m",
             SynapseSource::RoutingF32 => "routing-f32",
             SynapseSource::DequantizedInt4 => "dequantized-int4",
-            SynapseSource::SyntheticFallback => "synthetic-fallback",
+            SynapseSource::SyntheticFallback => SYNTHETIC_FALLBACK_SOURCE,
         }
     }
 

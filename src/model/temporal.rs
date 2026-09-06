@@ -8,6 +8,7 @@ use super::{
 };
 use crate::funnel::active_neuron_indices;
 use crate::gpu::{GpuAccelerator, GpuError, GpuResult};
+use crate::moe::SYNTHETIC_FALLBACK_SOURCE;
 use crate::types::{ModelOutput, TelemetrySnapshot};
 impl Model {
     /// GPU-only temporal simulation with GIF (Generalized Integrate-and-Fire).
@@ -170,6 +171,26 @@ impl Model {
             neuron_count,
         )? {
             return Ok(());
+        }
+
+        // Nothing above produced weights, so the GIF layer is about to run with
+        // an all-zero synapse matrix — i.e. zero recurrent drive. That is a
+        // legitimate state for a synthetic run, but it is indistinguishable in
+        // the artifacts from a real checkpoint whose tensors failed to load,
+        // because `synapse_source` was decided at router-load time and is not
+        // revisited here.
+        let declared_source = self.router.synapse_source().to_owned();
+        if declared_source != SYNTHETIC_FALLBACK_SOURCE {
+            tracing::warn!(
+                declared_synapse_source = %declared_source,
+                neuron_count,
+                "no GPU synapse weights could be loaded; falling back to an all-zero                  synapse matrix even though the router reports a real source. The run                  will complete with zero recurrent drive and run_manifest.json will                  still name the declared source."
+            );
+        } else {
+            tracing::debug!(
+                neuron_count,
+                "using the synthetic all-zero synapse matrix (no checkpoint mapped)"
+            );
         }
 
         let fallback_signature = format!("synthetic-f32::{neuron_count}");
