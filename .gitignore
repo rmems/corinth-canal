@@ -23,8 +23,8 @@ lcov.info
 *.profdata
 coverage/
 
-# Agent notes
-docs/
+# Agent notes (scratch only — the tracked docs/ tree must stay visible)
+docs/agent-notes/
 
 # Local Kilo planning scratch
 .kilo/plans/

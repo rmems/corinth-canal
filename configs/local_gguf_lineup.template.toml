@@ -1,0 +1,57 @@
+# Template for the local-only SAAQ 1.0 / 1.5 GGUF lineup.
+#
+# Copy to configs/local_gguf_lineup.toml (gitignored) and replace every
+# /absolute/path/to/... placeholder with a real path on your machine.
+# Never commit the copy — it carries machine-specific absolute paths.
+#
+# Update paths to match your local GGUF model locations.
+
+# ── Models under ~/.models/gguf/ ──
+
+[[model]]
+slug = "zaya1_8b_q8_0"
+family = "zaya"
+path = "/absolute/path/to/ZAYA1-8B-Q8_0.gguf"
+
+# GLM-4.6V-Flash is NOT MoE (dense model, no expert_count) — excluded from SAAQ campaign.
+# [[model]]
+# slug = "glm_4_6v_flash_q8_0"
+# family = "glm4"
+# path = "/absolute/path/to/GLM-4.6V-Flash-Q8_0.gguf"
+
+[[model]]
+slug = "kimi_vl_a3b_q6_k"
+family = "moonlight_16b_a3b"
+path = "/absolute/path/to/Kimi-VL-A3B-Instruct-Q6_K.gguf"
+
+[[model]]
+slug = "marco_nano_base_q8_0"
+family = "qwen3_moe"
+path = "/absolute/path/to/Marco-Nano-Base.Q8_0.gguf"
+
+# ── Models under ~/Downloads/SNN_Quantization/ ──
+
+[[model]]
+slug = "olmoe_1b_7b_f16"
+family = "olmoe"
+path = "/absolute/path/to/OLMoE-1B-7B-0125-Instruct-F16.gguf"
+
+[[model]]
+slug = "deepseek_coder_v2_lite_q6_k_l"
+family = "deepseek2"
+path = "/absolute/path/to/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf"
+
+[[model]]
+slug = "gemma4_26b_a4b_iq4_nl"
+family = "gemma4"
+path = "/absolute/path/to/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf"
+
+[[model]]
+slug = "qwen3_moe_iq3_m"
+family = "qwen3_moe"
+path = "/absolute/path/to/qwen3-moe.i1-IQ3_M.gguf"
+
+[[model]]
+slug = "llama_3_2_dark_champion_q5_k_m"
+family = "llama_moe"
+path = "/absolute/path/to/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf"
