@@ -52,6 +52,15 @@ pub(in crate::moe) fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Ve
             "Q8_0 width {width} is not divisible by 32"
         )));
     }
+    // Q8_0 block: d(2) + qs(32) = 34 bytes. Without this check `chunks_exact`
+    // silently drops a short trailing block and returns an under-length row.
+    let expected_len = (width / 32) * 34;
+    if row.len() != expected_len {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q8_0 row length mismatch: expected {expected_len} bytes for width {width}, got {}",
+            row.len()
+        )));
+    }
 
     let mut out = Vec::with_capacity(width);
     for block in row.chunks_exact(34) {
@@ -67,6 +76,14 @@ pub(in crate::moe) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Ve
     if !width.is_multiple_of(256) {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q5_K width {width} is not divisible by 256"
+        )));
+    }
+    // Q5_K block: d(2) + dmin(2) + scales(12) + qh(32) + ql(128) = 176 bytes.
+    let expected_len = (width / 256) * 176;
+    if row.len() != expected_len {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q5_K row length mismatch: expected {expected_len} bytes for width {width}, got {}",
+            row.len()
         )));
     }
 
@@ -247,12 +264,122 @@ pub(in crate::moe) fn f16_to_f32(bits: u16) -> f32 {
     let sign = ((bits as u32) & 0x8000) << 16;
     let exp = ((bits as u32) & 0x7C00) >> 10;
     let mant = ((bits as u32) & 0x03FF) << 13;
-    let val = if exp == 0 {
-        mant
-    } else if exp == 31 {
-        0x7F800000 | mant
+
+    if exp == 0 {
+        // Subnormal (and zero): the value is `mantissa * 2^-24`.
+        //
+        // Reusing the shifted mantissa directly as an f32 bit pattern — the
+        // previous behaviour — reinterpreted it as an f32 subnormal instead,
+        // yielding ~1.1e-41..1.2e-38 where the true range is 6.0e-8..6.1e-5.
+        // Every value came out too small by a factor of 2^111 (~5.19e33).
+        const SUBNORMAL_SCALE: f32 = 1.0 / 16_777_216.0; // 2^-24
+        let magnitude = ((bits & 0x03FF) as f32) * SUBNORMAL_SCALE;
+        return f32::from_bits(sign | magnitude.to_bits());
+    }
+
+    let val = if exp == 31 {
+        0x7F80_0000 | mant
     } else {
         ((exp + 127 - 15) << 23) | mant
     };
     f32::from_bits(sign | val)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `f16` reference values, computed independently of this implementation.
+    ///
+    /// The subnormal rows are the regression guard: the previous `exp == 0`
+    /// branch reused the shifted mantissa as an f32 bit pattern and returned
+    /// ~1.1e-41 / ~1.2e-38 for the first and last subnormal instead of the
+    /// true 5.96e-8 / 6.10e-5.
+    #[test]
+    fn f16_to_f32_matches_ieee754_reference() {
+        let cases: &[(u16, f32)] = &[
+            (0x0000, 0.0),
+            (0x8000, -0.0),
+            (0x0001, 5.960_464_5e-8),  // smallest positive subnormal
+            (0x0002, 1.192_092_9e-7),  // subnormal
+            (0x0200, 3.051_757_8e-5),  // mid subnormal
+            (0x03FF, 6.097_555e-5),    // largest subnormal
+            (0x8001, -5.960_464_5e-8), // signed subnormal
+            (0x0400, 6.103_515_6e-5),  // smallest normal
+            (0x3C00, 1.0),
+            (0xBC00, -1.0),
+            (0x4000, 2.0),
+            (0x7BFF, 65504.0), // largest finite
+        ];
+
+        for &(bits, expected) in cases {
+            let got = f16_to_f32(bits);
+            assert_eq!(
+                got.to_bits(),
+                expected.to_bits(),
+                "f16 0x{bits:04X}: expected {expected:e}, got {got:e}"
+            );
+        }
+    }
+
+    #[test]
+    fn f16_to_f32_handles_infinities_and_nan() {
+        assert_eq!(f16_to_f32(0x7C00), f32::INFINITY);
+        assert_eq!(f16_to_f32(0xFC00), f32::NEG_INFINITY);
+        assert!(f16_to_f32(0x7E00).is_nan());
+    }
+
+    /// Subnormals must stay strictly ordered and land in the correct decade.
+    /// The old implementation compressed the entire range into ~1e-41..1e-38.
+    #[test]
+    fn f16_subnormals_are_monotonic_and_correctly_scaled() {
+        let mut previous = 0.0_f32;
+        for mantissa in 1..=0x03FFu16 {
+            let value = f16_to_f32(mantissa);
+            assert!(
+                value > previous,
+                "subnormal 0x{mantissa:04X} not increasing: {value:e} <= {previous:e}"
+            );
+            previous = value;
+        }
+        // Largest subnormal must be just below the smallest normal.
+        assert!(previous < f16_to_f32(0x0400));
+        assert!(previous > 6.0e-5, "subnormal range collapsed: {previous:e}");
+    }
+
+    #[test]
+    fn dequantize_row_q8_0_rejects_short_rows() {
+        // One block short of the 2 required for width 64.
+        let row = vec![0u8; 34];
+        let err = dequantize_row_q8_0(&row, 64).unwrap_err();
+        assert!(
+            err.to_string().contains("row length mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn dequantize_row_q5_k_rejects_short_rows() {
+        let row = vec![0u8; 100];
+        let err = dequantize_row_q5_k(&row, 256).unwrap_err();
+        assert!(
+            err.to_string().contains("row length mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn dequantize_row_q8_0_decodes_a_known_block() {
+        // d = 1.0 (f16 0x3C00), quants 0..32 as i8.
+        let mut row = vec![0u8; 34];
+        row[0..2].copy_from_slice(&0x3C00u16.to_le_bytes());
+        for (i, slot) in row[2..34].iter_mut().enumerate() {
+            *slot = i as u8;
+        }
+        let out = dequantize_row_q8_0(&row, 32).expect("decode");
+        assert_eq!(out.len(), 32);
+        for (i, value) in out.iter().enumerate() {
+            assert_eq!(*value, i as f32, "index {i}");
+        }
+    }
 }
