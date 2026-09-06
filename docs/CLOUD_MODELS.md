@@ -12,11 +12,11 @@ LLM-models-onboarding branch.*
 
 ## Configuration
 
-Cloud model metadata lives in `configs/saaq15_cloud_lineup.toml`. Helper
+Cloud model metadata lives in `configs/saaq_cloud_lineup.toml`. Helper
 parsing/validation lives in `examples/support/mod.rs` and can be referenced via:
 
 ```bash
-CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml
+CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml
 ```
 
 ## Cloud model entries

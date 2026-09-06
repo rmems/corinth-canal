@@ -26,7 +26,7 @@ smoke:
     cargo run --release --example gpu_smoke_test
 
 # CSV replay demo.
-#   just replay PATH=/path/to/telemetry.csv
+#   just replay /path/to/telemetry.csv
 replay PATH:
     cargo run --release --example csv_replay -- {{PATH}}
 
@@ -36,24 +36,27 @@ saaq:
 
 # Phases: synthetic baseline, csv replay baseline.
 # Reads LINEUP_CONFIG and (for phases 2-3) TELEMETRY_CSV_PATH from .env.local.
-# Falls back to configs/saaq15_moe_lineup.toml when LINEUP_CONFIG is unset.
+# Falls back to configs/local_gguf_lineup.toml when LINEUP_CONFIG is unset.
+# That file is gitignored (machine-local); copy it from
+# configs/local_gguf_lineup.template.toml first.
 # Full SAAQ 1.5 MoE baseline campaign (2 phases x REPEAT_COUNT runs per model).
 saaq-campaign:
     @echo ">>> phase 1/2: synthetic baseline, repeat=2"
-    LINEUP_CONFIG="${LINEUP_CONFIG:-configs/saaq15_moe_lineup.toml}" \
+    LINEUP_CONFIG="${LINEUP_CONFIG:-configs/local_gguf_lineup.toml}" \
         SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
         RUN_TAG=campaign_syn \
         cargo run --release --example saaq_latent_calibration
     @echo ">>> phase 2/2: csv replay baseline, repeat=2"
-    LINEUP_CONFIG="${LINEUP_CONFIG:-configs/saaq15_moe_lineup.toml}" \
+    LINEUP_CONFIG="${LINEUP_CONFIG:-configs/local_gguf_lineup.toml}" \
         SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=csv \
         RUN_TAG=campaign_csv \
         cargo run --release --example saaq_latent_calibration
     @echo "ok: campaign finished; see artifacts/index.csv"
 
 # Force CSV-replay mode for the SAAQ sweep. TELEMETRY_CSV_PATH must be set
-# in the environment or passed explicitly:
-#   just saaq-csv TELEMETRY_CSV_PATH=/path/to/telemetry.csv
+# in .env.local or exported in the environment -- this recipe takes no
+# parameters, so it must be passed as a variable assignment:
+#   TELEMETRY_CSV_PATH=/path/to/telemetry.csv just saaq-csv
 saaq-csv:
     TELEMETRY_SOURCE=csv cargo run --release --example saaq_latent_calibration
 
