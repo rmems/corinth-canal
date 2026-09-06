@@ -20,10 +20,16 @@ use std::slice;
 
 #[derive(Debug)]
 pub(in crate::moe) struct MappedGgufCheckpoint {
-    mmap: MmapMut,
-    tensors: HashMap<String, GgufTensorInfo>,
+    // FIELD ORDER IS LOAD-BEARING. Rust drops struct fields in declaration
+    // order, and `registered_gpu_synapse` holds a CUDA host-registration over
+    // pages owned by `mmap`. It must therefore be declared *before* `mmap`, so
+    // `cuMemHostUnregister` runs while the mapping is still valid. With `mmap`
+    // first, munmap ran before the unregister, leaving CUDA to unregister
+    // freed pages.
     #[cfg(feature = "cuda")]
     registered_gpu_synapse: Option<RegisteredTensorSliceU16>,
+    mmap: MmapMut,
+    tensors: HashMap<String, GgufTensorInfo>,
     metadata: GgufMetadata,
 }
 

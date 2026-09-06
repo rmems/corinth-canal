@@ -116,8 +116,13 @@ impl Drop for RegisteredCudaRegion {
         // in `RegisteredTensorSliceU16::register`, so it is valid to unregister.
         let result = unsafe { cust::sys::cuMemHostUnregister(self.ptr) };
         if result != cust::sys::CUresult::CUDA_SUCCESS {
-            // Silently ignore: panicking inside `drop` is unsound, and the
-            // model remains usable even if CUDA pin-registration is leaked.
+            // Never panic in `drop`, but do not swallow it either: a failed
+            // unregister leaks a pinned mapping, and the empty arm made that
+            // invisible.
+            tracing::warn!(
+                ?result,
+                "cuMemHostUnregister failed; CUDA pinned registration leaked"
+            );
         }
     }
 }
