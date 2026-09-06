@@ -47,8 +47,12 @@ jobs:
       - name: Benchmark adapter unit tests
         run: python3 -m unittest discover -s benchmarks/tests -v
 
-      - name: Lint 
-        run: cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code
+      - name: Lint
+        # --locked matters here specifically: this is the first cargo step that
+        # resolves dependencies, so without it a stale Cargo.lock is silently
+        # repaired before the later --locked steps can fail on it. For fork PRs
+        # this is also the only job that runs.
+        run: cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code
 
       - name: Build library (CPU-only)
         run: cargo test --lib --no-default-features --locked -- --nocapture

@@ -1,0 +1,40 @@
+# Every GitHub Action in this repository is pinned to a full commit SHA, which
+# is the right call for supply-chain safety but means nothing ever updates them
+# without a bot. Same for the cargo graph.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    groups:
+      # Keep the opentelemetry crates moving together; they must share a version.
+      opentelemetry:
+        patterns:
+          - "opentelemetry*"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(benchmarks)"
+    labels:
+      - "dependencies"
