@@ -13,6 +13,7 @@
 //! | [`RateSum`] | Per-neuron spike-count → linear projection | rate-coded telemetry |
 //! | [`TemporalHistogram`] | Spikes binned over time → flatten | timing-sensitive HFT |
 //! | [`MembraneSnapshot`] | Post-step membrane potentials → linear | smooth gradient flow |
+//! | [`SpikingTernary`] | GIF membrane integration → ternary ±1 spikes | the crate default; sparse event-driven embeddings |
 //!
 //! # No Router dependency
 //!
@@ -24,6 +25,7 @@
 //! [`RateSum`]: ProjectionMode::RateSum
 //! [`TemporalHistogram`]: ProjectionMode::TemporalHistogram
 //! [`MembraneSnapshot`]: ProjectionMode::MembraneSnapshot
+//! [`SpikingTernary`]: ProjectionMode::SpikingTernary
 
 use crate::error::{HybridError, Result};
 use crate::types::EMBEDDING_DIM;

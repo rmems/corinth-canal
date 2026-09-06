@@ -99,8 +99,9 @@ Systems, Nsight Compute, and DCGM commands, lives in `docs/CUDA_VALIDATION.md`.
 | Probe preferred synapse tensor selection only | `just synapse-diag` |
 
 `examples/synapse_diagnostic.rs` is the cheapest way to explain why a checkpoint
-selected `real`, `dequantized-q8_0`, `dequantized-q5_k`, or
-`synthetic-fallback`. It does not run SAAQ ticks or bring up the GPU temporal
+selected any of the eight sources — `real`, `dequantized-q8_0`,
+`dequantized-q5_k`, `dequantized-q6_k`, `dequantized-iq3_m`,
+`dequantized-int4`, `routing-f32` or `synthetic-fallback`. It does not run SAAQ ticks or bring up the GPU temporal
 loop; it only loads the GGUF metadata and the preferred synapse tensor facts
 that drive `src/moe/adapter.rs::resolve_adapter`.
 

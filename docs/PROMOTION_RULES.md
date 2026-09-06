@@ -21,10 +21,17 @@ Rules for graduating code paths out of this reference repo into one of the
 
 A module moves from **stabilizing** to **proven** only after all of:
 
-1. **Router-family matrix green.** Every family listed in
-   `docs/RUN_PROFILES.md#model-discovery` (Olmoe, Qwen3Moe, Gemma4,
-   DeepSeek2, LlamaMoe) completes a SAAQ latent calibration run with
-   `validation_status: "completed"` in its `run_manifest.json`.
+1. **Router-family matrix green.** Every family the module claims to support
+   completes a SAAQ latent calibration run with `validation_status:
+   "completed"` in its `run_manifest.json`.
+
+   The authoritative family list is the `ModelFamily` enum in `src/types.rs`
+   (21 variants at time of writing), **not** a prose list. This gate
+   previously named five families, which meant a module could be certified
+   "proven" against a quarter of the families the adapter actually resolves.
+   A module that is only validated against a subset must say which subset in
+   its `docs/MODULE_STATUS.md` note rather than silently inheriting a short
+   list from here.
 2. **Dual-SAAQ parity.** The run emits both `saaq_delta_q_*_v1_0` and
    `saaq_delta_q_*_v1_5` columns, and the two rules diverge in the
    expected regime (1.5 < 1.0 on large deltas by the sqrt-rate rule).
