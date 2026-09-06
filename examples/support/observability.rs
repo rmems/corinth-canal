@@ -290,8 +290,72 @@ pub fn init_sentry(command: &'static str) -> Option<ClientInitGuard> {
     Some(guard)
 }
 
+/// Replace absolute filesystem paths with a non-identifying stand-in.
+///
+/// The Sentry tag allowlist only covers *tags*. Exception values and messages
+/// go to Sentry verbatim, and several of them carry absolute checkpoint paths:
+/// `HybridError::ModelLoad` and `MissingTensor` bake `{path}` into their
+/// `Display`, and the SAAQ runner formats `ctx.spec.path` into a message.
+///
+/// A path is replaced by `<path:stem>`, which keeps the event correlatable to
+/// a checkpoint without publishing the directory layout of the machine.
+pub fn redact_absolute_paths(text: &str) -> String {
+    const DELIMITERS: [char; 9] = [' ', '\t', '\n', '"', '\'', '(', ')', '[', ']'];
+
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.char_indices().peekable();
+    let mut at_token_start = true;
+
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '/' && at_token_start {
+            let end = text[idx..]
+                .find(|c| DELIMITERS.contains(&c))
+                .map(|offset| idx + offset)
+                .unwrap_or(text.len());
+            let candidate = &text[idx..end];
+
+            // Require at least two separators so a bare "/" or a lone "/tmp"
+            // is left alone; a real checkpoint path always has more.
+            if candidate.matches('/').count() >= 2 {
+                let stem = Path::new(candidate)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("file");
+                out.push_str(&format!("<path:{stem}>"));
+                while let Some(&(next_idx, _)) = chars.peek() {
+                    if next_idx >= end {
+                        break;
+                    }
+                    chars.next();
+                }
+                at_token_start = false;
+                continue;
+            }
+        }
+
+        at_token_start = DELIMITERS.contains(&ch) || ch == '=' || ch == ':' || ch == ',';
+        out.push(ch);
+    }
+
+    out
+}
+
+/// Capture an error with absolute paths stripped from every exception value.
+fn capture_error_redacted(error: &(dyn std::error::Error + 'static)) {
+    let mut event = sentry::event_from_error(error);
+    for exception in &mut event.exception.values {
+        if let Some(value) = exception.value.as_mut() {
+            *value = redact_absolute_paths(value);
+        }
+    }
+    if let Some(message) = event.message.as_mut() {
+        *message = redact_absolute_paths(message);
+    }
+    sentry::capture_event(event);
+}
+
 pub fn capture_top_level_error(_command: &'static str, error: &(dyn std::error::Error + 'static)) {
-    sentry::capture_error(error);
+    capture_error_redacted(error);
 }
 
 pub fn annotate_scope(
@@ -325,7 +389,7 @@ pub fn capture_scoped_error(
             apply_scope(scope, command, run_id, &git_sha, data);
         },
         || {
-            sentry::capture_error(error);
+            capture_error_redacted(error);
         },
     );
 }
@@ -554,13 +618,13 @@ fn apply_scope(
     scope.set_extra("run_id", json!(run_id));
 }
 
-/// New Relic telemetry verification helpers.
-///
-/// These functions check whether New Relic environment variables are set and
-/// provide dry-run verification so SAAQ experiment runs can document telemetry
-/// health without requiring a live New Relic connection. All functions are
-/// safe to call when New Relic env vars are unset — they simply report the
-/// missing state.
+// ── New Relic telemetry verification helpers ─────────────────────────────────
+//
+// These functions check whether New Relic environment variables are set and
+// provide dry-run verification so SAAQ experiment runs can document telemetry
+// health without requiring a live New Relic connection. All functions are
+// safe to call when New Relic env vars are unset — they simply report the
+// missing state.
 
 /// New Relic environment variables used by the SAAQ observability pipeline.
 pub const NR_ENV_VARS: [&str; 4] = [
@@ -678,10 +742,28 @@ mod tests {
         println!("OBSERVABILITY_PROBE_RESULT={value}");
     }
 
+    /// libtest path of `subprocess_probe`, derived rather than hardcoded.
+    ///
+    /// This file is `#[path]`-included from several targets, so its module
+    /// path differs per target (`support::observability::tests` inside an
+    /// example, `observability::tests` inside tests/). A hardcoded filter
+    /// matched nothing outside the example targets, and the probe then
+    /// produced no output at all — surfacing as "missing probe result"
+    /// rather than as a wrong path. `module_path!()` minus the crate segment
+    /// is exactly what libtest's `--exact` expects.
+    fn probe_test_path() -> String {
+        let module = module_path!();
+        let without_crate = module
+            .split_once("::")
+            .map(|(_, rest)| rest)
+            .unwrap_or(module);
+        format!("{without_crate}::subprocess_probe")
+    }
+
     fn run_probe(probe_mode: &str, envs: &[(&str, &str)]) -> String {
         let output = ProcessCommand::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("support::observability::tests::subprocess_probe")
+            .arg(probe_test_path())
             .arg("--nocapture")
             .arg("--")
             .arg(SUBPROCESS_PROBE_ARG)
@@ -828,5 +910,54 @@ mod tests {
             run_probe("sentry_enabled", &[("SENTRY_DSN", "   ")]),
             "false"
         );
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::redact_absolute_paths;
+
+    #[test]
+    fn strips_absolute_checkpoint_paths_but_keeps_the_stem() {
+        let message =
+            "model load failed for '/home/alice/.models/gguf/Foo/Bar-Q8_0.gguf': bad magic";
+        let redacted = redact_absolute_paths(message);
+        assert!(!redacted.contains("/home/alice"), "leaked: {redacted}");
+        assert!(!redacted.contains(".models"), "leaked: {redacted}");
+        assert!(
+            redacted.contains("<path:Bar-Q8_0>"),
+            "lost the stem: {redacted}"
+        );
+        assert!(
+            redacted.contains("bad magic"),
+            "lost the reason: {redacted}"
+        );
+    }
+
+    #[test]
+    fn redacts_every_path_in_a_multi_path_message() {
+        let message = "copy /home/bob/a/model.gguf -> /var/lib/out/result.json failed";
+        let redacted = redact_absolute_paths(message);
+        assert!(!redacted.contains("/home/bob"), "leaked: {redacted}");
+        assert!(!redacted.contains("/var/lib"), "leaked: {redacted}");
+        assert!(redacted.contains("<path:model>"));
+        assert!(redacted.contains("<path:result>"));
+    }
+
+    #[test]
+    fn leaves_non_path_text_untouched() {
+        for text in [
+            "missing tensor 'blk.0.attn_q.weight'",
+            "ratio 3/4 exceeded",
+            "input length mismatch: expected 2048, got 12",
+        ] {
+            assert_eq!(redact_absolute_paths(text), text, "mangled: {text}");
+        }
+    }
+
+    #[test]
+    fn survives_a_message_with_no_paths_and_no_delimiters() {
+        assert_eq!(redact_absolute_paths(""), "");
+        assert_eq!(redact_absolute_paths("/"), "/");
     }
 }
