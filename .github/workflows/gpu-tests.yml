@@ -61,8 +61,9 @@ jobs:
               export PATH=/root/.cargo/bin:$PATH
               export CUDAHOSTCXX=/usr/bin/clang++
               export CARGO_TARGET_DIR=/tmp/cargo-target
-              cargo test --lib --features cuda --no-run --locked
+              cargo test --all-targets --features cuda --no-run --locked
               cargo check --examples --features cuda --locked
+              cargo clippy --all-targets --features cuda --locked -- -D warnings -A dead_code
             '
         # NOTE: The --locked is required for reproducibility. If this step fails with
         # "cannot update the lock file ... because --locked was passed", the committed
@@ -81,6 +82,15 @@ jobs:
         run: |
           echo "Repo health via Aikido MCP (full_scan on relevant files: no critical issues)."
           echo "Sentry: script gitignored (not in checkout). Trigger full via agent MCP or when secrets present in protected runs. See AGENTS.md."
+
+      - name: Execute CUDA test suite on the GPU host
+        run: |
+          # The container above validates the pinned 22.04 toolchain but has no
+          # device, so it can only compile. The self-hosted runner has the real
+          # driver, so run the suite here. Device-dependent tests self-skip via
+          # GpuContext::is_available() when no GPU is present.
+          nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+          cargo test --all-targets --features cuda --locked
 
       - name: PR Comment on Success/Failure
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8

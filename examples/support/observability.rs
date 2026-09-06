@@ -554,13 +554,13 @@ fn apply_scope(
     scope.set_extra("run_id", json!(run_id));
 }
 
-/// New Relic telemetry verification helpers.
-///
-/// These functions check whether New Relic environment variables are set and
-/// provide dry-run verification so SAAQ experiment runs can document telemetry
-/// health without requiring a live New Relic connection. All functions are
-/// safe to call when New Relic env vars are unset — they simply report the
-/// missing state.
+// ── New Relic telemetry verification helpers ─────────────────────────────────
+//
+// These functions check whether New Relic environment variables are set and
+// provide dry-run verification so SAAQ experiment runs can document telemetry
+// health without requiring a live New Relic connection. All functions are
+// safe to call when New Relic env vars are unset — they simply report the
+// missing state.
 
 /// New Relic environment variables used by the SAAQ observability pipeline.
 pub const NR_ENV_VARS: [&str; 4] = [

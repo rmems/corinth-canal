@@ -280,8 +280,16 @@ mod tests {
     use crate::gpu::wrappers::context::GpuContext;
 
     #[test]
-    #[cfg(feature = "cuda")] // requires GPU + driver ≥ 570
     fn test_load_kernels() {
+        // The whole file is already `#![cfg(feature = "cuda")]`, so an inner
+        // `#[cfg(feature = "cuda")]` here was a no-op: on a CUDA *toolchain*
+        // box with no *device* this panicked instead of skipping. Gate on the
+        // device at runtime, matching accelerator.rs.
+        if !GpuContext::is_available() {
+            eprintln!("Skipping test_load_kernels: no CUDA device available");
+            return;
+        }
+
         let _ctx = GpuContext::init().expect("Failed to initialize GPU context");
         let kernels = KernelModule::load().expect("Failed to load kernels");
 

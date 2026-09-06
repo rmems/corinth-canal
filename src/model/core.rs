@@ -358,7 +358,6 @@ mod tests {
             cpu_tctl_c: 65.0,
             cpu_package_power_w: 120.0,
             timestamp_ms: 1_000,
-            ..Default::default()
         };
         let loss = model
             .train_step(&snap, &vec![0.1_f32; EMBEDDING_DIM])

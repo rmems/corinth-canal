@@ -116,7 +116,7 @@ fn gpu_smoke_ticks() -> usize {
 }
 
 fn should_validate_tick(tick: usize, smoke_ticks: usize) -> bool {
-    tick == 0 || tick + 1 == smoke_ticks || (tick + 1) % 1_000 == 0
+    tick == 0 || tick + 1 == smoke_ticks || (tick + 1).is_multiple_of(1_000)
 }
 
 fn validate_gpu_tick_state(

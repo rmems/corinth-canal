@@ -840,7 +840,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(feature = "cuda"), ignore)] // requires GPU + driver ≥ 570
+    // The gpu module is gated on `cuda` at the crate root, so a
+    // `cfg_attr(not(feature = "cuda"), ...)` here could never fire. The
+    // runtime `is_available()` check below is the real guard.
     fn test_saaq_two_pass_reduction_selects_global_best_and_tie_breaks() {
         if !GpuContext::is_available() {
             return;
