@@ -201,19 +201,18 @@ timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w
 ## Model discovery
 
 If `CHECKPOINT_PATH` is unset, `saaq_latent_calibration` auto-discovers
-**eight** candidates under `$HOME/Downloads/SNN_Quantization/`
-(`examples/support/mod.rs::discover_validation_models`):
+checkpoints under `$HOME/Downloads/SNN_Quantization/`. The candidate list is
+hardcoded in `examples/support/mod.rs::discover_validation_models` — **consult
+that array rather than this list**, which is a snapshot and has drifted before.
+As of this writing it holds eleven entries, by slug:
 
-- `olmoe-0125-gguf/OLMoE-1B-7B-0125-Instruct-F16.gguf`
-- `models/qwen3-moe-i1-GGUF/qwen3-moe.i1-IQ3_M.gguf`
-- `models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf`
-- `models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf`
-- `models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf`
-- `models/ZAYA1-8B-GGUF/ZAYA1-8B-Q8_0.gguf`
-- `models/GLM-4.6V-Flash-GGUF_Q8_0/GLM-4.6V-Flash-Q8_0.gguf`
-- `models/Kimi-VL-A3B-Instruct-GGUF_Q6_K/Kimi-VL-A3B-Instruct-Q6_K.gguf`
+`olmoe_baseline`, `qwen3_moe_i1_iq3_m`, `gemma4_26b_a4b_iq4_nl`,
+`deepseek_coder_v2_lite_q6_k_l`, `llama_3_2_dark_champion_q5_k_m`,
+`zaya1_8b_q8_0`, `glm46v_flash_q8_0`, `kimi_vl_a3b_q6_k`,
+`marco_nano_base_q8_0`, `moonlight_16b_a3b_q4_k_m`,
+`granite_3_1_3b_a800m_q4_k_m`.
 
-Not all eight are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
+Not all of them are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
 `expert_count`, so `resolve_gguf_topology` rejects it (`src/moe/adapter.rs:201`)
 and any sweep that reaches it aborts. That is why `just saaq-campaign` requires
 an explicit `LINEUP_CONFIG` rather than falling through to this scan.

@@ -73,8 +73,12 @@ LLM-models-onboarding branch.*
 - [ ] `cargo test --no-default-features` passes.
 - [ ] For local GGUF: `cargo run --example synapse_diagnostic --no-default-features -- <path>` succeeds.
 - [ ] For local safetensors: `cargo run --example safetensors_manifest --no-default-features -- <path> artifacts/safetensors_manifest.json` succeeds.
-- [ ] For cloud: `CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml` emits
-      expected skip diagnostics when env vars are unset (fail-fast verified).
+- [ ] For cloud: `CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml` parses.
+      Note this cannot verify fail-fast: no entry in the shipped lineup
+      declares `required_env_vars`, so `cloud_execution_guard` has nothing to
+      check and succeeds for every model. Ticking a "fail-fast verified" box
+      against this file would be vacuous. Exercising the guard needs a lineup
+      entry that declares its credential vars.
 
 ## Quick reference
 
