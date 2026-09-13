@@ -176,9 +176,14 @@ manifest stamping, and fail-fast validation when required cloud provider env
 vars are unset — not for infrastructure provisioning.
 
 The cloud lineup lives in `configs/saaq_cloud_lineup.toml`. Each entry
-records: `cloud_model_id`, `source_url`, architecture class, parameter counts,
-provider format, and the env var names required for cloud execution. No
-secrets or absolute paths are stored.
+records: `cloud_model_id`, `source_url`, architecture class, parameter counts
+and provider format. No secrets or absolute paths are stored.
+
+It is an **unguarded** inventory stub: `required_env_vars` is
+`#[serde(default)]` and no shipped entry declares it, so
+`cloud_execution_guard` has nothing to check and returns success for every
+model. The fail-fast path described above exists in code but is not exercised
+by anything in this repository — see `docs/CLOUD_MODELS.md`.
 
 ## Routing / projection modes
 
