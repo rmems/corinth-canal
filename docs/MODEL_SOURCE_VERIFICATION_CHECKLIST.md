@@ -48,8 +48,15 @@ LLM-models-onboarding branch.*
 - [ ] If local GGUF: routing tensor exists and is accessible via the checkpoint
       reader.
 - [ ] If local safetensors: manifest inspection succeeds without errors.
-- [ ] If cloud: provider format is a recognized value (`nvcf-nim`,
-      `openai-compat`, `vertex-ai`, `watsonx-saas`, `fp8-safetensors`).
+- [ ] If cloud: provider format is a recognized value. Two kinds live in this
+      field: an API protocol the provider speaks (`nvcf-nim`, `openai-compat`,
+      `vertex-ai`, `watsonx-saas`) or a weights format downloaded and run on
+      our own GPU (`safetensors`, `fp8-safetensors`). Every entry currently in
+      `configs/saaq_cloud_lineup.toml` is the second kind. Nothing in `src/`
+      validates this field, so the set is enforced only by
+      `cloud_lineup_shipped_inventory_parses` in
+      `tests/examples_support_lineup.rs` — extend both it and this list
+      together when adding a value.
 - [ ] If cloud: required env var names are documented (no values stored).
 - [ ] VRAM / storage assumptions documented if known.
 

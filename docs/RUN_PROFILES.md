@@ -137,7 +137,11 @@ Each cloud entry carries:
 - `target` — always `"cloud"`
 - `architecture` — `"moe"` or `"dense"`
 - `active_params` / `total_params` — informational parameter counts
-- `provider_format` — expected runtime format (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`, `fp8-safetensors`)
+- `provider_format` — expected runtime format. Either an API protocol the
+  provider speaks (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`) or
+  a weights format downloaded and run on our own GPU (`safetensors`,
+  `fp8-safetensors`); every shipped entry is the latter. No code validates it;
+  `cloud_lineup_shipped_inventory_parses` asserts the set
 - `required_env_vars` — env var names that must be set for execution
 
 `CLOUD_LINEUP_CONFIG` parsing and cloud execution guards currently live in

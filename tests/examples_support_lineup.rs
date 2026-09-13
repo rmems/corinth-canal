@@ -200,6 +200,41 @@ target = "local"
     assert!(entries.is_empty());
 }
 
+/// Every `provider_format` the checklist and `docs/RUN_PROFILES.md` recognize.
+///
+/// Two kinds of value live here and the docs list both: an API protocol the
+/// provider speaks (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`)
+/// and a weights format downloaded and run on our own GPU (`safetensors`,
+/// `fp8-safetensors`). Nothing in `src/` validates this field, so this list
+/// and the docs are the only thing keeping the vocabulary from drifting.
+const RECOGNIZED_PROVIDER_FORMATS: &[&str] = &[
+    "nvcf-nim",
+    "openai-compat",
+    "vertex-ai",
+    "watsonx-saas",
+    "safetensors",
+    "fp8-safetensors",
+];
+
+/// Raw view of the shipped lineup, used only to recover a distinction
+/// `CloudModelSpec` erases.
+///
+/// It stores `family` as `Option<ModelFamily>`, so a deliberately blank
+/// `family` and a misspelled one both arrive as `None`. Re-reading the file
+/// keeps the two apart: blank is documented and fine, misspelled is a typo.
+#[derive(serde::Deserialize)]
+struct RawInventory {
+    #[serde(default)]
+    model: Vec<RawInventoryEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawInventoryEntry {
+    slug: String,
+    #[serde(default)]
+    family: String,
+}
+
 /// Parse the checked-in cloud inventory itself, not a synthetic fixture.
 ///
 /// Every other test in this file writes its own TOML, so a malformed or
@@ -221,6 +256,16 @@ fn cloud_lineup_shipped_inventory_parses() {
         "{} is missing; the cloud onboarding checklist references it",
         path.display()
     );
+
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} could not be read: {e}", path.display()));
+    let raw: RawInventory = toml::from_str(&text)
+        .unwrap_or_else(|e| panic!("{} failed to parse as TOML: {e}", path.display()));
+    let declared_family: std::collections::HashMap<&str, &str> = raw
+        .model
+        .iter()
+        .map(|m| (m.slug.as_str(), m.family.trim()))
+        .collect();
 
     let entries = load_cloud_lineup(&path)
         .unwrap_or_else(|e| panic!("{} failed to parse: {e}", path.display()));
@@ -246,16 +291,23 @@ fn cloud_lineup_shipped_inventory_parses() {
         );
         seen.push(&entry.slug);
 
-        // `load_cloud_lineup` tolerates an unresolvable family (it only warns
-        // on stderr) because a blank family is a documented way to say "no
-        // corinth-canal family matches yet". A *non-blank* family that does
-        // not resolve is a typo, and this is the only place it would surface.
-        assert!(
-            entry.family.is_some(),
-            "slug '{}' declares a family that no ModelFamily alias resolves; \
-             leave it blank if no family matches",
-            entry.slug
-        );
+        // A blank `family` is a documented way to say "no corinth-canal family
+        // matches yet" (see the field list at the top of the lineup file), and
+        // `load_cloud_lineup` only warns on stderr for one it cannot resolve.
+        // So `None` is a failure only when the file actually spelled
+        // something — which is why the raw string is read back above.
+        let declared = declared_family
+            .get(entry.slug.as_str())
+            .copied()
+            .unwrap_or_default();
+        if !declared.is_empty() {
+            assert!(
+                entry.family.is_some(),
+                "slug '{}' declares family '{declared}', which no ModelFamily \
+                 alias resolves; fix the spelling or leave it blank",
+                entry.slug
+            );
+        }
 
         assert_eq!(
             entry.target,
@@ -273,6 +325,19 @@ fn cloud_lineup_shipped_inventory_parses() {
             "slug '{}' source_url is not an https URL: '{}'",
             entry.slug,
             entry.source_url
+        );
+        // Nothing in `src/` checks this field, so an unrecognized value would
+        // otherwise reach an operator ticking the checklist's "provider format
+        // is a recognized value" box with nothing to check it against.
+        assert!(
+            RECOGNIZED_PROVIDER_FORMATS.contains(&entry.provider_format.as_str()),
+            "slug '{}' has provider_format '{}', which is not one of {:?}; \
+             add it to the documented set in \
+             docs/MODEL_SOURCE_VERIFICATION_CHECKLIST.md and \
+             docs/RUN_PROFILES.md if it is legitimate",
+            entry.slug,
+            entry.provider_format,
+            RECOGNIZED_PROVIDER_FORMATS
         );
     }
 }
