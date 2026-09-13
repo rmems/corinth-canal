@@ -71,9 +71,15 @@ LLM-models-onboarding branch.*
 
 - [ ] `cargo check --no-default-features` passes.
 - [ ] `cargo test --no-default-features` passes.
-- [ ] For local GGUF: `cargo run --example synapse_diagnostic --no-default-features -- <path>` succeeds.
+- [ ] For local GGUF: `just synapse-diag` succeeds. Not
+      `cargo run --example synapse_diagnostic --no-default-features`: that
+      example is `required-features = ["cuda"]`, so the target does not
+      exist in a CPU build, and it takes no positional path — point it at a
+      checkpoint with `CHECKPOINT_PATH` or `LINEUP_CONFIG`.
 - [ ] For local safetensors: `cargo run --example safetensors_manifest --no-default-features -- <path> artifacts/safetensors_manifest.json` succeeds.
-- [ ] For cloud: `CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml` parses.
+- [ ] For cloud: `cargo test --no-default-features cloud_lineup` passes.
+      This covers the parser, not the shipped inventory: the test supplies its
+      own TOML, and no CPU-runnable example reads `CLOUD_LINEUP_CONFIG`.
       Note this cannot verify fail-fast: no entry in the shipped lineup
       declares `required_env_vars`, so `cloud_execution_guard` has nothing to
       check and succeeds for every model. Ticking a "fail-fast verified" box
@@ -104,7 +110,11 @@ with open('<path>', 'rb') as f:
 cargo run --example safetensors_manifest --no-default-features -- \
   /path/to/checkpoint.safetensors artifacts/safetensors_manifest.json
 
-# Cloud lineup fail-fast check
-CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml cargo run \
-  --example saaq_latent_calibration --no-default-features 2>&1 | head -20
+# Cloud lineup parser check (CPU; no CUDA toolchain needed).
+# NOT `cargo run --example saaq_latent_calibration --no-default-features`:
+# that example is required-features = ["cuda"], so the target does not exist
+# in a CPU build and the command cannot run at all.
+# Note this exercises the parser, not the shipped file — the test writes its
+# own temporary TOML and never reads configs/saaq_cloud_lineup.toml.
+cargo test --no-default-features cloud_lineup
 ```
