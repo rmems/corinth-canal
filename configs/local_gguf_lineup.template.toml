@@ -50,3 +50,17 @@ path = "/absolute/path/to/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Da
 slug = "zaya1_8b_q8_0"
 family = "zaya"
 path = "/absolute/path/to/ZAYA1-8B-GGUF/ZAYA1-8B-Q8_0.gguf"
+
+# MET-53. `family` is deepseek2, not moonlight_16b_a3b: that is what
+# docs/model_lineup.md records and what discover_validation_models maps this
+# slug to. An older local lineup said moonlight_16b_a3b and was wrong.
+[[model]]
+slug = "kimi_vl_a3b_q6_k"
+family = "deepseek2"
+path = "/absolute/path/to/Kimi-VL-A3B-Instruct-GGUF_Q6_K/Kimi-VL-A3B-Instruct-Q6_K.gguf"
+
+# MET-54.
+[[model]]
+slug = "marco_nano_base_q8_0"
+family = "qwen3_moe"
+path = "/absolute/path/to/Marco-Nano-Base-GGUF_Q8_0/Marco-Nano-Base.Q8_0.gguf"
