@@ -19,12 +19,15 @@ path = "/absolute/path/to/ZAYA1-8B-Q8_0.gguf"
 # family = "glm4"
 # path = "/absolute/path/to/GLM-4.6V-Flash-Q8_0.gguf"
 
-# `family` is deepseek2, not moonlight_16b_a3b: that is what MET-53 in
-# docs/model_lineup.md records and what discover_validation_models maps this
-# slug to. The older local lineup said moonlight_16b_a3b and was stale.
+# `family` is moonlight_16b_a3b, per FAMILY_ARCHES in src/moe/adapter.rs:
+# "Kimi-VL-A3B GGUF packages are classified under the Moonlight-16B family
+# (Moonshot AI lineage), not Qwen3/DeepSeek2." Note that MET-53 in
+# docs/model_lineup.md and the discover_validation_models entry both say
+# DeepSeek2 and disagree with the adapter; the adapter is the one that
+# resolves families at runtime.
 [[model]]
 slug = "kimi_vl_a3b_q6_k"
-family = "deepseek2"
+family = "moonlight_16b_a3b"
 path = "/absolute/path/to/Kimi-VL-A3B-Instruct-Q6_K.gguf"
 
 [[model]]
