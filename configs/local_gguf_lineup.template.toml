@@ -14,7 +14,9 @@
 # Fields:
 #   slug    directory-safe identifier (used in artifact paths)
 #   family  family slug; must match a ModelFamily alias (see src/types.rs)
-#   path    absolute or ~-relative path to the .gguf checkpoint
+#   path    absolute or relative path to the .gguf checkpoint. `~` is NOT
+#           expanded: the loader calls Path::exists on the string as written,
+#           so a `~/...` entry is reported "file not found" and skipped.
 #
 # Only MoE checkpoints belong here. Dense models have no expert_count and
 # are not valid SAAQ campaign targets.

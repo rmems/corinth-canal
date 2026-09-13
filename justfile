@@ -41,8 +41,13 @@ saaq:
 # CHECKPOINT_PATH, then autodiscovery. Naming a file that does not exist
 # would instead abort the run, because LINEUP_CONFIG set-but-unloadable is a
 # hard error (examples/support/config.rs::resolve_validation_models).
+# TELEMETRY_CSV_PATH is checked up front: phase 2 sets TELEMETRY_SOURCE=csv, but
+# an unset/missing CSV makes the runner fall back to synthetic telemetry, which
+# would silently turn this into a synthetic-vs-synthetic comparison. Checked
+# before phase 1 so the campaign fails immediately rather than after a full run.
 # Full SAAQ 1.5 MoE baseline campaign (2 phases x REPEAT_COUNT runs per model).
 saaq-campaign:
+    @[ -n "${TELEMETRY_CSV_PATH:-}" ] && [ -f "${TELEMETRY_CSV_PATH}" ] || { echo "error: phase 2/2 needs TELEMETRY_CSV_PATH to point at an existing CSV. Without it the runner degrades to synthetic telemetry (stamped synthetic_fallback) and this campaign would compare synthetic against synthetic." >&2; exit 1; }
     @echo ">>> phase 1/2: synthetic baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
         RUN_TAG=campaign_syn \
