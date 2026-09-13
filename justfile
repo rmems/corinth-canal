@@ -35,18 +35,20 @@ saaq:
     cargo run --release --example saaq_latent_calibration
 
 # Phases: synthetic baseline, csv replay baseline.
-# Reads LINEUP_CONFIG and (for phases 2-3) TELEMETRY_CSV_PATH from .env.local.
-# Falls back to configs/saaq15_moe_lineup.toml when LINEUP_CONFIG is unset.
+# Reads LINEUP_CONFIG and (for phase 2) TELEMETRY_CSV_PATH from .env.local.
+# LINEUP_CONFIG is optional and deliberately not defaulted here: when it is
+# unset, model selection falls through to SAFETENSORS_LINEUP_CONFIG, then
+# CHECKPOINT_PATH, then autodiscovery. Naming a file that does not exist
+# would instead abort the run, because LINEUP_CONFIG set-but-unloadable is a
+# hard error (examples/support/config.rs::resolve_validation_models).
 # Full SAAQ 1.5 MoE baseline campaign (2 phases x REPEAT_COUNT runs per model).
 saaq-campaign:
     @echo ">>> phase 1/2: synthetic baseline, repeat=2"
-    LINEUP_CONFIG="${LINEUP_CONFIG:-configs/saaq15_moe_lineup.toml}" \
-        SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
+    SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
         RUN_TAG=campaign_syn \
         cargo run --release --example saaq_latent_calibration
     @echo ">>> phase 2/2: csv replay baseline, repeat=2"
-    LINEUP_CONFIG="${LINEUP_CONFIG:-configs/saaq15_moe_lineup.toml}" \
-        SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=csv \
+    SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=csv \
         RUN_TAG=campaign_csv \
         cargo run --release --example saaq_latent_calibration
     @echo "ok: campaign finished; see artifacts/index.csv"

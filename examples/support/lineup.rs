@@ -7,7 +7,8 @@ fn parse_family_slug(value: &str) -> Option<ModelFamily> {
     ModelFamily::from_alias(value)
 }
 
-/// Parse a `configs/saaq15_cloud_lineup.toml` file and return every entry.
+/// Parse a `CLOUD_LINEUP_CONFIG` file (see `configs/saaq_cloud_lineup.toml`)
+/// and return every entry.
 ///
 /// Unknown families are reported via stderr but accepted (family is left
 /// `None` for probe-based inference downstream).

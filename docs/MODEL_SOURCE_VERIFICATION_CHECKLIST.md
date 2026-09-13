@@ -58,9 +58,9 @@ LLM-models-onboarding branch.*
 ## 5. Documentation
 
 - [ ] Model added to the appropriate lineup config:
-  - Local GGUF → `configs/saaq15_moe_lineup.toml`
+  - Local GGUF → `configs/local_gguf_lineup.toml`
   - Local safetensors → `configs/local_safetensors_lineup.template.toml` copied locally to `configs/safetensors_lineup.toml`
-  - Cloud → `configs/saaq15_cloud_lineup.toml`
+  - Cloud → `configs/saaq_cloud_lineup.toml`
 - [ ] Slug follows directory-safe naming convention.
 - [ ] Family slug matches the GGUF architecture or the closest known family.
 - [ ] `docs/model_lineup.md` updated with the new entry.
@@ -73,7 +73,7 @@ LLM-models-onboarding branch.*
 - [ ] `cargo test --no-default-features` passes.
 - [ ] For local GGUF: `cargo run --example synapse_diagnostic --no-default-features -- <path>` succeeds.
 - [ ] For local safetensors: `cargo run --example safetensors_manifest --no-default-features -- <path> artifacts/safetensors_manifest.json` succeeds.
-- [ ] For cloud: `CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml` emits
+- [ ] For cloud: `CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml` emits
       expected skip diagnostics when env vars are unset (fail-fast verified).
 
 ## Quick reference
@@ -101,6 +101,6 @@ cargo run --example safetensors_manifest --no-default-features -- \
   /path/to/checkpoint.safetensors artifacts/safetensors_manifest.json
 
 # Cloud lineup fail-fast check
-CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml cargo run \
+CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml cargo run \
   --example saaq_latent_calibration --no-default-features 2>&1 | head -20
 ```

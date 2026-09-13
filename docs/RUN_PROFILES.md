@@ -150,7 +150,7 @@ consume cloud lineup config directly.
 |---------|---------|
 | Inspect a single Safetensors checkpoint | `cargo run --example safetensors_manifest --no-default-features -- <checkpoint-or-dir> artifacts/safetensors_manifest.json` |
 
-The safetensors lineup template (`configs/safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
+The safetensors lineup template (`configs/local_safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
 currently uses positional CLI arguments for single-checkpoint inspection.
 
 Local entries onboarded:
