@@ -9,6 +9,7 @@
 //! - `moe/safetensors.rs` for Safetensors header inspection, manifests, and tensor loading
 
 mod adapter;
+pub(crate) use adapter::SYNTHETIC_FALLBACK_SOURCE;
 mod checkpoint;
 mod ggml;
 mod gguf;
@@ -73,7 +74,7 @@ impl RouterMetadata {
             quantization: "stub".into(),
             routing_tensor_name: "synthetic".into(),
             preferred_gpu_synapse_tensor_name: None,
-            synapse_source: "synthetic-fallback".into(),
+            synapse_source: SYNTHETIC_FALLBACK_SOURCE.into(),
             real_gpu_synapse_tensor_name: None,
         }
     }

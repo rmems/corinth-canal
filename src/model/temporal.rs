@@ -172,10 +172,49 @@ impl Model {
             return Ok(());
         }
 
+        // Nothing above produced weights, so the GIF layer is about to run with
+        // an all-zero synapse matrix — i.e. zero recurrent drive.
+        //
+        // The signal for whether that is expected is whether a checkpoint is
+        // mapped at all, NOT the declared `synapse_source`. Two reasons:
+        //
+        //  - `resolve_safetensors_adapter` assigns `SyntheticFallback` to
+        //    successfully-mapped float-dtype (F16/BF16/F32) checkpoints,
+        //    because the GPU synapse loader only handles GGUF-registered
+        //    tensors today. Those are exactly the zero-drive-with-a-real-
+        //    checkpoint runs worth flagging, and they declare the synthetic
+        //    source.
+        //  - Conversely, every accessor above returns `Some` only when the
+        //    declared source matches its own quantization, so an adapter
+        //    declaring a non-synthetic source always has exactly one loadable
+        //    tensor: the chain either loads or errors. Keying the warning off
+        //    the declared source would make it unreachable.
+        //
+        // `model_path` is empty only for the synthetic stub constructor.
         let fallback_signature = format!("synthetic-f32::{neuron_count}");
         if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
+            // Already resident. Return before logging: this helper runs on
+            // every prepare/tick/forward call, and logging here would repeat
+            // the same line once per tick for the whole run.
             return Ok(());
         }
+
+        if self.router.model_path().is_empty() {
+            tracing::debug!(
+                neuron_count,
+                "no checkpoint mapped; using the synthetic all-zero synapse matrix"
+            );
+        } else {
+            tracing::warn!(
+                declared_synapse_source = self.router.synapse_source(),
+                neuron_count,
+                "a checkpoint is mapped but no GPU synapse weights could be loaded; \
+                 falling back to an all-zero synapse matrix. This run completes with \
+                 zero recurrent drive while run_manifest.json still names the \
+                 declared source."
+            );
+        }
+
         let synthetic_weights = vec![0.0f32; neuron_count * neuron_count];
         accelerator.load_synapse_weights_named(&fallback_signature, &synthetic_weights)?;
         Ok(())

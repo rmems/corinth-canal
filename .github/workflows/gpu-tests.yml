@@ -77,12 +77,6 @@ jobs:
         # Verified in the fixing session: after update, both commands passed with --locked
         # in fresh docker (no lock error, kernels + checks succeeded).
       
-      - name: Aikido and Sentry Health Check (via MCP in agent for PR health; step for GHA)
-        if: always()
-        run: |
-          echo "Repo health via Aikido MCP (full_scan on relevant files: no critical issues)."
-          echo "Sentry: script gitignored (not in checkout). Trigger full via agent MCP or when secrets present in protected runs. See AGENTS.md."
-
       - name: Execute CUDA test suite on the GPU host
         run: |
           # The container above validates the pinned 22.04 toolchain but has no

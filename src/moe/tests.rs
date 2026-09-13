@@ -2381,3 +2381,13 @@ fn test_safetensors_extract_token_embedding_errors() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn synthetic_router_metadata_uses_the_shared_fallback_label() {
+    // `run_manifest.json` persists this string and CLAUDE.md pins it, so the
+    // stub metadata and the SynapseSource label table must agree. They were
+    // two independent string literals before.
+    let metadata = RouterMetadata::synthetic(ModelFamily::Olmoe, 8, 2);
+    assert_eq!(metadata.synapse_source, SYNTHETIC_FALLBACK_SOURCE);
+    assert_eq!(metadata.synapse_source, "synthetic-fallback");
+}

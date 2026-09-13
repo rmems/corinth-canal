@@ -73,12 +73,6 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
-      - name: Aikido and Sentry Health Check (triggered via MCP in agent for PR; step for GHA)
-        if: always()
-        run: |
-          echo "Repo health check via Aikido MCP (full_scan on CI files: no issues found)."
-          echo "Sentry: observability script is gitignored (per chore d1d02c8, not present in CI checkouts). Full trigger via agent MCP or protected runs with secrets. See updated AGENTS.md."
-
   cpu-tests-ryzen:
     name: CPU Heavy (Self-hosted Ryzen)
     needs: cpu-tests-github
