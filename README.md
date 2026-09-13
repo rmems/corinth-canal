@@ -74,7 +74,10 @@ Supported families in code:
 
 - `configs/local_gguf_lineup.template.toml` — GGUF lineup template; copy to the
   gitignored `configs/local_gguf_lineup.toml` and fill in your own paths
-- `configs/hybrid_moe_lineup.toml` — hybrid-MoE safetensors lineup
+- `configs/hybrid_moe_lineup.toml` — hybrid-MoE safetensors lineup. Reference
+  data: its paths are repo-relative under `.models/`, which no checkout
+  provides, so pointing `SAFETENSORS_LINEUP_CONFIG` at it as-is resolves no
+  models. Copy it and substitute real paths
 - `configs/saaq_cloud_lineup.toml` — cloud model metadata stubs (execution
   delegated to Dioscuri-Cloud). An **unguarded** inventory: none of its entries
   declare `required_env_vars`, so `cloud_execution_guard` has nothing to check

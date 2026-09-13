@@ -182,8 +182,14 @@ and provider format. No secrets or absolute paths are stored.
 It is an **unguarded** inventory stub: `required_env_vars` is
 `#[serde(default)]` and no shipped entry declares it, so
 `cloud_execution_guard` has nothing to check and returns success for every
-model. The fail-fast path described above exists in code but is not exercised
-by anything in this repository — see `docs/CLOUD_MODELS.md`.
+model. The fail-fast path itself *is* covered by tests —
+`cloud_execution_guard_fails_when_provider_unavailable` and
+`cloud_execution_guard_passes_when_provider_available` in
+`tests/examples_support_lineup.rs` exercise both directions against
+hand-built specs. What is unexercised is the path from the *shipped inventory*
+through the runner: no entry in `configs/saaq_cloud_lineup.toml` declares
+`required_env_vars`, and no CPU-runnable example reads `CLOUD_LINEUP_CONFIG`
+— see `docs/CLOUD_MODELS.md`.
 
 ## Routing / projection modes
 
