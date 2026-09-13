@@ -78,9 +78,17 @@ LLM-models-onboarding branch.*
       checkpoint with `CHECKPOINT_PATH` or `LINEUP_CONFIG`.
 - [ ] For local safetensors: `cargo run --example safetensors_manifest --no-default-features -- <path> artifacts/safetensors_manifest.json` succeeds.
 - [ ] For cloud: `cargo test --no-default-features cloud_lineup` passes.
-      This covers the parser, not the shipped inventory: the test supplies its
-      own TOML, and no CPU-runnable example reads `CLOUD_LINEUP_CONFIG`.
-      Note this cannot verify fail-fast: no entry in the shipped lineup
+      `cloud_lineup_shipped_inventory_parses` loads
+      `configs/saaq_cloud_lineup.toml` itself, so this does check the shipped
+      inventory: it catches malformed TOML, an unknown field, a `target` other
+      than `cloud`, an `architecture` other than `moe`/`dense`, a duplicate
+      slug, a non-`https` `source_url`, and a non-blank `family` that no
+      `ModelFamily` alias resolves. It does **not** check that a `family` is
+      the *correct* one for a model — `FAMILY_ARCHES` in `src/moe/adapter.rs`
+      is the runtime authority there, and any resolvable slug passes here.
+      No CPU-runnable example reads `CLOUD_LINEUP_CONFIG`, so nothing beyond
+      parsing is exercised.
+      Note this still cannot verify fail-fast: no entry in the shipped lineup
       declares `required_env_vars`, so `cloud_execution_guard` has nothing to
       check and succeeds for every model. Ticking a "fail-fast verified" box
       against this file would be vacuous. Exercising the guard needs a lineup
@@ -114,7 +122,7 @@ cargo run --example safetensors_manifest --no-default-features -- \
 # NOT `cargo run --example saaq_latent_calibration --no-default-features`:
 # that example is required-features = ["cuda"], so the target does not exist
 # in a CPU build and the command cannot run at all.
-# Note this exercises the parser, not the shipped file — the test writes its
-# own temporary TOML and never reads configs/saaq_cloud_lineup.toml.
+# Includes cloud_lineup_shipped_inventory_parses, which loads
+# configs/saaq_cloud_lineup.toml itself rather than a temporary fixture.
 cargo test --no-default-features cloud_lineup
 ```

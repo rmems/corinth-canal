@@ -199,3 +199,80 @@ target = "local"
     let _ = std::fs::remove_file(&tmp);
     assert!(entries.is_empty());
 }
+
+/// Parse the checked-in cloud inventory itself, not a synthetic fixture.
+///
+/// Every other test in this file writes its own TOML, so a malformed or
+/// mis-typed entry landing in `configs/saaq_cloud_lineup.toml` would ship
+/// unnoticed: `load_cloud_lineup` hard-errors on unknown fields, a `target`
+/// other than `cloud`, and an `architecture` other than `moe`/`dense`, but
+/// nothing was calling it against the shipped file.
+///
+/// `CARGO_MANIFEST_DIR` is expanded at compile time, so this is not the
+/// env-based path discovery that CLAUDE.md forbids in `src/` — and this is a
+/// test target, not library code.
+#[test]
+fn cloud_lineup_shipped_inventory_parses() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("configs")
+        .join("saaq_cloud_lineup.toml");
+    assert!(
+        path.is_file(),
+        "{} is missing; the cloud onboarding checklist references it",
+        path.display()
+    );
+
+    let entries = load_cloud_lineup(&path)
+        .unwrap_or_else(|e| panic!("{} failed to parse: {e}", path.display()));
+    assert!(
+        !entries.is_empty(),
+        "{} declares no [[model]] entries",
+        path.display()
+    );
+
+    let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        assert!(
+            !entry.slug.trim().is_empty(),
+            "cloud lineup entry has an empty slug"
+        );
+        // Slugs become artifact directory names; a duplicate silently
+        // overwrites a sibling model's run output.
+        assert!(
+            !seen.contains(&entry.slug.as_str()),
+            "duplicate slug '{}' in {}",
+            entry.slug,
+            path.display()
+        );
+        seen.push(&entry.slug);
+
+        // `load_cloud_lineup` tolerates an unresolvable family (it only warns
+        // on stderr) because a blank family is a documented way to say "no
+        // corinth-canal family matches yet". A *non-blank* family that does
+        // not resolve is a typo, and this is the only place it would surface.
+        assert!(
+            entry.family.is_some(),
+            "slug '{}' declares a family that no ModelFamily alias resolves; \
+             leave it blank if no family matches",
+            entry.slug
+        );
+
+        assert_eq!(
+            entry.target,
+            ModelTarget::Cloud,
+            "slug '{}' is not targeted at cloud",
+            entry.slug
+        );
+        assert!(
+            !entry.cloud_model_id.trim().is_empty(),
+            "slug '{}' has an empty cloud_model_id",
+            entry.slug
+        );
+        assert!(
+            entry.source_url.starts_with("https://"),
+            "slug '{}' source_url is not an https URL: '{}'",
+            entry.slug,
+            entry.source_url
+        );
+    }
+}
