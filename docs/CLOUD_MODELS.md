@@ -59,8 +59,11 @@ Main runner integration for cloud lineup metadata is intentionally separate.
 
 ## Required env vars by provider
 
-Every cloud model entry declares the env var names it needs. Values are
-never stored in corinth-canal configs or artifacts.
+The table below gives the env var names a cloud entry **would** declare per
+provider format. It is a convention for future entries, not a description of
+the shipped lineup: as noted above, no checked-in entry declares
+`required_env_vars` today. Values are never stored in corinth-canal configs
+or artifacts.
 
 | Provider format | Required env vars (example names) |
 |-----------------|-----------------------------------|
