@@ -201,13 +201,22 @@ timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w
 ## Model discovery
 
 If `CHECKPOINT_PATH` is unset, `saaq_latent_calibration` auto-discovers
-up to five MoE families under `$HOME/Downloads/SNN_Quantization/`:
+**eight** candidates under `$HOME/Downloads/SNN_Quantization/`
+(`examples/support/mod.rs::discover_validation_models`):
 
 - `olmoe-0125-gguf/OLMoE-1B-7B-0125-Instruct-F16.gguf`
 - `models/qwen3-moe-i1-GGUF/qwen3-moe.i1-IQ3_M.gguf`
 - `models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf`
 - `models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf`
 - `models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf`
+- `models/ZAYA1-8B-GGUF/ZAYA1-8B-Q8_0.gguf`
+- `models/GLM-4.6V-Flash-GGUF_Q8_0/GLM-4.6V-Flash-Q8_0.gguf`
+- `models/Kimi-VL-A3B-Instruct-GGUF_Q6_K/Kimi-VL-A3B-Instruct-Q6_K.gguf`
+
+Not all eight are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
+`expert_count`, so `resolve_gguf_topology` rejects it (`src/moe/adapter.rs:201`)
+and any sweep that reaches it aborts. That is why `just saaq-campaign` requires
+an explicit `LINEUP_CONFIG` rather than falling through to this scan.
 
 This discovery root is a machine-local convention on the author's Fedora
 box. CI and contributor machines should set `CHECKPOINT_PATH`
