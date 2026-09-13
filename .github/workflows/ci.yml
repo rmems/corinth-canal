@@ -56,6 +56,22 @@ jobs:
       - name: Check examples (CPU-only)
         run: cargo check --examples --no-default-features --locked
 
+      - name: Assert ring-only TLS (no aws-lc-rs)
+        run: |
+          # Cargo.toml pins rustls to the ring backend to avoid aws-lc-sys, a
+          # BoringSSL C/asm build. That pin is defeated silently by feature
+          # unification: any dependency enabling `reqwest/rustls` (defined as
+          # `__rustls-aws-lc-rs`) drags aws-lc-rs back in for the whole graph,
+          # with no error and no lockfile conflict. It reached main once
+          # already. `cargo tree -i` exits non-zero when a package is absent,
+          # so success here means the pin has been defeated again.
+          if cargo tree -i aws-lc-rs --no-default-features >/dev/null 2>&1; then
+            echo "::error::aws-lc-rs is back in the dependency graph; the ring pin in Cargo.toml has been defeated by feature unification."
+            cargo tree -i aws-lc-rs -e features --no-default-features || true
+            exit 1
+          fi
+          echo "ring-only TLS confirmed: aws-lc-rs is absent from the graph."
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2
         with:
