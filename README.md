@@ -72,15 +72,18 @@ Supported families in code:
 
 ### Model onboarding and cloud lineup
 
-- `configs/local_gguf_lineup.toml` — local GGUF lineup for SAAQ 1.0 / 1.5
+- `configs/local_gguf_lineup.template.toml` — GGUF lineup template; copy to the
+  gitignored `configs/local_gguf_lineup.toml` and fill in your own paths
 - `configs/hybrid_moe_lineup.toml` — hybrid-MoE safetensors lineup
 - `configs/saaq_cloud_lineup.toml` — cloud model metadata stubs with fail-fast
   env var guards (execution delegated to Dioscuri-Cloud)
 - `configs/local_safetensors_lineup.template.toml` — shareable safetensors lineup
   template for manifest inspection (header-only, no tensor payload reads); copy
   it to the gitignored `configs/safetensors_lineup.toml`
-- `configs/model_adapter_configs.toml` — static per-family adapter policies read
-  by the run matrix validator
+- `configs/model_adapter_configs.toml` — static per-family adapter policy
+  metadata. Reference material only: no code loads this file. `RunMatrix`
+  deserializes `[[run]]` entries and nothing else, so editing these policies
+  does not change validation behaviour
 - `docs/CLOUD_MODELS.md` — cloud model delegation model and provider reference
 - `docs/model_lineup.md` — rollout batch structure and required metadata
 

@@ -15,6 +15,14 @@ LLM-models-onboarding branch.*
 Cloud model metadata lives in `configs/saaq_cloud_lineup.toml`. Helper
 parsing/validation lives in `examples/support/mod.rs` and can be referenced via:
 
+> **Note:** the checked-in `saaq_cloud_lineup.toml` is an inventory stub. None
+> of its 15 entries declare `required_env_vars`, so `cloud_execution_guard`
+> has nothing to check and returns success for every entry — the
+> provider-unavailable fail-fast described below cannot be reproduced from
+> this file as it stands. Its slugs (`glm47_flash_cloud`,
+> `deepseek_v4_flash_cloud`, …) are also not the MET-55–64 set tabulated
+> below. Add `required_env_vars` per entry to exercise the guard.
+
 ```bash
 CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml
 ```

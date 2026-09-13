@@ -49,7 +49,7 @@ pub struct ValidationModelSpec {
     pub family: Option<ModelFamily>,
     pub path: String,
     /// Optional per-model routing mode override. Set by entries in the
-    /// `LINEUP_CONFIG` file (for example `configs/local_gguf_lineup.toml`);
+    /// `LINEUP_CONFIG` file (see `configs/local_gguf_lineup.template.toml`);
     /// autodiscovered / CLI-injected specs leave this `None` and fall back to
     /// `ModelConfig::routing_mode`.
     pub routing_mode: Option<RoutingMode>,
