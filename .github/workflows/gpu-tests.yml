@@ -76,12 +76,6 @@ jobs:
         # Verified in the fixing session: after update, both commands passed with --locked
         # in fresh docker (no lock error, kernels + checks succeeded).
       
-      - name: Aikido and Sentry Health Check (via MCP in agent for PR health; step for GHA)
-        if: always()
-        run: |
-          echo "Repo health via Aikido MCP (full_scan on relevant files: no critical issues)."
-          echo "Sentry: script gitignored (not in checkout). Trigger full via agent MCP or when secrets present in protected runs. See AGENTS.md."
-
       - name: PR Comment on Success/Failure
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         if: always()
