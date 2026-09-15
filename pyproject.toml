@@ -1,0 +1,46 @@
+# Packaging + lint configuration for the `benchmarks` package.
+#
+# `benchmarks/` is a gating step in .github/workflows/ci.yml and `just test`,
+# but shipped with no packaging metadata, no declared dependencies, no pinned
+# interpreter and no lint configuration. This file supplies all four.
+#
+# The Rust crate is the primary artifact; this is deliberately a thin,
+# dependency-light description of the Python side only.
+
+[build-system]
+# Declared explicitly so pip does not fall back to the legacy setuptools
+# backend, whose behaviour depends on the ambient setuptools version.
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "corinth-canal-benchmarks"
+version = "0.2.0"
+description = "Inference-backend adapters used to benchmark corinth-canal checkpoints"
+readme = "README.md"
+license = { text = "Apache-2.0 OR MIT" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+# The three inference runtimes are imported lazily inside their adapters, so
+# none of them is required to import `benchmarks` or to run the test suite.
+llama-cpp = ["llama-cpp-python>=0.3"]
+vllm = ["vllm>=0.6"]
+huggingface = ["transformers>=4.44", "torch>=2.4"]
+
+[tool.setuptools.packages.find]
+include = ["benchmarks*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S"]
+# S603/S607: subprocess use is intentional and argv is static; see the
+# llama-cli invocation in benchmarks/models.py for the justification.
+ignore = ["S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"benchmarks/tests/*" = ["S101"]  # asserts are the point of a test file
