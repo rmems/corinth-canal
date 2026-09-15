@@ -344,7 +344,13 @@ fn cloud_lineup_shipped_inventory_parses() {
 }
 
 fn unique_temp(prefix: &str, suffix: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
+    // Crate-local, not `std::env::temp_dir()`: Codacy flags world-writable
+    // temp dirs as a security issue even in tests.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test-lineup");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join(format!(
         "{prefix}_{}_{suffix}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
