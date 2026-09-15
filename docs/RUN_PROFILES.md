@@ -140,7 +140,11 @@ Each cloud entry carries:
 - `target` — always `"cloud"`
 - `architecture` — `"moe"` or `"dense"`
 - `active_params` / `total_params` — informational parameter counts
-- `provider_format` — expected runtime format (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`, `fp8-safetensors`)
+- `provider_format` — expected runtime format. Either an API protocol the
+  provider speaks (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`) or
+  a weights format downloaded and run on our own GPU (`safetensors`,
+  `fp8-safetensors`); every shipped entry is the latter. No code validates it;
+  `cloud_lineup_shipped_inventory_parses` asserts the set
 - `required_env_vars` — env var names that must be set for execution
 
 `CLOUD_LINEUP_CONFIG` parsing and cloud execution guards currently live in
@@ -153,7 +157,7 @@ consume cloud lineup config directly.
 |---------|---------|
 | Inspect a single Safetensors checkpoint | `cargo run --example safetensors_manifest --no-default-features -- <checkpoint-or-dir> artifacts/safetensors_manifest.json` |
 
-The safetensors lineup template (`configs/safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
+The safetensors lineup template (`configs/local_safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
 currently uses positional CLI arguments for single-checkpoint inspection.
 
 Local entries onboarded:
@@ -204,13 +208,21 @@ timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w
 ## Model discovery
 
 If `CHECKPOINT_PATH` is unset, `saaq_latent_calibration` auto-discovers
-up to five MoE families under `$HOME/Downloads/SNN_Quantization/`:
+checkpoints under `$HOME/Downloads/SNN_Quantization/`. The candidate list is
+hardcoded in `examples/support/mod.rs::discover_validation_models` — **consult
+that array rather than this list**, which is a snapshot and has drifted before.
+As of this writing it holds eleven entries, by slug:
 
-- `olmoe-0125-gguf/OLMoE-1B-7B-0125-Instruct-F16.gguf`
-- `models/qwen3-moe-i1-GGUF/qwen3-moe.i1-IQ3_M.gguf`
-- `models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf`
-- `models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf`
-- `models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf`
+`olmoe_baseline`, `qwen3_moe_i1_iq3_m`, `gemma4_26b_a4b_iq4_nl`,
+`deepseek_coder_v2_lite_q6_k_l`, `llama_3_2_dark_champion_q5_k_m`,
+`zaya1_8b_q8_0`, `glm46v_flash_q8_0`, `kimi_vl_a3b_q6_k`,
+`marco_nano_base_q8_0`, `moonlight_16b_a3b_q4_k_m`,
+`granite_3_1_3b_a800m_q4_k_m`.
+
+Not all of them are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
+`expert_count`, so `resolve_gguf_topology` rejects it (`src/moe/adapter.rs:201`)
+and any sweep that reaches it aborts. That is why `just saaq-campaign` requires
+an explicit `LINEUP_CONFIG` rather than falling through to this scan.
 
 This discovery root is a machine-local convention on the author's Fedora
 box. CI and contributor machines should set `CHECKPOINT_PATH`

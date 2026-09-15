@@ -1,7 +1,14 @@
-## Hybrid MoE lineup with machine-specific paths.
+## Hybrid MoE lineup. Reference data, not a working configuration.
 ##
-## Use env:// or relative paths; this file is gitignored by default.
-## Set CORINTH_CANAL_MODELS_DIR or edit paths to match your layout.
+## This file IS tracked (it is not gitignored), so do not put machine-local
+## absolute paths in it — copy it to a gitignored name instead.
+##
+## The paths below are repo-relative under `.models/`, which no checkout
+## provides; edit them to match your layout in your copy. There is no
+## `env://` scheme and no `CORINTH_CANAL_MODELS_DIR` support: an earlier
+## version of this header advertised both, and neither is implemented
+## anywhere in the crate. `load_safetensors_lineup` passes each path
+## straight to `PathBuf::from` and skips the entry if it does not exist.
 
 # ── MET-55: nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 (Hybrid MoE / Mamba-Attention, single shard) ──
 [[model]]

@@ -79,11 +79,23 @@ here have drifted before, and `ModelFamily::from_alias` is the authority.
 
 ### Model onboarding and cloud lineup
 
-- `configs/saaq15_moe_lineup.toml` — shareable GGUF lineup template for SAAQ 1.5
-- `configs/saaq15_cloud_lineup.toml` — cloud model metadata stubs with fail-fast
-  env var guards (execution delegated to Dioscuri-Cloud)
-- `configs/safetensors_lineup.template.toml` — shareable safetensors lineup template for
-  manifest inspection (header-only, no tensor payload reads)
+- `configs/local_gguf_lineup.template.toml` — GGUF lineup template; copy to the
+  gitignored `configs/local_gguf_lineup.toml` and fill in your own paths
+- `configs/hybrid_moe_lineup.toml` — hybrid-MoE safetensors lineup. Reference
+  data: its paths are repo-relative under `.models/`, which no checkout
+  provides, so pointing `SAFETENSORS_LINEUP_CONFIG` at it as-is resolves no
+  models. Copy it and substitute real paths
+- `configs/saaq_cloud_lineup.toml` — cloud model metadata stubs (execution
+  delegated to Dioscuri-Cloud). An **unguarded** inventory: none of its entries
+  declare `required_env_vars`, so `cloud_execution_guard` has nothing to check
+  and succeeds for all of them. See `docs/CLOUD_MODELS.md`
+- `configs/local_safetensors_lineup.template.toml` — shareable safetensors lineup
+  template for manifest inspection (header-only, no tensor payload reads); copy
+  it to the gitignored `configs/safetensors_lineup.toml`
+- `configs/model_adapter_configs.toml` — static per-family adapter policy
+  metadata. Reference material only: no code loads this file. `RunMatrix`
+  deserializes `[[run]]` entries and nothing else, so editing these policies
+  does not change validation behaviour
 - `docs/CLOUD_MODELS.md` — cloud model delegation model and provider reference
 - `docs/model_lineup.md` — rollout batch structure and required metadata
 
