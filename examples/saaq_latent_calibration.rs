@@ -395,7 +395,7 @@ fn run_validation(
     };
 
     if !model.router_loaded() {
-        let error = format!("router did not load for checkpoint '{}'", ctx.spec.path);
+        let error = format!("router did not load for checkpoint '{}'", ctx.spec.slug);
         emit_validation_finish(
             observer,
             ctx,
