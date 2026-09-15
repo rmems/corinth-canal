@@ -23,62 +23,27 @@ graduate later according to `docs/PROMOTION_RULES.md` and
 
 ## Agent and executor tooling
 
-Primary executor for this repository:
+This repository is agent-agnostic. Which assistant, IDE, or CLI you drive it
+with is a personal choice, not repository policy, so no inventory of approved
+executors is kept here. Such a list dates quickly, and it publishes the
+maintainer's tooling and subscription arrangements without giving a contributor
+anything they can act on.
 
-- Codex is the primary executor for repository tasks and follow-up
-  implementation work.
-
-Memory-agent backbone:
-
-- Hermes Agents and GitHub Copilot are approved at a high level as part of the
-  memory-agent backbone for planning, recall, review support, and follow-up
-  execution assistance.
-
-Approved IDE agents:
-
-- Antigravity — approved IDE agent for repository work.
-- Zed — approved IDE agent for repository work.
-
-Approved fallback executors:
-
-- Opencode — backup executor path, including free-API usage scenarios.
-- Kilo — fallback executor for repository tasks.
-- Cline — fallback executor for repository tasks.
-- Gemini CLI — occasional fallback for large-context tasks.
-
-Experimental tooling:
-
-- Goose Agent — experimental only. Do not treat it as the default execution
-  path.
-- OpenClaw — experimental only. Do not treat it as the default execution path.
-- Blocks — experimental only. Blocks uses the maintainer's ChatGPT Pro
-  subscription and should be treated as an optional, non-default path.
-
-Optional third-party integrations and evaluated tooling:
-
-- Google APIs
-- NVIDIA NIM
-- OpenRouter
-- Grok APIs
-- CodeHawk — optional evaluated tooling; currently available via a 30-day free
-  trial.
-- IBM bob — potential evaluated tooling; needs verification before being
-  documented as enabled.
-
-These integrations and tool references are optional and should only be
-referenced at a high level in repository docs and examples.
-
-Safety and documentation rules for executor tooling:
+What applies regardless of what you use:
 
 - Do not commit or document secrets, tokens, DSNs, API keys, private telemetry,
   or local absolute paths.
-- Do not assume optional third-party APIs are configured.
-- Local/offline behavior must remain safe when optional external integrations
-  are unset.
-- Documentation changes about agent tooling should stay high level and should
-  not publish machine-specific setup details unless explicitly requested.
-- Keep executor/tooling documentation limited to markdown and closely related
-  repo docs unless a task explicitly asks for implementation work.
+- Do not assume optional third-party APIs are configured. Local and offline
+  behaviour must stay correct when every external integration is unset.
+- Keep tooling documentation high level. Machine-specific setup — install
+  locations, subscription tiers, per-workstation permission grants — belongs in
+  local, untracked configuration, not in tracked docs.
+- Keep tooling changes limited to markdown and closely related repo docs unless
+  a task explicitly asks for implementation work.
+
+`CLAUDE.md` is the exception worth naming: it carries repository context
+(architecture, build worlds, invariants) rather than a tooling roster, which is
+why it is tracked.
 
 ## Non-negotiable rules
 
@@ -178,7 +143,10 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
 
 - All `corinth-canal` work stays in the repository root.
 - Do not create or use additional `corinth-canal` worktrees outside the main repo.
-- External edits are limited to approved research tools and dependencies unless explicitly requested.
+- Do not edit files outside this repository, and do not add dependencies, unless
+  the task explicitly asks for it. This previously read "limited to approved
+  research tools", which depended on an inventory this document no longer keeps;
+  the constraint was always about scope, not about which tool you drive.
 
 ## Git Workflow
 
