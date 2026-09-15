@@ -51,9 +51,35 @@ fn env_example_documents_keys_the_code_reads() {
     }
 }
 
+fn recipe_headings(text: &str) -> Vec<&str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && line.ends_with(':'))
+        .collect()
+}
+
 #[test]
 fn justfile_documents_working_replay_and_saaq_csv() {
     let text = include_str!("../justfile");
+    let headings = recipe_headings(text);
+    assert!(
+        headings.iter().any(|line| *line == "replay PATH:"),
+        "replay must stay a positional recipe; just replay PATH=... would pass the assignment as the path"
+    );
+    assert!(
+        text.contains("-- {{PATH}}"),
+        "replay must forward the positional PATH to csv_replay"
+    );
+    assert!(
+        headings.iter().any(|line| *line == "saaq-csv:"),
+        "saaq-csv must take no just parameters"
+    );
+    assert!(
+        !headings
+            .iter()
+            .any(|line| line.starts_with("saaq-csv ") && line.ends_with(':')),
+        "a parameterized saaq-csv heading would make TELEMETRY_CSV_PATH look like a recipe argument"
+    );
     assert!(
         text.contains("just replay /path/to/telemetry.csv"),
         "replay recipe comment must show the positional form"
