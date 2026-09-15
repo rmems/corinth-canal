@@ -121,8 +121,7 @@ pub fn parse_family_slug(value: &str) -> Option<ModelFamily> {
 /// Parse a lineup-config `routing_mode` entry.
 ///
 /// Thin alias for [`RoutingMode::from_alias`], which owns the canonical
-/// spelling table. Kept as a named function because `config.rs` and the
-/// lineup loader both call it.
+/// spelling table.
 pub fn parse_routing_mode(value: &str) -> Option<RoutingMode> {
     RoutingMode::from_alias(value)
 }

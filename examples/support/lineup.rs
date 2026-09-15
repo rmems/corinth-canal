@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 use std::path::{Path, PathBuf};
 
-use corinth_canal::{CloudModelSpec, ModelArchitectureClass, ModelFamily, ModelTarget};
+use corinth_canal::{
+    CloudModelSpec, ModelArchitectureClass, ModelFamily, ModelTarget, moe::RoutingMode,
+};
 
 fn parse_family_slug(value: &str) -> Option<ModelFamily> {
     ModelFamily::from_alias(value)
@@ -229,4 +231,160 @@ pub fn safetensors_lineup_path_from_env() -> Option<PathBuf> {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .map(PathBuf::from)
+}
+
+/// One GGUF lineup entry whose checkpoint resolved on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GgufLineupEntry {
+    pub slug: String,
+    pub family: Option<ModelFamily>,
+    pub path: String,
+    pub routing_mode: Option<RoutingMode>,
+}
+
+/// Declared lineup entry that did not resolve to a usable checkpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnresolvedLineupEntry {
+    pub slug: String,
+    pub path: String,
+    pub reason: &'static str,
+}
+
+/// Resolved GGUF lineup plus the declared `[[model]]` count, so callers can
+/// stamp coverage into `run_manifest.json` even when skip-and-continue
+/// dropped entries.
+#[derive(Debug, Clone)]
+pub struct GgufLineupLoad {
+    pub models: Vec<GgufLineupEntry>,
+    pub declared_count: usize,
+}
+
+/// Parse a GGUF `LINEUP_CONFIG` TOML (see `configs/local_gguf_lineup.template.toml`).
+///
+/// Missing files and empty paths are skipped with a stderr warning (the same
+/// non-fatal behavior as `discover_validation_models`). Unknown family /
+/// routing-mode slugs are reported to stderr but do not abort the load.
+///
+/// When `strict` is true, any unresolved entry is a hard error that names
+/// every missing slug and path (`LINEUP_STRICT=1`).
+pub fn load_gguf_lineup(
+    path: &Path,
+    strict: bool,
+) -> Result<GgufLineupLoad, Box<dyn std::error::Error>> {
+    #[derive(Debug, serde::Deserialize)]
+    struct RawLineup {
+        #[serde(default)]
+        model: Vec<RawLineupModel>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RawLineupModel {
+        slug: String,
+        family: String,
+        path: String,
+        #[serde(default)]
+        routing_mode: Option<String>,
+    }
+
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let parsed: RawLineup =
+        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
+
+    let declared_count = parsed.model.len();
+    let mut models = Vec::with_capacity(declared_count);
+    let mut unresolved = Vec::new();
+    for entry in parsed.model {
+        let RawLineupModel {
+            slug,
+            family,
+            path: gguf_path,
+            routing_mode,
+        } = entry;
+        let trimmed_path = gguf_path.trim();
+        if trimmed_path.is_empty() {
+            eprintln!("lineup_config: skipping entry slug={slug}: empty path",);
+            unresolved.push(UnresolvedLineupEntry {
+                slug,
+                path: String::new(),
+                reason: "empty path",
+            });
+            continue;
+        }
+        if !Path::new(trimmed_path).exists() {
+            let hint = if trimmed_path.contains("/absolute/path/to/") {
+                " (appears to be a placeholder path)"
+            } else {
+                ""
+            };
+            eprintln!(
+                "lineup_config: skipping entry slug={slug} path={trimmed_path}: file not found{hint}",
+            );
+            unresolved.push(UnresolvedLineupEntry {
+                slug,
+                path: trimmed_path.to_owned(),
+                reason: "file not found",
+            });
+            continue;
+        }
+        let parsed_family = parse_family_slug(&family);
+        if parsed_family.is_none() {
+            eprintln!(
+                "lineup_config: unknown family '{family}' for slug={slug}; leaving family inference to probe",
+            );
+        }
+        let parsed_routing = match routing_mode.as_deref() {
+            Some(value) => {
+                let resolved = RoutingMode::from_alias(value);
+                if resolved.is_none() {
+                    eprintln!(
+                        "lineup_config: unknown routing_mode '{value}' for slug={slug}; using ModelConfig default",
+                    );
+                }
+                resolved
+            }
+            None => None,
+        };
+
+        models.push(GgufLineupEntry {
+            slug,
+            family: parsed_family,
+            path: trimmed_path.to_owned(),
+            routing_mode: parsed_routing,
+        });
+    }
+
+    if strict && !unresolved.is_empty() {
+        return Err(format_unresolved_lineup_error(declared_count, &unresolved).into());
+    }
+
+    Ok(GgufLineupLoad {
+        models,
+        declared_count,
+    })
+}
+
+/// Error text for `LINEUP_STRICT=1` when one or more declared entries failed
+/// to resolve. Names every unresolved slug and path so a campaign abort is
+/// diagnosable from the process stderr alone.
+pub fn format_unresolved_lineup_error(
+    declared_count: usize,
+    unresolved: &[UnresolvedLineupEntry],
+) -> String {
+    let mut msg = format!(
+        "LINEUP_STRICT=1: lineup declared {declared_count} models, {} unresolved:",
+        unresolved.len()
+    );
+    for entry in unresolved {
+        let path = if entry.path.is_empty() {
+            "(empty)"
+        } else {
+            entry.path.as_str()
+        };
+        msg.push_str(&format!(
+            "\n  slug={} path={path}: {}",
+            entry.slug, entry.reason
+        ));
+    }
+    msg
 }

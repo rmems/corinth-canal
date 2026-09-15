@@ -4,7 +4,8 @@ mod lineup;
 
 use corinth_canal::{ModelArchitectureClass, ModelFamily, ModelTarget};
 use lineup::{
-    cloud_execution_guard, cloud_lineup_path_from_env, load_cloud_lineup, load_safetensors_lineup,
+    UnresolvedLineupEntry, cloud_execution_guard, cloud_lineup_path_from_env,
+    format_unresolved_lineup_error, load_cloud_lineup, load_gguf_lineup, load_safetensors_lineup,
     safetensors_lineup_path_from_env,
 };
 use std::path::PathBuf;
@@ -340,4 +341,137 @@ fn cloud_lineup_shipped_inventory_parses() {
             RECOGNIZED_PROVIDER_FORMATS
         );
     }
+}
+
+fn unique_temp(prefix: &str, suffix: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "{prefix}_{}_{suffix}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
+fn write_gguf_lineup(toml: &str) -> (PathBuf, PathBuf) {
+    let checkpoint = unique_temp("gguf_lineup", "present.gguf");
+    std::fs::write(&checkpoint, b"not-a-real-gguf").unwrap();
+    let lineup = unique_temp("gguf_lineup", "lineup.toml");
+    let rendered = toml.replace("{PRESENT}", &checkpoint.display().to_string());
+    std::fs::write(&lineup, rendered).unwrap();
+    (lineup, checkpoint)
+}
+
+#[test]
+fn gguf_lineup_skips_missing_checkpoints_without_strict() {
+    let (lineup, checkpoint) = write_gguf_lineup(
+        r#"
+[[model]]
+slug = "present_model"
+family = "olmoe"
+path = "{PRESENT}"
+
+[[model]]
+slug = "missing_model"
+family = "olmoe"
+path = "/this/checkpoint/does/not/exist.gguf"
+
+[[model]]
+slug = "empty_path_model"
+family = "olmoe"
+path = ""
+"#,
+    );
+
+    let loaded = load_gguf_lineup(&lineup, false).expect("non-strict load");
+    let _ = std::fs::remove_file(&lineup);
+    let _ = std::fs::remove_file(&checkpoint);
+
+    assert_eq!(loaded.declared_count, 3);
+    assert_eq!(loaded.models.len(), 1);
+    assert_eq!(loaded.models[0].slug, "present_model");
+    assert_eq!(loaded.models[0].family, Some(ModelFamily::Olmoe));
+}
+
+#[test]
+fn gguf_lineup_strict_names_unresolved_slugs() {
+    let (lineup, checkpoint) = write_gguf_lineup(
+        r#"
+[[model]]
+slug = "present_model"
+family = "olmoe"
+path = "{PRESENT}"
+
+[[model]]
+slug = "missing_alpha"
+family = "qwen3_moe"
+path = "/missing/alpha.gguf"
+
+[[model]]
+slug = "missing_beta"
+family = "gemma4"
+path = "/missing/beta.gguf"
+"#,
+    );
+
+    let err = load_gguf_lineup(&lineup, true).expect_err("strict load must fail");
+    let _ = std::fs::remove_file(&lineup);
+    let _ = std::fs::remove_file(&checkpoint);
+
+    let msg = err.to_string();
+    assert!(
+        msg.starts_with("LINEUP_STRICT=1:"),
+        "strict error should lead with LINEUP_STRICT=1, got {msg}"
+    );
+    assert!(msg.contains("declared 3 models"), "got {msg}");
+    assert!(msg.contains("2 unresolved"), "got {msg}");
+    assert!(msg.contains("slug=missing_alpha"), "got {msg}");
+    assert!(msg.contains("slug=missing_beta"), "got {msg}");
+    assert!(msg.contains("/missing/alpha.gguf"), "got {msg}");
+    assert!(msg.contains("/missing/beta.gguf"), "got {msg}");
+    assert!(
+        !msg.contains("slug=present_model"),
+        "resolved slug should not be listed as unresolved: {msg}"
+    );
+}
+
+#[test]
+fn gguf_lineup_strict_succeeds_when_every_entry_resolves() {
+    let (lineup, checkpoint) = write_gguf_lineup(
+        r#"
+[[model]]
+slug = "only_model"
+family = "olmoe"
+path = "{PRESENT}"
+"#,
+    );
+
+    let loaded = load_gguf_lineup(&lineup, true).expect("strict load of a complete lineup");
+    let _ = std::fs::remove_file(&lineup);
+    let _ = std::fs::remove_file(&checkpoint);
+
+    assert_eq!(loaded.declared_count, 1);
+    assert_eq!(loaded.models.len(), 1);
+    assert_eq!(loaded.models[0].slug, "only_model");
+}
+
+#[test]
+fn format_unresolved_lineup_error_names_empty_path() {
+    let msg = format_unresolved_lineup_error(
+        2,
+        &[
+            UnresolvedLineupEntry {
+                slug: "empty".into(),
+                path: String::new(),
+                reason: "empty path",
+            },
+            UnresolvedLineupEntry {
+                slug: "gone".into(),
+                path: "/nope.gguf".into(),
+                reason: "file not found",
+            },
+        ],
+    );
+    assert!(msg.contains("slug=empty path=(empty): empty path"));
+    assert!(msg.contains("slug=gone path=/nope.gguf: file not found"));
 }
