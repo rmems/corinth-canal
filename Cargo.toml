@@ -13,9 +13,8 @@ exclude = ["benchmarks/**", "pyproject.toml"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
+thiserror = "2.0"
 cust = { version = "0.3.2", optional = true }
-anyhow = { version = "1", features = ["backtrace"] }
 tracing = "0.1"
 memmap2 = "0.9"
 libc = "0.2"
@@ -25,7 +24,9 @@ serde_json = "1.0"
 # aws-lc-sys (a BoringSSL C/asm build). `rustls-no-provider` selects the same
 # TLS stack but leaves the CryptoProvider to us — the pinned `rustls` below
 # supplies ring. See `cargo tree -i aws-lc-rs`, which must stay empty.
-sentry = { version = "0.48.1", default-features = false, features = ["backtrace", "panic", "anyhow", "transport", "reqwest", "rustls-no-provider"] }
+# `anyhow` is omitted: no crate code uses it, and sentry's anyhow integration
+# would re-pull the crate solely for an unused `From<anyhow::Error>` impl.
+sentry = { version = "0.48.1", default-features = false, features = ["backtrace", "panic", "transport", "reqwest", "rustls-no-provider"] }
 # Force rustls to use ring instead of aws-lc-rs to avoid C compilation dependencies
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
