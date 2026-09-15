@@ -70,6 +70,10 @@ pub struct RunConfig {
     /// byte-equality of `latent_telemetry.csv` across repeats per
     /// `(model_slug, telemetry_source, saaq_rule)` group.
     pub strict_repeat_check: bool,
+    /// When `true`, `synapse_diagnostic` exits non-zero if any probe row
+    /// recorded an error. An empty resolved-model list is always fatal.
+    /// Default `false` so exploratory probing stays non-fatal.
+    pub synapse_diag_strict: bool,
 }
 
 impl RunConfig {
@@ -108,6 +112,7 @@ impl RunConfig {
             projection_mode_override: projection_mode_override_from_env(),
             run_tag: run_tag_from_env(),
             strict_repeat_check: strict_repeat_check_from_env(),
+            synapse_diag_strict: super::synapse_diag::synapse_diag_strict_from_env(),
         };
 
         // NO DEAD CODE POLICY: Every cuda example binary compiles its own copy of the
@@ -144,6 +149,8 @@ impl RunConfig {
             let _ = &run_config.projection_mode_override;
             let _ = &run_config.run_tag;
             let _ = run_config.strict_repeat_check;
+            let _ = run_config.synapse_diag_strict;
+            let _ = super::synapse_diag::synapse_diag_result(0, 0, false);
 
             // Reference the SAAQ-only helpers (and their private callees via the call graph).
             let _ = prompt_embedding_for_validation("", 0);
