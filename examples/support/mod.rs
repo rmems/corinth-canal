@@ -84,7 +84,6 @@ pub fn default_spiking_model_config(checkpoint_path: String, snn_steps: usize) -
         snn_steps,
         projection_mode: ProjectionMode::SpikingTernary,
         gpu_routing_telemetry_path: None,
-        ..Default::default()
     }
 }
 
