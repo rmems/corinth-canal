@@ -5,6 +5,7 @@ pub mod config;
 pub mod embedding;
 pub mod lineup;
 pub mod observability;
+pub mod spikenaut;
 pub mod telemetry_csv;
 
 #[cfg(feature = "cuda")]
@@ -18,8 +19,8 @@ pub use lineup::{
 // unused_imports lint would fire without this allow.
 #[allow(unused_imports)]
 pub use telemetry_csv::{
-    ResolvedTelemetry, TelemetrySource, load_csv_telemetry_rows, resolve_telemetry_from,
-    synthetic_base_snapshot, telemetry_snapshot_for_tick,
+    ResolvedTelemetry, TELEMETRY_CSV_HEADER, TelemetrySource, load_csv_telemetry_rows,
+    resolve_telemetry_from, synthetic_base_snapshot, telemetry_snapshot_for_tick,
 };
 
 #[cfg(feature = "cuda")]

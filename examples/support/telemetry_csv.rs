@@ -36,7 +36,9 @@ impl ResolvedTelemetry {
     }
 }
 
-const TELEMETRY_CSV_HEADER: &str =
+/// Canonical replay header consumed by `load_csv_telemetry_rows` and produced
+/// by `gaming-telemetry` `export_csv` and the Spikenaut JSONL adapter.
+pub const TELEMETRY_CSV_HEADER: &str =
     "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
 
 /// Parse a canonical telemetry CSV exported by `gaming-telemetry` into a

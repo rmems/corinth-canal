@@ -139,12 +139,14 @@ compatibility columns.
 - `docs/PROMOTION_RULES.md` — module promotion rules
 - `docs/MODULE_STATUS.md` — current module stability/promotion status
 - `manifests/proven_components.toml` — machine-readable module status mirror
+- `docs/SPIKENAUT_TELEMETRY.md` — Spikenaut JSONL → `TelemetrySnapshot` / replay CSV mapping
 
 ## Main entrypoints
 
 - `examples/saaq_latent_calibration.rs` — primary research / validation loop
 - `examples/gpu_smoke_test.rs` — GPU temporal smoke validation
 - `examples/csv_replay.rs` — canonical telemetry CSV replay
+- `examples/spikenaut_ingest.rs` — Spikenaut JSONL → canonical CSV + CPU dual-SAAQ smoke
 - `examples/telemetry_bridge.rs` — routing demonstration
 - `examples/safetensors_manifest.rs` — safetensors header inspection and manifest generation
 
@@ -189,6 +191,16 @@ Snyk security scans (SCA/SAST/etc.) are available via Snyk MCP tools instead of 
 ```bash
 just saaq
 ```
+
+### Convert Spikenaut JSONL into replay CSV
+
+```bash
+just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl OUT=artifacts/spikenaut_gpu.csv
+just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl
+```
+
+Field mapping lives in `docs/SPIKENAUT_TELEMETRY.md`. Point
+`TELEMETRY_CSV_PATH` at the converted CSV for `just saaq-csv`.
 
 ### Run the GPU smoke path with a real checkpoint
 
