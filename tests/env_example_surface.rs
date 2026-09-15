@@ -63,7 +63,7 @@ fn justfile_documents_working_replay_and_saaq_csv() {
     let text = include_str!("../justfile");
     let headings = recipe_headings(text);
     assert!(
-        headings.iter().any(|line| *line == "replay PATH:"),
+        headings.contains(&"replay PATH:"),
         "replay must stay a positional recipe; just replay PATH=... would pass the assignment as the path"
     );
     assert!(
@@ -71,7 +71,7 @@ fn justfile_documents_working_replay_and_saaq_csv() {
         "replay must forward the positional PATH to csv_replay"
     );
     assert!(
-        headings.iter().any(|line| *line == "saaq-csv:"),
+        headings.contains(&"saaq-csv:"),
         "saaq-csv must take no just parameters"
     );
     assert!(
