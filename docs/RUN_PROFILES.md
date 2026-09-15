@@ -58,7 +58,13 @@ The latent telemetry CSV includes both SAAQ trajectories via
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including
-  `synthetic_fallback` when CSV replay degrades.
+  `synthetic_fallback` when CSV replay degrades. When the run came from
+  `LINEUP_CONFIG`, it also stamps `lineup_declared_count` /
+  `lineup_resolved_count` so a skipped checkpoint is visible in the artifact.
+- `LINEUP_STRICT=1` aborts when any declared GGUF lineup entry fails to
+  resolve, naming each missing slug and path. Unset / false keeps
+  skip-and-continue. `just saaq-campaign` sets it so the two campaign
+  phases cannot silently run different model sets.
 - `PROJECTION_MODE` selects the projector the same way `ROUTING_MODE`
   selects the router. Unset / blank keeps `SpikingTernary`. Accepted
   values: `RateSum`, `TemporalHistogram`, `MembraneSnapshot`,
@@ -222,7 +228,10 @@ As of this writing it holds eleven entries, by slug:
 Not all of them are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
 `expert_count`, so `resolve_gguf_topology` rejects it (`src/moe/adapter.rs:201`)
 and any sweep that reaches it aborts. That is why `just saaq-campaign` requires
-an explicit `LINEUP_CONFIG` rather than falling through to this scan.
+an explicit `LINEUP_CONFIG` rather than falling through to this scan, and why
+the recipe also sets `LINEUP_STRICT=1`: skip-and-continue on missing
+checkpoints would let the two phases run different model sets and still
+report success.
 
 This discovery root is a machine-local convention on the author's Fedora
 box. CI and contributor machines should set `CHECKPOINT_PATH`

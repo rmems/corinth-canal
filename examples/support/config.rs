@@ -15,19 +15,17 @@
 use std::path::{Path, PathBuf};
 
 use corinth_canal::{ModelFamily, SaaqUpdateRule, moe::RoutingMode, projector::ProjectionMode};
-use serde::Deserialize;
 
-use super::lineup::SafetensorsModelEntry;
+use super::lineup::{SafetensorsModelEntry, load_gguf_lineup};
 use super::{
     ResolvedTelemetry, TelemetrySource, ValidationModelSpec, cloud_execution_guard,
     cloud_lineup_path_from_env, default_spiking_model_config, discover_validation_models, env_flag,
     input_drive_gain_from_env, load_cloud_lineup, load_safetensors_lineup,
-    model_family_override_from_env, parse_family_slug, parse_routing_mode,
-    pooled_prompt_embedding_from_ollama, projection_mode_override_from_env,
-    prompt_embedding_for_validation, prompt_profile_slug, prompt_text_for_profile,
-    repeat_count_from_env, resolve_telemetry_source, routing_mode_override_from_env,
-    saaq_update_rule_from_env, safetensors_lineup_path_from_env, telemetry_snapshot_for_tick,
-    ticks_from_env,
+    model_family_override_from_env, parse_routing_mode, pooled_prompt_embedding_from_ollama,
+    projection_mode_override_from_env, prompt_embedding_for_validation, prompt_profile_slug,
+    prompt_text_for_profile, repeat_count_from_env, resolve_telemetry_source,
+    routing_mode_override_from_env, saaq_update_rule_from_env, safetensors_lineup_path_from_env,
+    telemetry_snapshot_for_tick, ticks_from_env,
 };
 
 /// Default output root for per-run artifacts when `VALIDATION_OUTPUT_ROOT`
@@ -70,6 +68,12 @@ pub struct RunConfig {
     /// byte-equality of `latent_telemetry.csv` across repeats per
     /// `(model_slug, telemetry_source, saaq_rule)` group.
     pub strict_repeat_check: bool,
+    /// Declared `[[model]]` count from `LINEUP_CONFIG`. `None` when the
+    /// run did not come from a GGUF lineup file.
+    pub lineup_declared_count: Option<usize>,
+    /// How many of those entries resolved on disk. A gap versus
+    /// `lineup_declared_count` means skip-and-continue dropped models.
+    pub lineup_resolved_count: Option<usize>,
 }
 
 impl RunConfig {
@@ -88,10 +92,12 @@ impl RunConfig {
         // re-introduce both fields together in one focused commit.
         let lineup_config_path = lineup_config_path_from_env();
         let safetensors_lineup_path = safetensors_lineup_path_from_env();
-        let validation_models = resolve_validation_models(
+        let lineup_strict = lineup_strict_from_env();
+        let resolved_models = resolve_validation_models(
             lineup_config_path.as_deref(),
             safetensors_lineup_path.as_deref(),
             &checkpoint_path,
+            lineup_strict,
         );
         let run_config = Self {
             prompt_profile: prompt_profile.clone(),
@@ -102,12 +108,14 @@ impl RunConfig {
             output_root: output_root_from_env(),
             model_family_override: model_family_override_from_env(),
             saaq_rule: saaq_update_rule_from_env(),
-            validation_models,
+            validation_models: resolved_models.models,
             checkpoint_path,
             routing_mode_override: routing_mode_override_from_env(),
             projection_mode_override: projection_mode_override_from_env(),
             run_tag: run_tag_from_env(),
             strict_repeat_check: strict_repeat_check_from_env(),
+            lineup_declared_count: resolved_models.lineup_declared_count,
+            lineup_resolved_count: resolved_models.lineup_resolved_count,
         };
 
         // NO DEAD CODE POLICY: Every cuda example binary compiles its own copy of the
@@ -144,6 +152,9 @@ impl RunConfig {
             let _ = &run_config.projection_mode_override;
             let _ = &run_config.run_tag;
             let _ = run_config.strict_repeat_check;
+            let _ = run_config.lineup_declared_count;
+            let _ = run_config.lineup_resolved_count;
+            let _ = parse_routing_mode("");
 
             // Reference the SAAQ-only helpers (and their private callees via the call graph).
             let _ = prompt_embedding_for_validation("", 0);
@@ -236,44 +247,74 @@ fn validate_safetensors_lineup_entries(path: &Path, entries: &[SafetensorsModelE
     }
 }
 
+/// Result of model-list resolution, including optional GGUF-lineup coverage
+/// counts for `run_manifest.json`.
+struct ValidationModelResolution {
+    models: Vec<ValidationModelSpec>,
+    lineup_declared_count: Option<usize>,
+    lineup_resolved_count: Option<usize>,
+}
+
+impl ValidationModelResolution {
+    fn from_models(models: Vec<ValidationModelSpec>) -> Self {
+        Self {
+            models,
+            lineup_declared_count: None,
+            lineup_resolved_count: None,
+        }
+    }
+}
+
 /// Resolve the validation-model list with the documented precedence:
 ///
-///   1. `LINEUP_CONFIG` file (hard error if set but unparseable).
+///   1. `LINEUP_CONFIG` file (hard error if set but unparseable; with
+///      `LINEUP_STRICT=1`, also a hard error if any declared checkpoint is
+///      missing).
 ///   2. `CHECKPOINT_PATH` (single-model override via the legacy path).
 ///   3. Machine-local autodiscovery under `$HOME/Downloads/SNN_Quantization`.
 fn resolve_validation_models(
     lineup_path: Option<&Path>,
     safetensors_lineup_path: Option<&Path>,
     checkpoint_path: &str,
-) -> Vec<ValidationModelSpec> {
+    lineup_strict: bool,
+) -> ValidationModelResolution {
     if let Some(path) = lineup_path {
-        match load_lineup_file(path) {
-            Ok(models) => return models,
-            Err(err) => {
-                let path_str = path.display().to_string();
-                let hint = if path_str.contains("/absolute/path/to/") {
-                    "\n\nHINT: The path appears to be a placeholder from .env.example or a config template.\n      Please update LINEUP_CONFIG in .env.local with a real path."
-                } else {
-                    ""
+        match load_gguf_lineup(path, lineup_strict) {
+            Ok(loaded) => {
+                let models = loaded
+                    .models
+                    .into_iter()
+                    .map(|entry| ValidationModelSpec {
+                        slug: entry.slug,
+                        family: entry.family,
+                        path: entry.path,
+                        routing_mode: entry.routing_mode,
+                    })
+                    .collect::<Vec<_>>();
+                return ValidationModelResolution {
+                    lineup_declared_count: Some(loaded.declared_count),
+                    lineup_resolved_count: Some(models.len()),
+                    models,
                 };
-                eprintln!("LINEUP_CONFIG={path_str} could not be loaded: {err}{hint}");
-                std::process::exit(1);
             }
+            Err(err) => abort_gguf_lineup_load(path, err),
         }
     }
 
     if let Some(path) = safetensors_lineup_path {
         match load_safetensors_lineup(path) {
             Ok(entries) => {
-                return entries
-                    .into_iter()
-                    .map(|entry| ValidationModelSpec {
-                        slug: entry.slug,
-                        family: entry.family,
-                        path: entry.path.display().to_string(),
-                        routing_mode: None,
-                    })
-                    .collect();
+                return ValidationModelResolution::from_models(
+                    entries
+                        .into_iter()
+                        .map(|entry| ValidationModelSpec {
+                            slug: entry.slug,
+                            family: entry.family,
+                            path: entry.path.display().to_string(),
+                            routing_mode: None,
+                        })
+                        .collect(),
+                );
             }
             Err(err) => {
                 let path_str = path.display().to_string();
@@ -285,86 +326,22 @@ fn resolve_validation_models(
 
     // Legacy single-model override or autodiscovery
     let _ = checkpoint_path;
-    discover_validation_models()
+    ValidationModelResolution::from_models(discover_validation_models())
 }
 
-#[derive(Debug, Deserialize)]
-struct RawLineup {
-    #[serde(default)]
-    model: Vec<RawLineupModel>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawLineupModel {
-    slug: String,
-    family: String,
-    path: String,
-    #[serde(default)]
-    routing_mode: Option<String>,
-}
-
-/// Parse the lineup TOML and convert each entry to a `ValidationModelSpec`.
-/// Missing files are skipped with a warning (same non-fatal behavior as
-/// `discover_validation_models`); unknown family / routing-mode slugs are
-/// reported to stderr but do not abort the run.
-fn load_lineup_file(path: &Path) -> Result<Vec<ValidationModelSpec>, Box<dyn std::error::Error>> {
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let parsed: RawLineup =
-        toml::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
-
-    let mut out = Vec::with_capacity(parsed.model.len());
-    for entry in parsed.model {
-        let RawLineupModel {
-            slug,
-            family,
-            path: gguf_path,
-            routing_mode,
-        } = entry;
-        let trimmed_path = gguf_path.trim();
-        if trimmed_path.is_empty() {
-            eprintln!("lineup_config: skipping entry slug={slug}: empty path",);
-            continue;
-        }
-        if !Path::new(trimmed_path).exists() {
-            let hint = if trimmed_path.contains("/absolute/path/to/") {
-                " (appears to be a placeholder path)"
-            } else {
-                ""
-            };
-            eprintln!(
-                "lineup_config: skipping entry slug={slug} path={trimmed_path}: file not found{hint}",
-            );
-            continue;
-        }
-        let parsed_family = parse_family_slug(&family);
-        if parsed_family.is_none() {
-            eprintln!(
-                "lineup_config: unknown family '{family}' for slug={slug}; leaving family inference to probe",
-            );
-        }
-        let parsed_routing = match routing_mode.as_deref() {
-            Some(value) => {
-                let resolved = parse_routing_mode(value);
-                if resolved.is_none() {
-                    eprintln!(
-                        "lineup_config: unknown routing_mode '{value}' for slug={slug}; using ModelConfig default",
-                    );
-                }
-                resolved
-            }
-            None => None,
-        };
-
-        out.push(ValidationModelSpec {
-            slug,
-            family: parsed_family,
-            path: trimmed_path.to_owned(),
-            routing_mode: parsed_routing,
-        });
+fn abort_gguf_lineup_load(path: &Path, err: Box<dyn std::error::Error>) -> ! {
+    let path_str = path.display().to_string();
+    let msg = err.to_string();
+    if msg.starts_with("LINEUP_STRICT=") {
+        eprintln!("{msg}");
+    } else if path_str.contains("/absolute/path/to/") {
+        eprintln!(
+            "LINEUP_CONFIG={path_str} could not be loaded: {err}\n\nHINT: The path appears to be a placeholder from .env.example or a config template.\n      Please update LINEUP_CONFIG in .env.local with a real path."
+        );
+    } else {
+        eprintln!("LINEUP_CONFIG={path_str} could not be loaded: {err}");
     }
-
-    Ok(out)
+    std::process::exit(1);
 }
 
 /// Parse `LINEUP_CONFIG`. Empty / unset => `None`.
@@ -389,6 +366,13 @@ pub fn run_tag_from_env() -> Option<String> {
 /// their current behavior when the env var is unset.
 pub fn strict_repeat_check_from_env() -> bool {
     env_flag("STRICT_REPEAT_CHECK", false)
+}
+
+/// Parse `LINEUP_STRICT`. Default `false` so partial-coverage lineups keep
+/// skip-and-continue. `just saaq-campaign` sets this so a pinned model set
+/// cannot silently shrink.
+pub fn lineup_strict_from_env() -> bool {
+    env_flag("LINEUP_STRICT", false)
 }
 
 /// Resolve `VALIDATION_OUTPUT_ROOT`, falling back to the repo-relative
