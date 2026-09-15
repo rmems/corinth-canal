@@ -10,11 +10,9 @@ use crate::funnel::active_neuron_indices;
 use crate::gpu::{GpuAccelerator, GpuError, GpuResult};
 use crate::types::{ModelOutput, TelemetrySnapshot};
 impl Model {
-    /// GPU-only temporal simulation with GIF (Generalized Integrate-and-Fire).
-    /// Phase 1: reset + load_synapse_weights_named + project_snapshot_current
-    /// Phase 2: gif_step_weighted_tick (with adaptation, dynamic threshold, weighted synapses)
-    /// Downloads membrane + adaptation; uses existing projector (GIF-compatible via SpikingTernary).
-    /// Fails fast with GpuError::NoGpu if GPU unavailable (no CPU fallback).
+    /// Allocate resident GPU temporal buffers, load synapse weights, and reset state.
+    /// Snapshot projection happens later in [`Self::forward_gpu_temporal`].
+    /// Fails fast with [`GpuError::NoGpu`] if GPU is unavailable (no CPU fallback).
     pub fn prepare_gpu_temporal(&mut self, accelerator: &mut GpuAccelerator) -> GpuResult<()> {
         let neuron_count = self.projector.input_neurons();
         accelerator.ensure_temporal_state(neuron_count)?;

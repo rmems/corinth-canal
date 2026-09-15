@@ -370,7 +370,8 @@ impl GpuAccelerator {
     }
 
     /// Run one GIF-weighted LIF step using adaptation, dynamic threshold, and synaptic weights.
-    /// Uses shared memory sized for n_inputs. Call load_synapse_weights_named first.
+    /// Uses shared memory sized for n_inputs. Synapse weights must be loaded first
+    /// (`load_synapse_weights_named` or `load_synapse_weights_f16_registered`).
     /// Fills spikes_out and updates membrane/adaptation/refractory.
     /// Returns the SAAQ best-walker index from on-device reduction (single u32 download).
     pub fn gif_step_weighted_tick(&mut self, neuron_count: usize) -> GpuResult<u32> {
