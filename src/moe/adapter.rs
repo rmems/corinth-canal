@@ -9,6 +9,7 @@ use super::{
 };
 use crate::error::{HybridError, Result};
 use crate::types::ModelFamily;
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SynapseSource {
@@ -663,8 +664,10 @@ const FAMILY_ARCHES: &[FamilyArchNames] = &[
     },
     FamilyArchNames {
         family: ModelFamily::Moonlight16BA3B,
-        // Kimi-VL-A3B GGUF packages are classified under the Moonlight-16B family
-        // (Moonshot AI lineage), not Qwen3/DeepSeek2.
+        // Moonlight-16B-A3B and Kimi-VL-A3B (Moonshot language decoder).
+        // llama.cpp GGUF packages set general.architecture = deepseek2 — there
+        // is no moonlight GGUF arch — so these aliases rarely match the KV.
+        // infer_family also matches them against the filename / parent dir.
         gguf: &["moonlight", "kimi", "kimi_vl_a3b", "kimi_vl_a3b_q6_k"],
         // DeepseekV3 is the HF architecture tag used by Moonlight-16B-A3B ST packs.
         safetensors: &["MoonlightForCausalLM", "DeepseekV3ForCausalLM"],
@@ -770,6 +773,48 @@ fn map_architecture(architecture: &str, format: ArchFormat) -> Option<ModelFamil
     })
 }
 
+/// Filename plus immediate parent directory, lowercased.
+///
+/// Stock llama.cpp writes `general.architecture = deepseek2` for both
+/// DeepSeek-V2 and Moonlight/Kimi-VL, so the KV cannot tell them apart.
+/// Matching the full path would false-positive on a home directory named
+/// `kimi`; the leaf names are the stable identity.
+fn gguf_path_family_hints(path: &str) -> String {
+    let p = Path::new(path);
+    let file = p.file_name().and_then(|s| s.to_str()).unwrap_or(path);
+    let parent = p
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    format!("{parent}/{file}").to_ascii_lowercase()
+}
+
+fn moonlight_gguf_aliases() -> &'static [&'static str] {
+    FAMILY_ARCHES
+        .iter()
+        .find(|entry| entry.family == ModelFamily::Moonlight16BA3B)
+        .map(|entry| entry.gguf)
+        .unwrap_or(&[])
+}
+
+/// When the GGUF KV is the shared `deepseek2` packaging tag, promote
+/// Moonlight/Kimi-VL paths to [`ModelFamily::Moonlight16BA3B`].
+fn disambiguate_deepseek2_gguf_family(inferred: ModelFamily, path: &str) -> ModelFamily {
+    if inferred != ModelFamily::DeepSeek2 {
+        return inferred;
+    }
+    let hints = gguf_path_family_hints(path);
+    if moonlight_gguf_aliases()
+        .iter()
+        .any(|alias| hints.contains(*alias))
+    {
+        ModelFamily::Moonlight16BA3B
+    } else {
+        inferred
+    }
+}
+
 /// Unified family inference for GGUF and Safetensors architecture strings.
 ///
 /// Format-specific arch tables live in [`map_architecture`]; override
@@ -786,6 +831,11 @@ fn infer_family_for_format(
             format.label()
         ))
     })?;
+    let inferred = if format == ArchFormat::Gguf {
+        disambiguate_deepseek2_gguf_family(inferred, path)
+    } else {
+        inferred
+    };
 
     if let Some(expected) = family_override {
         if !check_family_compatibility(expected, inferred) {
@@ -990,6 +1040,57 @@ mod tests {
         assert!(c(ModelFamily::Lfm2Moe).contains(&"model.layers.10.feed_forward.gate.weight"));
         assert!(c(ModelFamily::Grin).contains(&"model.layers.1.block_sparse_moe.gate.weight"));
         assert!(c(ModelFamily::SlimMoe).contains(&"model.layers.0.block_sparse_moe.gate.weight"));
+    }
+
+    #[test]
+    fn infer_family_disambiguates_kimi_and_moonlight_gguf_paths() {
+        // llama.cpp packages both as general.architecture = deepseek2.
+        assert_eq!(
+            infer_family("deepseek2", None, "test.gguf").unwrap(),
+            ModelFamily::DeepSeek2
+        );
+        assert_eq!(
+            infer_family(
+                "deepseek2",
+                None,
+                "DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf"
+            )
+            .unwrap(),
+            ModelFamily::DeepSeek2
+        );
+        assert_eq!(
+            infer_family("deepseek2", None, "Kimi-VL-A3B-Instruct-Q6_K.gguf").unwrap(),
+            ModelFamily::Moonlight16BA3B
+        );
+        assert_eq!(
+            infer_family(
+                "deepseek2",
+                None,
+                "models/Kimi-VL-A3B-Instruct-GGUF_Q6_K/model.gguf"
+            )
+            .unwrap(),
+            ModelFamily::Moonlight16BA3B
+        );
+        assert_eq!(
+            infer_family("deepseek2", None, "moonlight-16b-a3b-bnb-4bit-q4_k_m.gguf").unwrap(),
+            ModelFamily::Moonlight16BA3B
+        );
+        // A home directory named kimi must not reclassify DeepSeek-Coder.
+        assert_eq!(
+            infer_family("deepseek2", None, "/home/kimi/DeepSeek-Coder-V2.gguf").unwrap(),
+            ModelFamily::DeepSeek2
+        );
+        // Compatibility still lets a DeepSeek2 override win; autodiscovery
+        // must not supply that override or artifacts get mis-stamped.
+        assert_eq!(
+            infer_family(
+                "deepseek2",
+                Some(ModelFamily::DeepSeek2),
+                "Kimi-VL-A3B-Instruct-Q6_K.gguf"
+            )
+            .unwrap(),
+            ModelFamily::DeepSeek2
+        );
     }
 
     #[test]
