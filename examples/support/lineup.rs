@@ -295,63 +295,10 @@ pub fn load_gguf_lineup(
     let mut models = Vec::with_capacity(declared_count);
     let mut unresolved = Vec::new();
     for entry in parsed.model {
-        let RawLineupModel {
-            slug,
-            family,
-            path: gguf_path,
-            routing_mode,
-        } = entry;
-        let trimmed_path = gguf_path.trim();
-        if trimmed_path.is_empty() {
-            eprintln!("lineup_config: skipping entry slug={slug}: empty path",);
-            unresolved.push(UnresolvedLineupEntry {
-                slug,
-                path: String::new(),
-                reason: "empty path",
-            });
-            continue;
+        match resolve_gguf_lineup_entry(entry.slug, entry.family, entry.path, entry.routing_mode) {
+            Ok(model) => models.push(model),
+            Err(entry) => unresolved.push(entry),
         }
-        if !Path::new(trimmed_path).exists() {
-            let hint = if trimmed_path.contains("/absolute/path/to/") {
-                " (appears to be a placeholder path)"
-            } else {
-                ""
-            };
-            eprintln!(
-                "lineup_config: skipping entry slug={slug} path={trimmed_path}: file not found{hint}",
-            );
-            unresolved.push(UnresolvedLineupEntry {
-                slug,
-                path: trimmed_path.to_owned(),
-                reason: "file not found",
-            });
-            continue;
-        }
-        let parsed_family = parse_family_slug(&family);
-        if parsed_family.is_none() {
-            eprintln!(
-                "lineup_config: unknown family '{family}' for slug={slug}; leaving family inference to probe",
-            );
-        }
-        let parsed_routing = match routing_mode.as_deref() {
-            Some(value) => {
-                let resolved = RoutingMode::from_alias(value);
-                if resolved.is_none() {
-                    eprintln!(
-                        "lineup_config: unknown routing_mode '{value}' for slug={slug}; using ModelConfig default",
-                    );
-                }
-                resolved
-            }
-            None => None,
-        };
-
-        models.push(GgufLineupEntry {
-            slug,
-            family: parsed_family,
-            path: trimmed_path.to_owned(),
-            routing_mode: parsed_routing,
-        });
     }
 
     if strict && !unresolved.is_empty() {
@@ -362,6 +309,61 @@ pub fn load_gguf_lineup(
         models,
         declared_count,
     })
+}
+
+fn resolve_gguf_lineup_entry(
+    slug: String,
+    family: String,
+    gguf_path: String,
+    routing_mode: Option<String>,
+) -> Result<GgufLineupEntry, UnresolvedLineupEntry> {
+    let trimmed_path = gguf_path.trim();
+    if trimmed_path.is_empty() {
+        eprintln!("lineup_config: skipping entry slug={slug}: empty path",);
+        return Err(UnresolvedLineupEntry {
+            slug,
+            path: String::new(),
+            reason: "empty path",
+        });
+    }
+    if !Path::new(trimmed_path).exists() {
+        let hint = if trimmed_path.contains("/absolute/path/to/") {
+            " (appears to be a placeholder path)"
+        } else {
+            ""
+        };
+        eprintln!(
+            "lineup_config: skipping entry slug={slug} path={trimmed_path}: file not found{hint}",
+        );
+        return Err(UnresolvedLineupEntry {
+            slug,
+            path: trimmed_path.to_owned(),
+            reason: "file not found",
+        });
+    }
+    let parsed_family = parse_family_slug(&family);
+    if parsed_family.is_none() {
+        eprintln!(
+            "lineup_config: unknown family '{family}' for slug={slug}; leaving family inference to probe",
+        );
+    }
+    Ok(GgufLineupEntry {
+        family: parsed_family,
+        path: trimmed_path.to_owned(),
+        routing_mode: parse_lineup_routing_mode(&slug, routing_mode.as_deref()),
+        slug,
+    })
+}
+
+fn parse_lineup_routing_mode(slug: &str, routing_mode: Option<&str>) -> Option<RoutingMode> {
+    let value = routing_mode?;
+    let resolved = RoutingMode::from_alias(value);
+    if resolved.is_none() {
+        eprintln!(
+            "lineup_config: unknown routing_mode '{value}' for slug={slug}; using ModelConfig default",
+        );
+    }
+    resolved
 }
 
 /// Error text for `LINEUP_STRICT=1` when one or more declared entries failed

@@ -297,21 +297,7 @@ fn resolve_validation_models(
                     models,
                 };
             }
-            Err(err) => {
-                let path_str = path.display().to_string();
-                let msg = err.to_string();
-                if msg.starts_with("LINEUP_STRICT=") {
-                    eprintln!("{msg}");
-                } else {
-                    let hint = if path_str.contains("/absolute/path/to/") {
-                        "\n\nHINT: The path appears to be a placeholder from .env.example or a config template.\n      Please update LINEUP_CONFIG in .env.local with a real path."
-                    } else {
-                        ""
-                    };
-                    eprintln!("LINEUP_CONFIG={path_str} could not be loaded: {err}{hint}");
-                }
-                std::process::exit(1);
-            }
+            Err(err) => abort_gguf_lineup_load(path, err),
         }
     }
 
@@ -341,6 +327,21 @@ fn resolve_validation_models(
     // Legacy single-model override or autodiscovery
     let _ = checkpoint_path;
     ValidationModelResolution::from_models(discover_validation_models())
+}
+
+fn abort_gguf_lineup_load(path: &Path, err: Box<dyn std::error::Error>) -> ! {
+    let path_str = path.display().to_string();
+    let msg = err.to_string();
+    if msg.starts_with("LINEUP_STRICT=") {
+        eprintln!("{msg}");
+    } else if path_str.contains("/absolute/path/to/") {
+        eprintln!(
+            "LINEUP_CONFIG={path_str} could not be loaded: {err}\n\nHINT: The path appears to be a placeholder from .env.example or a config template.\n      Please update LINEUP_CONFIG in .env.local with a real path."
+        );
+    } else {
+        eprintln!("LINEUP_CONFIG={path_str} could not be loaded: {err}");
+    }
+    std::process::exit(1);
 }
 
 /// Parse `LINEUP_CONFIG`. Empty / unset => `None`.
