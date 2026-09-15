@@ -667,7 +667,7 @@ const FAMILY_ARCHES: &[FamilyArchNames] = &[
         // Moonlight-16B-A3B and Kimi-VL-A3B (Moonshot language decoder).
         // llama.cpp GGUF packages set general.architecture = deepseek2 — there
         // is no moonlight GGUF arch — so these aliases rarely match the KV.
-        // infer_family also matches them against the filename / parent dir.
+        // infer_family also matches them against the GGUF filename.
         gguf: &["moonlight", "kimi", "kimi_vl_a3b", "kimi_vl_a3b_q6_k"],
         // DeepseekV3 is the HF architecture tag used by Moonlight-16B-A3B ST packs.
         safetensors: &["MoonlightForCausalLM", "DeepseekV3ForCausalLM"],
@@ -773,21 +773,18 @@ fn map_architecture(architecture: &str, format: ArchFormat) -> Option<ModelFamil
     })
 }
 
-/// Filename plus immediate parent directory, lowercased.
+/// Lowercased GGUF filename.
 ///
 /// Stock llama.cpp writes `general.architecture = deepseek2` for both
 /// DeepSeek-V2 and Moonlight/Kimi-VL, so the KV cannot tell them apart.
-/// Matching the full path would false-positive on a home directory named
-/// `kimi`; the leaf names are the stable identity.
+/// Only the filename is consulted: matching the parent would reclassify
+/// `/home/kimi/DeepSeek-Coder.gguf` because `kimi` is a Moonlight alias.
 fn gguf_path_family_hints(path: &str) -> String {
-    let p = Path::new(path);
-    let file = p.file_name().and_then(|s| s.to_str()).unwrap_or(path);
-    let parent = p
-        .parent()
-        .and_then(Path::file_name)
+    Path::new(path)
+        .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("");
-    format!("{parent}/{file}").to_ascii_lowercase()
+        .unwrap_or(path)
+        .to_ascii_lowercase()
 }
 
 fn moonlight_gguf_aliases() -> &'static [&'static str] {
@@ -1063,19 +1060,21 @@ mod tests {
             ModelFamily::Moonlight16BA3B
         );
         assert_eq!(
+            infer_family("deepseek2", None, "moonlight-16b-a3b-bnb-4bit-q4_k_m.gguf").unwrap(),
+            ModelFamily::Moonlight16BA3B
+        );
+        // Parent-directory names are ignored so a username `kimi` cannot
+        // reclassify DeepSeek-Coder, and a generic `model.gguf` in a Kimi
+        // folder stays DeepSeek2 unless the operator overrides.
+        assert_eq!(
             infer_family(
                 "deepseek2",
                 None,
                 "models/Kimi-VL-A3B-Instruct-GGUF_Q6_K/model.gguf"
             )
             .unwrap(),
-            ModelFamily::Moonlight16BA3B
+            ModelFamily::DeepSeek2
         );
-        assert_eq!(
-            infer_family("deepseek2", None, "moonlight-16b-a3b-bnb-4bit-q4_k_m.gguf").unwrap(),
-            ModelFamily::Moonlight16BA3B
-        );
-        // A home directory named kimi must not reclassify DeepSeek-Coder.
         assert_eq!(
             infer_family("deepseek2", None, "/home/kimi/DeepSeek-Coder-V2.gguf").unwrap(),
             ModelFamily::DeepSeek2

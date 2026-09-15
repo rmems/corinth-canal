@@ -33,7 +33,7 @@ latent calibration runs.
 Kimi-VL-A3B (MET-53) is Moonshot's Moonlight-16B-A3B language decoder, not
 DeepSeek-Coder. llama.cpp GGUF packages set `general.architecture =
 deepseek2` because there is no moonlight GGUF architecture; that packaging
-tag is not the `ModelFamily`. `infer_family` maps Kimi/Moonlight paths to
+tag is not the `ModelFamily`. `infer_family` maps Kimi/Moonlight filenames to
 `Moonlight16BA3B` and leaves a bare `deepseek2` arch as `DeepSeek2`.
 
 ### Batch B — Local safetensors manifest inspection
