@@ -58,9 +58,10 @@ LLM-models-onboarding branch.*
 ## 5. Documentation
 
 - [ ] Model added to the appropriate lineup config:
-  - Local GGUF → `configs/saaq15_moe_lineup.toml`
+  - Local GGUF → `configs/local_gguf_lineup.toml` (gitignored; copy from
+    `configs/local_gguf_lineup.template.toml`)
   - Local safetensors → `configs/local_safetensors_lineup.template.toml` copied locally to `configs/safetensors_lineup.toml`
-  - Cloud → `configs/saaq15_cloud_lineup.toml`
+  - Cloud → `configs/saaq_cloud_lineup.toml`
 - [ ] Slug follows directory-safe naming convention.
 - [ ] Family slug matches the GGUF architecture or the closest known family.
 - [ ] `docs/model_lineup.md` updated with the new entry.
@@ -71,10 +72,16 @@ LLM-models-onboarding branch.*
 
 - [ ] `cargo check --no-default-features` passes.
 - [ ] `cargo test --no-default-features` passes.
-- [ ] For local GGUF: `cargo run --example synapse_diagnostic --no-default-features -- <path>` succeeds.
+- [ ] For local GGUF: `just synapse-diag` succeeds (needs a CUDA toolchain;
+      `synapse_diagnostic` is `required-features = ["cuda"]` and takes no
+      positional argument -- point it at a checkpoint with `CHECKPOINT_PATH`
+      or `LINEUP_CONFIG`).
 - [ ] For local safetensors: `cargo run --example safetensors_manifest --no-default-features -- <path> artifacts/safetensors_manifest.json` succeeds.
-- [ ] For cloud: `CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml` emits
-      expected skip diagnostics when env vars are unset (fail-fast verified).
+- [ ] For cloud: `cargo test --no-default-features cloud_lineup` passes
+      (`cloud_lineup_parses_valid_toml`,
+      `cloud_lineup_unknown_family_reported_on_stderr`). The shipped
+      `configs/saaq_cloud_lineup.toml` declares no `required_env_vars`, so
+      there is currently no fail-fast path to observe -- see GH#172 follow-up.
 
 ## Quick reference
 
@@ -100,7 +107,8 @@ with open('<path>', 'rb') as f:
 cargo run --example safetensors_manifest --no-default-features -- \
   /path/to/checkpoint.safetensors artifacts/safetensors_manifest.json
 
-# Cloud lineup fail-fast check
-CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml cargo run \
-  --example saaq_latent_calibration --no-default-features 2>&1 | head -20
+# Cloud lineup parse + diagnostics check (CPU, no CUDA toolchain needed).
+# saaq_latent_calibration is required-features = ["cuda"], so it cannot be
+# run under --no-default-features; the lineup logic is covered by tests.
+cargo test --no-default-features cloud_lineup
 ```

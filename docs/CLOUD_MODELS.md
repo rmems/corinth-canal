@@ -12,11 +12,25 @@ LLM-models-onboarding branch.*
 
 ## Configuration
 
-Cloud model metadata lives in `configs/saaq15_cloud_lineup.toml`. Helper
+Cloud model metadata lives in `configs/saaq_cloud_lineup.toml`. Helper
 parsing/validation lives in `examples/support/mod.rs` and can be referenced via:
 
 ```bash
-CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml
+export CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml
+```
+
+Or as a per-command prefix, which is what the runners expect:
+
+```bash
+CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml cargo run --release --example saaq_latent_calibration
+```
+
+Note that the lineup parsing tests do **not** read this variable —
+`cloud_lineup_parses_valid_toml` writes its own temporary TOML — so prefixing
+`cargo test` with it proves nothing about the shipped file:
+
+```bash
+cargo test --no-default-features cloud_lineup
 ```
 
 ## Cloud model entries
@@ -36,16 +50,30 @@ CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml
 
 ## Fail-fast behaviour
 
-When any `required_env_vars` entry is unset or empty during helper parsing:
+The credential guard applies **only to entries that declare
+`required_env_vars`**. When such an entry has a var that is unset or empty
+during helper parsing:
 
 1. The parser emits a diagnostic to stderr listing the missing vars.
 2. The candidate remains in the parsed lineup with `provider_available = false`.
 
-Example diagnostic:
+```
+cloud_lineup: provider unavailable for slug=<slug> (<model id>): missing env vars: <VAR>, <VAR>
+```
+
+**No entry in the shipped `configs/saaq_cloud_lineup.toml` declares
+`required_env_vars`**, so none of the above currently runs. `required_env_vars`
+is `#[serde(default)]`, and `examples/support/lineup.rs` takes the skip branch
+for an empty list, emitting this instead — once per entry:
 
 ```
-cloud_lineup: provider unavailable for slug=nemotron_3_nano_4b_cloud (nvidia/nvidia-nemotron-3-nano-4B-BF16): missing env vars: NEMOTRON_NIM_ENDPOINT, NEMOTRON_NIM_API_KEY
+cloud_lineup: no required_env_vars for slug=<slug>; cloud models are download-on-GPU, skipping guard
 ```
+
+That is intentional: execution is delegated to Dioscuri-Cloud, so this repo
+never holds the credentials the guard would check. Treat the fail-fast path as
+available-but-unused rather than as something a shipped model exercises — a
+run against the shipped lineup proves nothing about credential handling.
 
 Main runner integration for cloud lineup metadata is intentionally separate.
 

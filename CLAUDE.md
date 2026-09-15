@@ -43,11 +43,11 @@ Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --
 
 ```bash
 just saaq                          # primary SAAQ latent calibration loop
-just saaq-csv                      # forces TELEMETRY_SOURCE=csv (needs TELEMETRY_CSV_PATH)
+just saaq-csv                      # forces TELEMETRY_SOURCE=csv (TELEMETRY_CSV_PATH overrides; defaults to ./telemetry.csv)
 just saaq-campaign                 # 2-phase synthetic + csv baseline campaign
 CHECKPOINT_PATH=/path/model.gguf just smoke   # direct GPU temporal smoke path
 just synapse-diag                  # print preferred GPU synapse tensor + ggml_type per model
-just replay PATH=/path/telemetry.csv
+just replay /path/telemetry.csv
 just clean-artifacts
 ```
 
@@ -96,7 +96,7 @@ Module boundaries worth knowing before editing:
 - **`ModelFamily` has 21 variants** (`src/types.rs`), including `Moonlight16BA3B`, `Granite31A800M`, `Nemotron`/`NemotronLegacy` (serde alias `Nemotron3Nano4B`), `Lfm2Moe`, `SlimMoe`, `GptOss`, `Step`, `MiniMax`, `Cohere`, `Grin`, `Skyworks`, `Trinity`, `Grok`. Read the enum — every prose list is stale: `src/lib.rs`'s doc comment names five, `README.md` names seven.
 - **Do not change CSV schemas** (`latent_telemetry.csv`, the routing telemetry header, canonical telemetry CSV header) unless the task says so. Do not silently change what `src/lib.rs` re-exports.
 - **Sentry/OTel stay disabled when `SENTRY_DSN` / `NR_INSERT_KEY` is blank.** When credentials are unset, no client is created, no network call is made, and the run continues. Wrappers attach the safe fields (`repo`, `command`, `git_sha`, `run_id`, `model_slug`, `telemetry_source`, `validation_status`, `error_category`, `prompt_profile`, `saaq_rule`) and avoid absolute checkpoint or artifact paths. `run_id` is also set as an OTel span attribute.
-- **`configs/` filenames have drifted from the docs.** README/`docs/` still cite `saaq15_moe_lineup.toml`, `saaq15_cloud_lineup.toml`, and `safetensors_lineup.template.toml`; the files on disk are `hybrid_moe_lineup.toml`, `local_gguf_lineup.toml`, `local_safetensors_lineup.template.toml`, `model_adapter_configs.toml`, and `saaq_cloud_lineup.toml` (`safetensors_lineup.toml` is a gitignored local copy created from the template). Check `configs/` before quoting a path. The drift reaches the `justfile` too: `just saaq-campaign` falls back to the non-existent `configs/saaq15_moe_lineup.toml`, so it only works with `LINEUP_CONFIG` set in `.env.local` or the environment.
+- **`configs/` filenames.** The files on disk are `hybrid_moe_lineup.toml`, `local_gguf_lineup.toml` (gitignored; copy from `local_gguf_lineup.template.toml`), `local_safetensors_lineup.template.toml`, `model_adapter_configs.toml`, and `saaq_cloud_lineup.toml` (`safetensors_lineup.toml` is a gitignored local copy created from the template). The old `saaq15_*` names were repaired across the `justfile`, `.env.example` and `docs/` — check `configs/` before quoting a path in new prose. `just saaq-campaign` now falls back to `configs/local_gguf_lineup.toml`, which is machine-local, so it still needs that file to exist or `LINEUP_CONFIG` set.
 
 ### Model selection precedence (examples only)
 
