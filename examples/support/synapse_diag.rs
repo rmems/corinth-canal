@@ -122,6 +122,10 @@ mod tests {
                 "expected {value:?} to be falsey"
             );
         }
+        // Thin env wrapper: call it so the #[path] harness does not warn
+        // unused. Do not assert the value — parallel tests must not mutate
+        // process-wide environment.
+        let _ = synapse_diag_strict_from_env();
     }
 
     #[test]
