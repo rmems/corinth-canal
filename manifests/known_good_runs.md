@@ -17,6 +17,19 @@ Format:
 
 ---
 
+## Spikenaut GPU dual-SAAQ CPU smoke — 2026-09-15 (RM-166)
+
+- Model: `stub_olmoe` (`Olmoe`, `RoutingMode::StubUniform`)
+- Family: `Olmoe`
+- Rule: dual emit (`SaaqV1_5SqrtRate` primary + SAAQ 1.0 legacy columns)
+- Telemetry: `csv_spikenaut_gpu`
+- Domain: `spikenaut` (gpu / `neuromorphic_data.jsonl`)
+- Rows: `4` (fixture `tests/fixtures/spikenaut/gpu_sample.jsonl`)
+- Command: `just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl`
+- Artifacts: `artifacts/spikenaut_gpu/dual_saaq_smoke/` (local smoke output; not tracked)
+
+Conclusion: Spikenaut JSONL adapter produced canonical replay CSV; CPU dual-SAAQ smoke completed with `saaq_dual_emit: true` and domain tag `spikenaut_gpu`. Full GPU campaign replay of converted corpora is `TELEMETRY_SOURCE=csv TELEMETRY_CSV_PATH=… just saaq-csv`.
+
 ## SAAQ 1.5 OLMoE RE4 Control — 2026-04-23
 
 NOTE (legacy control signal experiment, cleaned 2026-06 per GH#102): The heartbeat on/off entries below document null-result baselines from the old experimental control signal. `supports_heartbeat` + all related fields/columns/tick annotations + supporting code were removed. The artifact data directories were deleted in this hygiene pass (evidence of the null results is preserved in the text of this file and especially artifacts/issue-40-local/issue-40-local-summary.md). Current sviz profiles use clean condition-tagged runs only.
