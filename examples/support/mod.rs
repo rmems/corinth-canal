@@ -62,9 +62,11 @@ pub fn default_spiking_model_config(checkpoint_path: String, snn_steps: usize) -
     } else {
         Router::probe_model(&checkpoint_path, None).ok()
     };
+    let checkpoint_format = corinth_canal::types::checkpoint_format_for_path(&checkpoint_path);
 
     ModelConfig {
         checkpoint_path,
+        checkpoint_format,
         model_family: probe.as_ref().map(|metadata| metadata.family),
         gpu_synapse_tensor_name: probe
             .as_ref()
