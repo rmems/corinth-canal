@@ -128,7 +128,6 @@ impl Drop for RegisteredCudaRegion {
 }
 
 #[cfg(all(feature = "cuda", unix))]
-#[allow(dead_code)]
 fn page_size_bytes(path: &str) -> Result<usize> {
     // SAFETY: `sysconf` is a pure query with no preconditions; valid to call at any time.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -142,7 +141,6 @@ fn page_size_bytes(path: &str) -> Result<usize> {
 }
 
 #[cfg(all(feature = "cuda", not(unix)))]
-#[allow(dead_code)]
 fn page_size_bytes(_path: &str) -> Result<usize> {
     // Fallback for Windows and other platforms (common page size 4KiB is sufficient
     // for the mmap alignment use case here).
