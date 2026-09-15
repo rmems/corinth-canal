@@ -58,17 +58,24 @@ The model-loading interface is custom to this repository.
   - real `F16`
   - dequantized `Q8_0`
   - dequantized `Q5_K`
-  - synthetic fallback
+  - dequantized `Q6_K`
+  - dequantized `IQ3_M`
+  - dequantized `INT4` (safetensors backend)
+  - `routing-f32` (GGUF fallback when no preferred tensor matched)
+  - `synthetic-fallback`
+
+  These eight strings are what land in `synapse_source()` and the diagnostics
+  JSON. `src/lib.rs` documents the priority order; treat it as the source of
+  truth rather than duplicating the list again.
 
 Supported families in code:
 
-- `Olmoe`
-- `Qwen3Moe`
-- `Gemma4`
-- `DeepSeek2`
-- `LlamaMoe`
-- `Zaya`
-- `Glm4`
+The `ModelFamily` enum in `src/types.rs` is the list — 21 variants at the time
+of writing, including `Olmoe`, `Qwen3Moe`, `Gemma4`, `DeepSeek2`, `LlamaMoe`,
+`Zaya`, `Glm4`, `Moonlight16BA3B`, `Granite31A800M`, `Nemotron`, `Lfm2Moe`,
+`SlimMoe`, `GptOss`, `Step`, `MiniMax`, `Cohere`, `Grin`, `Skyworks`,
+`Trinity`, `Grok` and `NemotronLegacy` — the last being a serde-only back-compat alias (`nemotron3nano4b`) with no human-facing name of its own. Consult the enum rather than this paragraph: prose lists
+here have drifted before, and `ModelFamily::from_alias` is the authority.
 
 ### Model onboarding and cloud lineup
 

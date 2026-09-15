@@ -222,7 +222,8 @@ impl SnnDualLatentCalibrator {
     ///
     /// The returned snapshot has:
     /// - `saaq_delta_q_{legacy,v15}_{prev,target}` populated from each rule,
-    /// - `saaq_delta_q_{prev,target}` populated from the [`primary_rule`],
+    /// - `saaq_delta_q_{prev,target}` populated from the rule returned by
+    ///   [`primary_rule`](Self::primary_rule),
     /// - all other fields taken from the legacy calibrator (identical across
     ///   rules by construction, since they are computed from activity alone).
     pub fn observe(

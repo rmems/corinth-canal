@@ -13,6 +13,7 @@
 //! | [`RateSum`] | Per-neuron spike-count → linear projection | rate-coded telemetry |
 //! | [`TemporalHistogram`] | Spikes binned over time → flatten | timing-sensitive HFT |
 //! | [`MembraneSnapshot`] | Post-step membrane potentials → linear | smooth gradient flow |
+//! | [`SpikingTernary`] | GIF membrane integration → ternary ±1 spikes | `ProjectionMode::default()`; sparse event-driven embeddings |
 //!
 //! # No Router dependency
 //!
@@ -24,6 +25,7 @@
 //! [`RateSum`]: ProjectionMode::RateSum
 //! [`TemporalHistogram`]: ProjectionMode::TemporalHistogram
 //! [`MembraneSnapshot`]: ProjectionMode::MembraneSnapshot
+//! [`SpikingTernary`]: ProjectionMode::SpikingTernary
 
 use crate::error::{HybridError, Result};
 use crate::types::EMBEDDING_DIM;
@@ -72,6 +74,11 @@ fn unit_symmetric(hash: u64) -> f32 {
 /// plus a bias `b ∈ ℝ^{EMBEDDING_DIM}`, initialised with Xavier-uniform weights.
 /// The weight matrix is updated only by Julia/E-prop via the spine; it is
 /// **frozen from the Rust side**.
+///
+/// Note two different defaults exist and they disagree:
+/// [`ProjectionMode::default()`] is [`ProjectionMode::SpikingTernary`], but
+/// [`Projector::default()`] constructs a `RateSum` projector. Construct with
+/// an explicit mode rather than relying on either.
 ///
 /// When [`ProjectionMode::SpikingTernary`] is selected the projection uses
 /// GIF (Generalised Integrate-and-Fire) membrane integration and fires ternary

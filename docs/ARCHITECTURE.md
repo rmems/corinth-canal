@@ -142,7 +142,15 @@ path when `blk.0.attn_q.weight` is stored as `Q8_0` inside the GGUF.
   - real `F16`
   - dequantized `Q8_0`
   - dequantized `Q5_K`
-  - synthetic fallback
+  - dequantized `Q6_K`
+  - dequantized `IQ3_M`
+  - dequantized `INT4` (safetensors backend)
+  - `routing-f32` (GGUF fallback when no preferred tensor matched)
+  - `synthetic-fallback`
+
+  These eight strings are what land in `synapse_source()` and the diagnostics
+  JSON. `src/lib.rs` documents the priority order; treat it as the source of
+  truth rather than duplicating the list again.
 
 `moe::safetensors` (directory split for #116 extract boundary):
 
