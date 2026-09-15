@@ -1,0 +1,18 @@
+# SHA-pinned Actions never move without a bot. Cargo updates are the other
+# half of the same hygiene: unused or duplicated majors otherwise sit until
+# someone greps the lockfile.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
