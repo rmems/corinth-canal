@@ -56,6 +56,44 @@ jobs:
       - name: Check examples (CPU-only)
         run: cargo check --examples --no-default-features --locked
 
+      - name: Assert ring-only TLS (no aws-lc-rs)
+        run: |
+          set +e -u
+          # Cargo.toml pins rustls to the ring backend to avoid aws-lc-sys, a
+          # BoringSSL C/asm build. That pin is defeated silently by feature
+          # unification: any dependency enabling `reqwest/rustls` (defined as
+          # `__rustls-aws-lc-rs`) drags aws-lc-rs back in for the whole graph,
+          # with no error and no lockfile conflict. It reached main once
+          # already.
+          #
+          # `cargo tree -i <pkg>` exits 0 when the package is in the graph and
+          # non-zero when it is absent — but also non-zero for a manifest,
+          # lockfile, or registry failure. Treating every non-zero exit as
+          # "absent" would let a broken build silently pass this guard, so
+          # both halves are checked explicitly:
+          #   1. ring must be present, which proves the graph resolved at all;
+          #   2. aws-lc-rs must be absent *for the stated reason*, matched on
+          #      cargo's "did not match any packages" message.
+          # Anything else fails the step loudly rather than passing it quietly.
+          if ! cargo tree -i ring --no-default-features >/dev/null 2>&1; then
+            echo "::error::Could not resolve ring in the dependency graph. Either the ring pin in Cargo.toml is gone, or cargo failed to resolve the graph at all — in both cases the aws-lc-rs check below cannot be trusted."
+            cargo tree -i ring --no-default-features
+            exit 1
+          fi
+          aws_lc_tree=$(cargo tree -i aws-lc-rs --no-default-features 2>&1)
+          aws_lc_rc=$?
+          if [ "${aws_lc_rc}" -eq 0 ]; then
+            echo "::error::aws-lc-rs is back in the dependency graph; the ring pin in Cargo.toml has been defeated by feature unification."
+            cargo tree -i aws-lc-rs -e features --no-default-features || true
+            exit 1
+          fi
+          if ! printf '%s\n' "${aws_lc_tree}" | grep -q 'did not match any packages'; then
+            echo "::error::cargo tree failed for a reason other than aws-lc-rs being absent (exit ${aws_lc_rc}); cannot confirm ring-only TLS."
+            printf '%s\n' "${aws_lc_tree}"
+            exit 1
+          fi
+          echo "ring-only TLS confirmed: ring resolves, aws-lc-rs is absent from the graph."
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2
         with:
