@@ -5,7 +5,7 @@ use super::*;
 use std::io::Write;
 use std::path::PathBuf;
 
-fn write_temp_file(bytes: &[u8], label: &str) -> PathBuf {
+pub(super) fn write_temp_file(bytes: &[u8], label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "corinth_canal_{label}_{}.gguf",
         std::time::SystemTime::now()
@@ -160,7 +160,7 @@ fn build_q8_0_payload(width: usize, n_rows: usize, scale_bits: u16, quant_val: i
     out
 }
 
-fn build_q8_0_synapse_checkpoint(gate_payload: Vec<u8>) -> Vec<u8> {
+pub(super) fn build_q8_0_synapse_checkpoint(gate_payload: Vec<u8>) -> Vec<u8> {
     // Q8_0 payload: scale = 1.0 (f16 bits = 0x3c00), quant = 1
     let attn_q_payload = build_q8_0_payload(EMBEDDING_DIM, EMBEDDING_DIM, 0x3c00, 1);
     build_test_gguf(

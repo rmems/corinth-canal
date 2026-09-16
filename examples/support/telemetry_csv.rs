@@ -30,6 +30,8 @@ pub struct ResolvedTelemetry {
 }
 
 impl ResolvedTelemetry {
+    #[allow(dead_code)]
+    #[cfg(feature = "cuda")]
     pub fn row_count(&self) -> Option<usize> {
         self.rows.as_ref().map(|rows| rows.len())
     }

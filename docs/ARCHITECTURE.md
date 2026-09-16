@@ -283,6 +283,12 @@ of:
 This makes fallback behavior explicit in artifacts instead of hiding it behind a
 successful run.
 
+When the run came from `LINEUP_CONFIG`, the same manifest also stamps
+`lineup_declared_count` and `lineup_resolved_count`. Skip-and-continue on a
+missing checkpoint is still the default for interactive sweeps;
+`LINEUP_STRICT=1` (set by `just saaq-campaign`) turns that drop into a
+hard error so a pinned lineup cannot silently shrink.
+
 The same runner stamps `routing_mode` and `projection_mode` so a later
 reproduce does not have to guess which projector or router path produced
 the latent series.
