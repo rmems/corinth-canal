@@ -87,7 +87,7 @@ Module boundaries worth knowing before editing:
 | `src/moe/safetensors.rs` + `safetensors/` | header inspection + manifest generation, plus `MappedSafetensorsCheckpoint` token-embedding extraction and `safetensors_gate_scores` runtime routing |
 | `src/experiment/schema.rs` | `RunMatrix` / `ExperimentManifest` / `ExperimentSummary` — the TOML matrix + `run_manifest.json` schemas the `validate_*` examples check |
 | `src/types.rs` | `TelemetrySnapshot`, `ModelFamily`, `RoutingMode`, `ProjectionMode`, `CloudModelSpec`, `EMBEDDING_DIM` |
-| `src/tensor/mod.rs`, `src/metric.rs` | tiny shared helpers (`Tensor = Vec<f32>`, dot, MSE); `metric` is `pub(crate)` |
+| `src/metric.rs` | tiny shared helper (MSE); `metric` is `pub(crate)` |
 | `examples/support/config.rs` | the env-truth surface; see boundary rule below |
 
 ### Invariants that are easy to break

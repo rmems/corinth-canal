@@ -375,6 +375,7 @@ mod tests {
         assert_eq!(resolved.source_label, "synthetic");
         assert!(resolved.csv_path.is_none());
         assert!(resolved.rows.is_none());
+        assert_eq!(resolved.row_count(), None);
     }
 
     #[test]
@@ -385,6 +386,7 @@ mod tests {
         let resolved = resolve_telemetry_from(TelemetrySource::Csv, path.clone());
         assert_eq!(resolved.source, TelemetrySource::Csv);
         assert!(resolved.rows.as_ref().is_some_and(|r| r.len() == 1));
+        assert_eq!(resolved.row_count(), Some(1));
         assert_eq!(resolved.csv_path.as_ref(), Some(&path));
         let _ = std::fs::remove_file(path);
     }
@@ -398,6 +400,7 @@ mod tests {
         assert_eq!(resolved.source_label, "synthetic_fallback");
         assert_eq!(resolved.csv_path.as_ref(), Some(&path));
         assert!(resolved.rows.is_none());
+        assert_eq!(resolved.row_count(), None);
         let _ = std::fs::remove_file(path);
     }
 
@@ -415,5 +418,6 @@ mod tests {
         assert_eq!(resolved.source_label, "synthetic_fallback");
         assert_eq!(resolved.csv_path.as_ref(), Some(&path));
         assert!(resolved.rows.is_none());
+        assert_eq!(resolved.row_count(), None);
     }
 }
