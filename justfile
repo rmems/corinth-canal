@@ -20,13 +20,13 @@ test:
     cargo test
     python3 -m unittest discover -s benchmarks/tests -v
 
-# GPU smoke test — 10k direct GPU ticks against a real GGUF checkpoint.
-# Requires CHECKPOINT_PATH in .env.local.
+# GPU smoke test — GPU_SMOKE_TICKS ticks (default 10000) against a real
+# GGUF checkpoint. Requires CHECKPOINT_PATH in .env.local.
 smoke:
     cargo run --release --example gpu_smoke_test
 
-# CSV replay demo.
-#   just replay PATH=/path/to/telemetry.csv
+# CSV replay demo. PATH is a positional argument, not a just variable:
+#   just replay /path/to/telemetry.csv
 replay PATH:
     cargo run --release --example csv_replay -- {{PATH}}
 
@@ -86,9 +86,12 @@ saaq-campaign:
         cargo run --release --example saaq_latent_calibration
     @echo "ok: campaign finished; see artifacts/index.csv"
 
-# Force CSV-replay mode for the SAAQ sweep. TELEMETRY_CSV_PATH must be set
-# in the environment or passed explicitly:
-#   just saaq-csv TELEMETRY_CSV_PATH=/path/to/telemetry.csv
+# Force CSV-replay mode for the SAAQ sweep. This recipe takes no parameters,
+# so `just saaq-csv TELEMETRY_CSV_PATH=/path` is parsed as a missing recipe.
+# Set TELEMETRY_CSV_PATH in .env.local or pass it as a shell assignment:
+#   TELEMETRY_CSV_PATH=/path/to/telemetry.csv just saaq-csv
+# When unset, telemetry_csv_path_from_env falls back to `./telemetry.csv`.
+# A missing or unusable file degrades to synthetic_fallback.
 saaq-csv:
     TELEMETRY_SOURCE=csv cargo run --release --example saaq_latent_calibration
 
