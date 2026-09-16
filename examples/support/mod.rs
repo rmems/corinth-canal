@@ -5,6 +5,7 @@ pub mod config;
 pub mod embedding;
 pub mod lineup;
 pub mod observability;
+pub mod synapse_diag;
 pub mod telemetry_csv;
 
 #[cfg(feature = "cuda")]
