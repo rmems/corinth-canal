@@ -1,0 +1,9 @@
+Cargo.toml
+  e7c631a974141a85 30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "df7e0c577a39f2e86ed245ddb2792ddb7394eef9",
+  "prompts": {}
+}
