@@ -103,6 +103,7 @@ Systems, Nsight Compute, and DCGM commands, lives in `docs/CUDA_VALIDATION.md`.
 | Profile | Command |
 |---------|---------|
 | Probe preferred synapse tensor selection only | `just synapse-diag` |
+| Same probe, fail the process on any row error | `just synapse-diag-strict` |
 
 `examples/synapse_diagnostic.rs` is the cheapest way to explain why a checkpoint
 selected any of the eight sources — `real`, `dequantized-q8_0`,
@@ -125,7 +126,11 @@ field shows `dequantized-q8_0`, that is expected: the adapter branches on the
 actual `ggml_type` of `blk.0.attn_q.weight`, not on the filename suffix.
 
 The example also writes `<output_root>/synapse_diagnostic.json` for a structured
-record of the same fields.
+record of the same fields. Probe failures land on the row as `error` rather
+than aborting the loop. `just synapse-diag` keeps that non-fatal so
+exploratory probing can inspect a mixed lineup; `just synapse-diag-strict`
+(`SYNAPSE_DIAG_STRICT=1`) exits non-zero when any row has `error: Some(_)`.
+An empty resolved-model list always exits non-zero, even without the flag.
 
 ## Cloud model lineup
 

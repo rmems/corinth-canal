@@ -74,6 +74,10 @@ pub struct RunConfig {
     /// How many of those entries resolved on disk. A gap versus
     /// `lineup_declared_count` means skip-and-continue dropped models.
     pub lineup_resolved_count: Option<usize>,
+    /// When `true`, `synapse_diagnostic` exits non-zero if any probe row
+    /// recorded an error. An empty resolved-model list is always fatal.
+    /// Default `false` so exploratory probing stays non-fatal.
+    pub synapse_diag_strict: bool,
 }
 
 impl RunConfig {
@@ -116,6 +120,7 @@ impl RunConfig {
             strict_repeat_check: strict_repeat_check_from_env(),
             lineup_declared_count: resolved_models.lineup_declared_count,
             lineup_resolved_count: resolved_models.lineup_resolved_count,
+            synapse_diag_strict: super::synapse_diag::synapse_diag_strict_from_env(),
         };
 
         // NO DEAD CODE POLICY: Every cuda example binary compiles its own copy of the
@@ -155,6 +160,8 @@ impl RunConfig {
             let _ = run_config.lineup_declared_count;
             let _ = run_config.lineup_resolved_count;
             let _ = parse_routing_mode("");
+            let _ = run_config.synapse_diag_strict;
+            let _ = super::synapse_diag::synapse_diag_result(0, 0, false);
 
             // Reference the SAAQ-only helpers (and their private callees via the call graph).
             let _ = prompt_embedding_for_validation("", 0);

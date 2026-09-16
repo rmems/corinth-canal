@@ -30,10 +30,11 @@ cargo test --lib --no-default-features -- --nocapture
 cargo test --no-default-features --test examples_support_lineup     # #[path] into examples/support/lineup.rs
 cargo test --no-default-features --test examples_support_telemetry  # #[path] into examples/support/telemetry_csv.rs
 cargo test --no-default-features --test examples_support_embedding  # #[path] into examples/support/embedding.rs
+cargo test --no-default-features --test examples_support_synapse_diag  # #[path] into examples/support/synapse_diag.rs
 cargo test --test gpu_sentry_telemetry            # default features; whole file is #[cfg(feature = "cuda")]
 ```
 
-Unit tests live in `#[cfg(test)] mod tests` inside each `src/` file (two are split out: `src/moe/tests.rs`, `src/moe/safetensors/tests.rs`). `tests/` holds integration files that reach into `examples/support/*.rs` via `#[path]`: `examples_support_lineup`, `examples_support_telemetry`, `examples_support_embedding`. Those extracted-file tests run under self-hosted / local `--all-targets` (and plain `cargo test --no-default-features` locally); hosted PR CI is `--lib` only, so only library unit tests such as `ModelFamily::from_alias` run on every PR.
+Unit tests live in `#[cfg(test)] mod tests` inside each `src/` file (two are split out: `src/moe/tests.rs`, `src/moe/safetensors/tests.rs`). `tests/` holds integration files that reach into `examples/support/*.rs` via `#[path]`: `examples_support_lineup`, `examples_support_telemetry`, `examples_support_embedding`, `examples_support_synapse_diag`. Those extracted-file tests run under self-hosted / local `--all-targets` (and plain `cargo test --no-default-features` locally); hosted PR CI is `--lib` only, so only library unit tests such as `ModelFamily::from_alias` run on every PR.
 
 Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --lcov --output-path lcov.info`.
 
@@ -47,6 +48,7 @@ just saaq-csv                      # forces TELEMETRY_SOURCE=csv (needs TELEMETR
 just saaq-campaign                 # 2-phase synthetic + csv baseline campaign
 CHECKPOINT_PATH=/path/model.gguf just smoke   # direct GPU temporal smoke path
 just synapse-diag                  # print preferred GPU synapse tensor + ggml_type per model
+just synapse-diag-strict           # same probe; non-zero if any row has error (or none run)
 just replay PATH=/path/telemetry.csv
 just clean-artifacts
 ```
