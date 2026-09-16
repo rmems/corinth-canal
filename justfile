@@ -101,9 +101,18 @@ bridge:
 # Probe the configured lineup (LINEUP_CONFIG / CHECKPOINT_PATH /
 # autodiscovery) and print the preferred GPU synapse tensor + ggml_type per
 # model. Writes <output_root>/synapse_diagnostic.json. No SAAQ ticks and no
-# campaign side-effects (issue #31).
+# campaign side-effects (issue #31). Probe failures are recorded in the
+# report but do not fail the process unless SYNAPSE_DIAG_STRICT=1 (or
+# `just synapse-diag-strict`). An empty resolved-model list always exits
+# non-zero.
 synapse-diag:
     cargo run --release --example synapse_diagnostic
+
+# Same as synapse-diag, but fail the process when any probe row records an
+# error. This is the local-GGUF runtime-fit gate in
+# docs/MODEL_SOURCE_VERIFICATION_CHECKLIST.md (RM-1211 / GH#199).
+synapse-diag-strict:
+    SYNAPSE_DIAG_STRICT=1 cargo run --release --example synapse_diagnostic
 
 # Wipe everything under ./artifacts except the .gitkeep anchor.
 clean-artifacts:
