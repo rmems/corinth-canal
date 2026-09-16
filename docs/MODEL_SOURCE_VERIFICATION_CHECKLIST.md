@@ -78,12 +78,14 @@ LLM-models-onboarding branch.*
 
 - [ ] `cargo check --no-default-features` passes.
 - [ ] `cargo test --no-default-features` passes.
-- [ ] For local GGUF: `just synapse-diag` runs **and** every row in
-      `artifacts/synapse_diagnostic.json` has `error: null`. A zero exit status
-      alone proves nothing: `probe_one` stores a failed probe in the row's
-      `error` field and `run` writes the report and returns `Ok(())`
-      regardless, and a run that resolved *no* models only warns on stderr
-      before printing `ok: wrote ...`. Check the report, not the exit code.
+- [ ] For local GGUF: `just synapse-diag-strict` (or
+      `SYNAPSE_DIAG_STRICT=1 just synapse-diag`) exits 0 **and** every row
+      in `artifacts/synapse_diagnostic.json` has `error: null`. Strict
+      mode exits non-zero when any probe records an error. An empty
+      resolved-model list always exits non-zero, even without the flag —
+      `just synapse-diag` without checkpoints is not a pass. Without
+      `SYNAPSE_DIAG_STRICT=1`, probe failures are still written to the report
+      but the process exits 0 (exploratory probing).
       Not `cargo run --example synapse_diagnostic --no-default-features`: that
       example is `required-features = ["cuda"]`, so the target does not
       exist in a CPU build, and it takes no positional path — point it at a

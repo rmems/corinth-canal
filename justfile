@@ -70,17 +70,19 @@ saaq:
 #                      mode in resolve_telemetry_from, not more shell.
 #
 # Full SAAQ 1.5 MoE baseline campaign (2 phases x REPEAT_COUNT runs per model).
+# Both phases set LINEUP_STRICT=1 so a declared-but-missing checkpoint aborts
+# instead of silently shrinking the model set between phases.
 saaq-campaign:
     @[ -n "${LINEUP_CONFIG:-}" ] && [ -f "${LINEUP_CONFIG}" ] || { echo "error: saaq-campaign requires LINEUP_CONFIG to name an existing lineup. A baseline campaign must pin its model set, and autodiscovery includes the dense glm46v_flash_q8_0, which aborts the sweep on missing expert_count. Copy configs/local_gguf_lineup.template.toml and set LINEUP_CONFIG in .env.local." >&2; exit 1; }
     @[ -n "${TELEMETRY_CSV_PATH:-}" ] && [ -f "${TELEMETRY_CSV_PATH}" ] || { echo "error: phase 2/2 needs TELEMETRY_CSV_PATH to point at an existing CSV. Without it the runner degrades to synthetic telemetry (stamped synthetic_fallback) and this campaign would compare synthetic against synthetic." >&2; exit 1; }
     @awk -v HDR='timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w' 'BEGIN{FS=","} {line=$0; sub(/\r$/,"",line); gsub(/^[ \t]+|[ \t]+$/,"",line)} NR==1{if(line!=HDR){hdrbad=1;exit 2} next} line==""{next} {if(split(line,f,",")!=5)next; if(f[1] !~ /^[0-9]+$/)next; bad=0; for(i=2;i<=5;i++) if(f[i] !~ /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/) bad=1; if(bad)next; found=1; exit 0} END{if(hdrbad)exit 2; if(!found)exit 3}' "${TELEMETRY_CSV_PATH}" && rc=0 || rc=$?; [ "$rc" = 0 ] || { [ "$rc" = 2 ] && echo "error: TELEMETRY_CSV_PATH header is not the canonical schema (timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w)." >&2 || echo "error: TELEMETRY_CSV_PATH contains no usable row (needs 5 fields: u64 timestamp + 4 numbers). Every row is blank or malformed, so the runner would skip them all and degrade to synthetic." >&2; exit 1; }
     @echo ">>> phase 1/2: synthetic baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
-        RUN_TAG=campaign_syn \
+        RUN_TAG=campaign_syn LINEUP_STRICT=1 \
         cargo run --release --example saaq_latent_calibration
     @echo ">>> phase 2/2: csv replay baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=csv \
-        RUN_TAG=campaign_csv \
+        RUN_TAG=campaign_csv LINEUP_STRICT=1 \
         cargo run --release --example saaq_latent_calibration
     @echo "ok: campaign finished; see artifacts/index.csv"
 
@@ -104,9 +106,18 @@ bridge:
 # Probe the configured lineup (LINEUP_CONFIG / CHECKPOINT_PATH /
 # autodiscovery) and print the preferred GPU synapse tensor + ggml_type per
 # model. Writes <output_root>/synapse_diagnostic.json. No SAAQ ticks and no
-# campaign side-effects (issue #31).
+# campaign side-effects (issue #31). Probe failures are recorded in the
+# report but do not fail the process unless SYNAPSE_DIAG_STRICT=1 (or
+# `just synapse-diag-strict`). An empty resolved-model list always exits
+# non-zero.
 synapse-diag:
     cargo run --release --example synapse_diagnostic
+
+# Same as synapse-diag, but fail the process when any probe row records an
+# error. This is the local-GGUF runtime-fit gate in
+# docs/MODEL_SOURCE_VERIFICATION_CHECKLIST.md (RM-1211 / GH#199).
+synapse-diag-strict:
+    SYNAPSE_DIAG_STRICT=1 cargo run --release --example synapse_diagnostic
 
 # Wipe everything under ./artifacts except the .gitkeep anchor.
 clean-artifacts:
