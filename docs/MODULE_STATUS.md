@@ -25,7 +25,6 @@ Status legend: `reference` · `stabilizing` · `proven` · `frozen`
 | `src/types.rs` | stabilizing | `rmems-types` | The externally-visible vocabulary: `TelemetrySnapshot`, `ModelFamily` (21 variants), `RoutingMode`, `ProjectionMode`, `CloudModelSpec`, `EMBEDDING_DIM`. Serde aliases are load-bearing for existing matrices, so any rename is a breaking change. |
 | `src/error.rs` | stabilizing | `rmems-types` | `HybridError` is the crate-wide error type. Two `ProjectionMode` helpers in `types.rs` still return `Result<_, String>`, and `src/gpu` has an unbridged `GpuError`; unifying those is the graduation gate. |
 | `src/experiment/` | reference | `rmems-experiment` | `RunMatrix` / `ExperimentManifest` / `ExperimentSummary` — the TOML matrix and `run_manifest.json` schemas. `ExperimentBundle` and `ExperimentWarning` are declared but never constructed. |
-| `src/tensor/` | reference | n/a | `Tensor = Vec<f32>` plus `zeros`/`dot`. Currently has no caller; kept as a shared-helper placeholder rather than promoted. |
 | `src/metric.rs` | reference | n/a | `pub(crate)` MSE helper. Its only caller is cuda-gated, and `examples/csv_replay.rs` carries a second copy. |
 | `examples/support/config.rs` | reference | n/a | Intentionally stays here — it is the env-truth surface for the reference repo only. |
 
