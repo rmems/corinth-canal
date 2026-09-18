@@ -118,7 +118,7 @@ Instrumented launch sites:
 | `src/latent.rs` | SAAQ 1.0 / 1.5 calibration and CSV export |
 | `src/gpu/` | CUDA wrappers, buffers, kernel launchers |
 | `examples/support/config.rs` | Example-only environment/config resolution |
-| `examples/support/spikenaut.rs` | Spikenaut JSONL → canonical replay CSV + CPU dual-SAAQ smoke |
+| `examples/support/spikenaut/` | Spikenaut JSONL → canonical replay CSV + CPU dual-SAAQ smoke |
 
 ## Model loading and routing bridge
 
