@@ -1,0 +1,19 @@
+examples/support/telemetry_csv.rs
+  s_fb4995c0d68478::t_f725dd6ad95e28 33-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d1c94b2e16a626294f6bd0ed09cecd1f7cda031b",
+  "prompts": {},
+  "sessions": {
+    "s_fb4995c0d68478": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "980b2370-129f-406a-ac21-d4d0867173c1",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
