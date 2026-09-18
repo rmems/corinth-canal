@@ -30,6 +30,23 @@ smoke:
 replay PATH:
     cargo run --release --example csv_replay -- {{PATH}}
 
+# Spikenaut-SNN-Telemetry JSONL → canonical replay CSV (CPU-only).
+#   just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl
+#   just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl OUT=artifacts/spikenaut_gpu.csv
+spikenaut-ingest IN OUT='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    extra=()
+    if [ -n "{{OUT}}" ]; then
+        extra+=("{{OUT}}")
+    fi
+    cargo run --example spikenaut_ingest --no-default-features -- "{{IN}}" "${extra[@]}"
+
+# Convert JSONL and run a CPU dual-SAAQ (1.0 + 1.5) smoke with run_manifest.json.
+#   just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl
+spikenaut-smoke IN:
+    cargo run --example spikenaut_ingest --no-default-features -- "{{IN}}" --smoke
+
 # Full SAAQ latent calibration sweep using current .env.local values.
 saaq:
     cargo run --release --example saaq_latent_calibration

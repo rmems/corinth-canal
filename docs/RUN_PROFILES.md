@@ -198,12 +198,23 @@ runtime GGUF bridge.
 | Profile | Command |
 |---------|---------|
 | Ingest canonical telemetry CSV | `just replay /path/to/telemetry.csv` |
+| Spikenaut JSONL → canonical CSV | `just spikenaut-ingest IN=path.jsonl OUT=path.csv` |
+| Spikenaut dual-SAAQ CPU smoke | `just spikenaut-smoke IN=path.jsonl` |
 
 Canonical CSV schema consumed by replay and validation:
 
 ```text
 timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w
 ```
+
+Spikenaut Vault / Hub JSONL (`neuromorphic_data`, `node_sync_harvest`,
+`ghost_market_log`, `qubic_ticks_snn`, v3 `state_telemetry`) is mapped onto
+that schema by `examples/spikenaut_ingest.rs`. Field mapping, ordinal-vs-wall-clock
+timestamp rules, and axon-style HFT/Qubic affines are in
+`docs/SPIKENAUT_TELEMETRY.md`. The smoke profile stamps `telemetry_source`
+`csv_spikenaut_<domain>` and emits both SAAQ 1.0 and 1.5 latent columns
+(`saaq_dual_emit: true`) without CUDA. GPU campaign replay of the converted
+CSV uses `TELEMETRY_SOURCE=csv TELEMETRY_CSV_PATH=… just saaq-csv`.
 
 ## Telemetry bridge demo
 

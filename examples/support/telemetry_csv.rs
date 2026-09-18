@@ -30,14 +30,18 @@ pub struct ResolvedTelemetry {
 }
 
 impl ResolvedTelemetry {
+    /// Used by GPU examples and by the CPU `#[path]` telemetry tests.
+    /// Keep this off the `cuda` feature: hosted clippy compiles
+    /// `examples_support_telemetry` under `--no-default-features`.
     #[allow(dead_code)]
-    #[cfg(feature = "cuda")]
     pub fn row_count(&self) -> Option<usize> {
         self.rows.as_ref().map(|rows| rows.len())
     }
 }
 
-const TELEMETRY_CSV_HEADER: &str =
+/// Canonical replay header consumed by `load_csv_telemetry_rows` and produced
+/// by `gaming-telemetry` `export_csv` and the Spikenaut JSONL adapter.
+pub const TELEMETRY_CSV_HEADER: &str =
     "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
 
 /// Parse a canonical telemetry CSV exported by `gaming-telemetry` into a
