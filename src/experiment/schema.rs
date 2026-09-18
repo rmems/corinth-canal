@@ -68,6 +68,16 @@ pub struct ExperimentManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection_mode: Option<String>,
 
+    /// Declared `[[model]]` count from `LINEUP_CONFIG`. Absent when the run
+    /// did not come from a GGUF lineup file (checkpoint / autodiscovery).
+    /// GH#197 / RM-1209.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineup_declared_count: Option<usize>,
+    /// How many of those entries resolved on disk. A gap versus
+    /// `lineup_declared_count` means skip-and-continue dropped models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineup_resolved_count: Option<usize>,
+
     pub generated_files: Vec<String>,
 }
 
@@ -305,7 +315,51 @@ impl RunMatrix {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExperimentMetrics, ExperimentSummary};
+    use super::{ExperimentManifest, ExperimentMetrics, ExperimentSummary};
+
+    fn sample_manifest(
+        lineup_declared_count: Option<usize>,
+        lineup_resolved_count: Option<usize>,
+    ) -> ExperimentManifest {
+        ExperimentManifest {
+            run_id: "t".into(),
+            run_tag: None,
+            created_at: "now".into(),
+            repo: "corinth-canal".into(),
+            commit_sha: None,
+            model_slug: "olmoe".into(),
+            model_family: "Olmoe".into(),
+            architecture: "MoE".into(),
+            checkpoint_path: "model.gguf".into(),
+            checkpoint_format: "gguf".into(),
+            routing_tensor_name: "ffn_gate_inp".into(),
+            synapse_source: "real".into(),
+            prompt_embedding_source: "synthetic".into(),
+            prompt_profile: "default".into(),
+            prompt_text: None,
+            ticks: 1,
+            saaq_rule: "SaaqV1_5SqrtRate".into(),
+            saaq_primary_rule: "SaaqV1_5SqrtRate".into(),
+            saaq_dual_emit: true,
+            telemetry_source: "synthetic".into(),
+            telemetry_csv_path: None,
+            telemetry_row_count: None,
+            wraparound_enabled: false,
+            wraparound_loops: 0,
+            ticks_effective: 1,
+            run_dir: "artifacts/x".into(),
+            output_root: "artifacts".into(),
+            repeat_idx: 0,
+            repeat_count: 1,
+            validation_status: "completed".into(),
+            error: None,
+            routing_mode: None,
+            projection_mode: None,
+            lineup_declared_count,
+            lineup_resolved_count,
+            generated_files: Vec::new(),
+        }
+    }
 
     fn sample_summary(projection_mode: Option<String>) -> ExperimentSummary {
         ExperimentSummary {
@@ -347,5 +401,37 @@ mod tests {
         let parsed: ExperimentSummary = serde_json::from_value(serde_json::Value::Object(obj))
             .expect("old summary without field");
         assert_eq!(parsed.projection_mode, None);
+    }
+
+    #[test]
+    fn experiment_manifest_stamps_lineup_counts() {
+        let manifest = sample_manifest(Some(8), Some(1));
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert_eq!(json["lineup_declared_count"], 8);
+        assert_eq!(json["lineup_resolved_count"], 1);
+    }
+
+    #[test]
+    fn experiment_manifest_omits_lineup_counts_when_unset() {
+        let manifest = sample_manifest(None, None);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert!(json.get("lineup_declared_count").is_none());
+        assert!(json.get("lineup_resolved_count").is_none());
+    }
+
+    #[test]
+    fn experiment_manifest_missing_lineup_counts_deserializes() {
+        let manifest = sample_manifest(Some(8), Some(1));
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        let mut obj = json
+            .as_object()
+            .cloned()
+            .expect("manifest serializes as object");
+        obj.remove("lineup_declared_count");
+        obj.remove("lineup_resolved_count");
+        let parsed: ExperimentManifest = serde_json::from_value(serde_json::Value::Object(obj))
+            .expect("old manifest without lineup counts");
+        assert_eq!(parsed.lineup_declared_count, None);
+        assert_eq!(parsed.lineup_resolved_count, None);
     }
 }

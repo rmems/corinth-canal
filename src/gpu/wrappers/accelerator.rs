@@ -260,18 +260,6 @@ impl GpuAccelerator {
         state.membrane.to_vec()
     }
 
-    pub fn temporal_adaptation_to_vec(&self, neuron_count: usize) -> GpuResult<Vec<f32>> {
-        if !self.has_context() {
-            return Err(GpuError::NoGpu);
-        }
-        let state = self
-            .temporal_state
-            .as_ref()
-            .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
-        Self::expect_len("temporal adaptation", state.adaptation.len(), neuron_count)?;
-        state.adaptation.to_vec()
-    }
-
     /// Upload a per-neuron temporal input vector into the resident `input_spikes` buffer.
     pub(crate) fn upload_temporal_input_spikes(&mut self, input_spikes: &[f32]) -> GpuResult<()> {
         if !self.has_context() {
@@ -296,10 +284,6 @@ impl GpuAccelerator {
 
     /// Load synapse weight matrix for GIF weighted kernel. Must match neuron_count * n_inputs.
     /// Call after ensure_temporal_state or it will be overwritten on realloc.
-    pub fn load_synapse_weights(&mut self, weights: &[f32]) -> GpuResult<()> {
-        self.load_synapse_weights_named("host-f32", weights)
-    }
-
     pub fn load_synapse_weights_named(
         &mut self,
         signature: &str,
@@ -386,7 +370,8 @@ impl GpuAccelerator {
     }
 
     /// Run one GIF-weighted LIF step using adaptation, dynamic threshold, and synaptic weights.
-    /// Uses shared memory sized for n_inputs. Call load_synapse_weights first.
+    /// Uses shared memory sized for n_inputs. Synapse weights must be loaded first
+    /// (`load_synapse_weights_named` or `load_synapse_weights_f16_registered`).
     /// Fills spikes_out and updates membrane/adaptation/refractory.
     /// Returns the SAAQ best-walker index from on-device reduction (single u32 download).
     pub fn gif_step_weighted_tick(&mut self, neuron_count: usize) -> GpuResult<u32> {
@@ -542,6 +527,14 @@ impl GpuAccelerator {
 
     /// Copy the best SAT walker assignment into `output`.
     ///
+    /// Completes the SAT pipeline whose reducer [`Self::satsolver_aux_reduce_best`]
+    /// is already live: this wrapper launches the `satsolver_extract` kernel and
+    /// blocks until the best solved assignment has been written to `output`.
+    ///
+    /// There is currently no Rust caller. The kernel remains a load-time
+    /// requirement, and this method is the only host-side way to read a
+    /// solution back out, so the wrapper stays public until a caller lands.
+    ///
     /// This wrapper matches the updated CUDA signature and blocks until the
     /// extract kernel has completed.
     #[allow(clippy::too_many_arguments)]
@@ -612,11 +605,7 @@ impl GpuAccelerator {
     /// On-device SAAQ reduction: pass 1 emits one partial winner per block, then a single
     /// warp-sized pass 2 reduces those partials to one final best walker.
     /// Launches on `stream` after `gif_step_weighted`; synchronizes before the minimal device read.
-    pub fn saaq_find_best_walker(
-        &mut self,
-        stream: &Stream,
-        neuron_count: usize,
-    ) -> GpuResult<u32> {
+    fn saaq_find_best_walker(&mut self, stream: &Stream, neuron_count: usize) -> GpuResult<u32> {
         self.ensure_temporal_state(neuron_count)?;
 
         let state = self

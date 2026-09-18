@@ -58,7 +58,13 @@ The latent telemetry CSV includes both SAAQ trajectories via
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including
-  `synthetic_fallback` when CSV replay degrades.
+  `synthetic_fallback` when CSV replay degrades. When the run came from
+  `LINEUP_CONFIG`, it also stamps `lineup_declared_count` /
+  `lineup_resolved_count` so a skipped checkpoint is visible in the artifact.
+- `LINEUP_STRICT=1` aborts when any declared GGUF lineup entry fails to
+  resolve, naming each missing slug and path. Unset / false keeps
+  skip-and-continue. `just saaq-campaign` sets it so the two campaign
+  phases cannot silently run different model sets.
 - `PROJECTION_MODE` selects the projector the same way `ROUTING_MODE`
   selects the router. Unset / blank keeps `SpikingTernary`. Accepted
   values: `RateSum`, `TemporalHistogram`, `MembraneSnapshot`,
@@ -97,6 +103,7 @@ Systems, Nsight Compute, and DCGM commands, lives in `docs/CUDA_VALIDATION.md`.
 | Profile | Command |
 |---------|---------|
 | Probe preferred synapse tensor selection only | `just synapse-diag` |
+| Same probe, fail the process on any row error | `just synapse-diag-strict` |
 
 `examples/synapse_diagnostic.rs` is the cheapest way to explain why a checkpoint
 selected any of the eight sources — `real`, `dequantized-q8_0`,
@@ -119,7 +126,11 @@ field shows `dequantized-q8_0`, that is expected: the adapter branches on the
 actual `ggml_type` of `blk.0.attn_q.weight`, not on the filename suffix.
 
 The example also writes `<output_root>/synapse_diagnostic.json` for a structured
-record of the same fields.
+record of the same fields. Probe failures land on the row as `error` rather
+than aborting the loop. `just synapse-diag` keeps that non-fatal so
+exploratory probing can inspect a mixed lineup; `just synapse-diag-strict`
+(`SYNAPSE_DIAG_STRICT=1`) exits non-zero when any row has `error: Some(_)`.
+An empty resolved-model list always exits non-zero, even without the flag.
 
 ## Cloud model lineup
 
@@ -222,7 +233,10 @@ As of this writing it holds eleven entries, by slug:
 Not all of them are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
 `expert_count`, so `resolve_gguf_topology` rejects it (`src/moe/adapter.rs:201`)
 and any sweep that reaches it aborts. That is why `just saaq-campaign` requires
-an explicit `LINEUP_CONFIG` rather than falling through to this scan.
+an explicit `LINEUP_CONFIG` rather than falling through to this scan, and why
+the recipe also sets `LINEUP_STRICT=1`: skip-and-continue on missing
+checkpoints would let the two phases run different model sets and still
+report success.
 
 This discovery root is a machine-local convention on the author's Fedora
 box. CI and contributor machines should set `CHECKPOINT_PATH`

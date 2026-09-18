@@ -757,3 +757,11 @@ impl Router {
 
 #[cfg(test)]
 mod tests;
+
+/// Write a temporary Olmoe GGUF with a Q8_0 `blk.0.attn_q.weight` synapse.
+/// Used by GPU temporal tests that need a mapped checkpoint (GH#191).
+#[cfg(all(test, feature = "cuda"))]
+pub(crate) fn write_test_q8_0_olmoe_checkpoint(label: &str) -> std::path::PathBuf {
+    let gate_payload = vec![0u8; EMBEDDING_DIM * 64 * std::mem::size_of::<f32>()];
+    tests::write_temp_file(&tests::build_q8_0_synapse_checkpoint(gate_payload), label)
+}
