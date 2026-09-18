@@ -1,0 +1,33 @@
+examples/support/spikenaut/timestamp.rs
+  s_67406fe0020410::t_69dfdefacd7314 180-185,189-196
+  s_67406fe0020410::t_8922f7d39d6d14 341-350
+  s_67406fe0020410::t_63f934b9a83c0a 136-145
+examples/support/spikenaut/map.rs
+  s_67406fe0020410::t_1949cbf40b6fab 198-208
+  s_67406fe0020410::t_93c0b419990d85 7
+  s_67406fe0020410::t_37d7a836912146 65
+  s_67406fe0020410::t_ee75b552e4199e 82
+  s_67406fe0020410::t_3eb6863a77bd4b 99
+  s_67406fe0020410::t_7780fe83721a14 50
+  s_67406fe0020410::t_c93d203c1ad6b2 33
+examples/support/spikenaut/fields.rs
+  s_67406fe0020410::t_fa619bd6d3c5a7 32-48
+justfile
+  s_67406fe0020410::t_7e565a231fcdb5 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9854268c6559fefb90f8d837ca3f6672e09c07a0",
+  "prompts": {},
+  "sessions": {
+    "s_67406fe0020410": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "26b0f66a-cee1-4287-9354-57de05bcc8ac",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
