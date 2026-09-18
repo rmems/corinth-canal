@@ -27,7 +27,7 @@ use spikenaut::{ingest_jsonl, run_dual_saaq_cpu_smoke, write_canonical_csv};
 use telemetry_csv::{TELEMETRY_CSV_HEADER, load_csv_telemetry_rows};
 
 fn main() {
-    match spikenaut::cli::from_os_args() {
+    match load_cli() {
         Ok(cli) => {
             if let Err(error) = run(&cli) {
                 eprintln!("spikenaut_ingest failed: {error}");
@@ -42,6 +42,11 @@ fn main() {
             process::exit(1);
         }
     }
+}
+
+fn load_cli() -> Result<Cli, String> {
+    let bytes = std::fs::read("/proc/self/cmdline").map_err(|error| error.to_string())?;
+    spikenaut::cli::parse_argv(spikenaut::cli::tokens_from_cmdline(&bytes)?)
 }
 
 fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
