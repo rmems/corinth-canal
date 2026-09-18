@@ -1,0 +1,83 @@
+examples/support/spikenaut/smoke_artifacts.rs
+  s_67406fe0020410::t_82fc76585d8810 1-139
+tests/examples_support_spikenaut.rs
+  s_1d04d1a6a68d92::t_b87a3c4d6ce0ea 8
+  s_1d04d1a6a68d92::t_75ec96668b603f 2
+  s_1d04d1a6a68d92::t_46d152954ef6f5 153-157
+  s_1d04d1a6a68d92::t_391b3fe27f6cbe 13,36-45,66,112,126-131,158-159,161,168
+examples/support/spikenaut/csv.rs
+  s_1d04d1a6a68d92::t_71bae7dbd6fca4 1-66
+examples/support/spikenaut/fields.rs
+  s_1d04d1a6a68d92::t_15bb576838a765 1-61
+examples/support/spikenaut/map.rs
+  s_1d04d1a6a68d92::t_2c0f2d88c1e2dd 110
+  s_1d04d1a6a68d92::t_cddb7a31694077 2,6-8
+examples/support/spikenaut/smoke.rs
+  s_1d04d1a6a68d92::t_e9abcacc67a381 146
+  s_67406fe0020410::t_5748f8e0ce3b67 70-76
+  s_67406fe0020410::t_718d2c03284804 68-69,77-82,87-91,95-104,106,108-114,117
+  s_67406fe0020410::t_49b8f54caa3da8 6,12-13,17
+  s_1d04d1a6a68d92::t_dcf34d244eb08d 1-5,7-11,14-16,18-67,83-86,92-94,105,107,115-116,118-145,147-185
+examples/support/spikenaut/timestamp.rs
+  s_67406fe0020410::t_96aed27b53c989 88,97-102,104-119
+  s_67406fe0020410::t_fd6f5b4cef83bc 91-96,103
+  s_67406fe0020410::t_5748f8e0ce3b67 173-174,177-189
+  s_1d04d1a6a68d92::t_cee728bf55c81a 1-59,67-74,89-90,134,142,145,148,152,154-172,175-176,190-192,198,222-312,322-329
+  s_67406fe0020410::t_ce8d07f2227683 193-197,199-221
+  s_67406fe0020410::t_139be92d61d99b 127-128
+  s_67406fe0020410::t_1982ef5d9e0a7e 60-66,75-87,120-126,129-133,135-141,143-144,146-147,149-151,153
+  s_67406fe0020410::t_35adabefee7641 313-321
+docs/ARCHITECTURE.md
+  s_1d04d1a6a68d92::t_6455b80a699f2b 121
+examples/support/spikenaut/domain.rs
+  s_1d04d1a6a68d92::t_77cfe7fce78ad9 1-22,43-68,74-157
+  s_67406fe0020410::t_9f2aed3dd8e7b2 23-42
+  s_67406fe0020410::t_00bd0d8db5e5c9 69-73
+examples/support/spikenaut/ingest.rs
+  s_1d04d1a6a68d92::t_5064a92de11725 1-160
+examples/support/spikenaut/cli.rs
+  s_67406fe0020410::t_deac0e1982bc0b 30-31
+  s_67406fe0020410::t_5c49a11a48e45c 10
+  s_1d04d1a6a68d92::t_207b354ca394f6 1-9,11-28,32-33,35-36,40-44,46-50,52,54,56-57,63-66,69,71-74,80-83,108,136-163,165-179,181-229,232-235,241-249
+  s_67406fe0020410::t_22d204cea7ea26 29
+  s_67406fe0020410::t_316acb57b01ea5 34,37-39,45,51,53,55
+  s_67406fe0020410::t_f718b14238bfb9 84-102
+  s_67406fe0020410::t_b4b60db983e9f6 104-106,109-135
+  s_67406fe0020410::t_02126fdd834d83 164,180
+  s_67406fe0020410::t_05d9d963f465c8 230-231,236-240
+  s_67406fe0020410::t_965598a2886c34 58-62,67-68,70,75-79,103,107
+examples/support/spikenaut/mod.rs
+  s_1d04d1a6a68d92::t_57f98619a02275 1-21,23-24,28,30,32,34-35,37
+  s_67406fe0020410::t_88a8be46d96bcb 22
+  s_1d04d1a6a68d92::t_1801d0f3f0ec34 25-27,29,33,36
+  s_1d04d1a6a68d92::t_612484f6b57e0a 31
+examples/spikenaut_ingest.rs
+  s_1d04d1a6a68d92::t_b9731fe769b327 26,30,33-36,52-53,65-66,68-74,77,82-83,85,92,96,98-99,101,104-110,113-122
+  s_67406fe0020410::t_598e46f24e1380 25,31-32,47-51,54-55,59
+  s_1d04d1a6a68d92::t_51684a32092959 17
+  s_67406fe0020410::t_cd5c8035c0782b 97,100,103,111-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e162c2d4d6e34ef1f2763a842e8cefed96ac9756",
+  "prompts": {},
+  "sessions": {
+    "s_1d04d1a6a68d92": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "fbac74c8-9134-4242-8f18-20dd740191ba",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    },
+    "s_67406fe0020410": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "26b0f66a-cee1-4287-9354-57de05bcc8ac",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
