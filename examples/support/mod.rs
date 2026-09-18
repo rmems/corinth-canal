@@ -6,6 +6,7 @@ pub mod embedding;
 pub mod lineup;
 pub mod observability;
 pub mod spikenaut;
+pub mod synapse_diag;
 pub mod telemetry_csv;
 
 #[cfg(feature = "cuda")]
@@ -122,8 +123,7 @@ pub fn parse_family_slug(value: &str) -> Option<ModelFamily> {
 /// Parse a lineup-config `routing_mode` entry.
 ///
 /// Thin alias for [`RoutingMode::from_alias`], which owns the canonical
-/// spelling table. Kept as a named function because `config.rs` and the
-/// lineup loader both call it.
+/// spelling table.
 pub fn parse_routing_mode(value: &str) -> Option<RoutingMode> {
     RoutingMode::from_alias(value)
 }
@@ -305,7 +305,10 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
         ),
         (
             "kimi_vl_a3b_q6_k",
-            Some(ModelFamily::DeepSeek2),
+            // llama.cpp GGUF arch is deepseek2; infer_family disambiguates
+            // Moonlight/Kimi from the path. Do not hardcode DeepSeek2 here —
+            // run_validation would stamp that override onto artifacts.
+            None,
             PathBuf::from("models/Kimi-VL-A3B-Instruct-GGUF_Q6_K/Kimi-VL-A3B-Instruct-Q6_K.gguf"),
         ),
         (
@@ -315,6 +318,8 @@ pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
         ),
         (
             "moonlight_16b_a3b_q4_k_m",
+            // Same packaging as kimi: GGUF arch is deepseek2; leave family
+            // unset so the probe can disambiguate from the path.
             None,
             PathBuf::from(
                 "models/Moonlight-16B-A3B-bnb-4bit/moonlight-16b-a3b-bnb-4bit-q4_k_m.gguf",

@@ -30,10 +30,11 @@ cargo test --lib --no-default-features -- --nocapture
 cargo test --no-default-features --test examples_support_lineup     # #[path] into examples/support/lineup.rs
 cargo test --no-default-features --test examples_support_telemetry  # #[path] into examples/support/telemetry_csv.rs
 cargo test --no-default-features --test examples_support_embedding  # #[path] into examples/support/embedding.rs
+cargo test --no-default-features --test examples_support_synapse_diag  # #[path] into examples/support/synapse_diag.rs
 cargo test --test gpu_sentry_telemetry            # default features; whole file is #[cfg(feature = "cuda")]
 ```
 
-Unit tests live in `#[cfg(test)] mod tests` inside each `src/` file (two are split out: `src/moe/tests.rs`, `src/moe/safetensors/tests.rs`). `tests/` holds integration files that reach into `examples/support/*.rs` via `#[path]`: `examples_support_lineup`, `examples_support_telemetry`, `examples_support_embedding`. Those extracted-file tests run under self-hosted / local `--all-targets` (and plain `cargo test --no-default-features` locally); hosted PR CI is `--lib` only, so only library unit tests such as `ModelFamily::from_alias` run on every PR.
+Unit tests live in `#[cfg(test)] mod tests` inside each `src/` file (two are split out: `src/moe/tests.rs`, `src/moe/safetensors/tests.rs`). `tests/` holds integration files that reach into `examples/support/*.rs` via `#[path]`: `examples_support_lineup`, `examples_support_telemetry`, `examples_support_embedding`, `examples_support_synapse_diag`. Those extracted-file tests run under self-hosted / local `--all-targets` (and plain `cargo test --no-default-features` locally); hosted PR CI is `--lib` only, so only library unit tests such as `ModelFamily::from_alias` run on every PR.
 
 Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --lcov --output-path lcov.info`.
 
@@ -43,11 +44,12 @@ Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --
 
 ```bash
 just saaq                          # primary SAAQ latent calibration loop
-just saaq-csv                      # forces TELEMETRY_SOURCE=csv (needs TELEMETRY_CSV_PATH)
+TELEMETRY_CSV_PATH=/path just saaq-csv   # forces TELEMETRY_SOURCE=csv (defaults to ./telemetry.csv)
 just saaq-campaign                 # 2-phase synthetic + csv baseline campaign
 CHECKPOINT_PATH=/path/model.gguf just smoke   # direct GPU temporal smoke path
 just synapse-diag                  # print preferred GPU synapse tensor + ggml_type per model
-just replay PATH=/path/telemetry.csv
+just synapse-diag-strict           # same probe; non-zero if any row has error (or none run)
+just replay /path/telemetry.csv
 just spikenaut-ingest IN=path.jsonl OUT=path.csv
 just spikenaut-smoke IN=path.jsonl
 just clean-artifacts
@@ -87,7 +89,7 @@ Module boundaries worth knowing before editing:
 | `src/moe/safetensors.rs` + `safetensors/` | header inspection + manifest generation, plus `MappedSafetensorsCheckpoint` token-embedding extraction and `safetensors_gate_scores` runtime routing |
 | `src/experiment/schema.rs` | `RunMatrix` / `ExperimentManifest` / `ExperimentSummary` — the TOML matrix + `run_manifest.json` schemas the `validate_*` examples check |
 | `src/types.rs` | `TelemetrySnapshot`, `ModelFamily`, `RoutingMode`, `ProjectionMode`, `CloudModelSpec`, `EMBEDDING_DIM` |
-| `src/tensor/mod.rs`, `src/metric.rs` | tiny shared helpers (`Tensor = Vec<f32>`, dot, MSE); `metric` is `pub(crate)` |
+| `src/metric.rs` | tiny shared helper (MSE); `metric` is `pub(crate)` |
 | `examples/support/config.rs` | the env-truth surface; see boundary rule below |
 
 ### Invariants that are easy to break
@@ -101,13 +103,13 @@ Module boundaries worth knowing before editing:
 - **`configs/` contents.** Five files are tracked as of this writing — `hybrid_moe_lineup.toml`, `local_gguf_lineup.template.toml`, `local_safetensors_lineup.template.toml`, `model_adapter_configs.toml`, `saaq_cloud_lineup.toml` — but list the directory rather than trusting this sentence; it has drifted before. Docs and the `justfile` long cited `saaq15_moe_lineup.toml`, `saaq15_cloud_lineup.toml` and `safetensors_lineup.template.toml`, none of which existed; those are corrected, so check `configs/` before reintroducing a path.
 - **Template files are copied, not edited in place.** The two `*.template.toml` files become gitignored local names (`local_gguf_lineup.toml`, `safetensors_lineup.toml`) carrying machine paths. AGENTS.md forbids committing local absolute paths, so those copies should stay untracked — `git add -f` on one is how nine `/home/raulmc/...` paths reached the repo previously.
 - **`model_adapter_configs.toml` is reference metadata that no code loads.** `RunMatrix` deserializes `[[run]]` only, so editing its policies changes no validation behaviour.
-- **`just saaq-campaign` requires `LINEUP_CONFIG`** and checks it before phase 1. Defaulting it is wrong (set-but-unloadable is a hard error) and so is letting it fall through: autodiscovery's candidate list includes the dense `glm46v_flash_q8_0`, which `resolve_gguf_topology` rejects for missing `expert_count`, aborting the sweep. A baseline campaign also needs its model set pinned to stay comparable across phases.
+- **`just saaq-campaign` requires `LINEUP_CONFIG`** and checks it before phase 1. Defaulting it is wrong (set-but-unloadable is a hard error) and so is letting it fall through: autodiscovery's candidate list includes the dense `glm46v_flash_q8_0`, which `resolve_gguf_topology` rejects for missing `expert_count`, aborting the sweep. A baseline campaign also needs its model set pinned to stay comparable across phases. The recipe sets `LINEUP_STRICT=1` so a declared-but-missing checkpoint aborts rather than silently shrinking coverage.
 
 ### Model selection precedence (examples only)
 
-`RunConfig::from_env` validates any optional lineups that are set (`CLOUD_LINEUP_CONFIG`, `SAFETENSORS_LINEUP_CONFIG`) before resolving model precedence. It resolves models with the precedence `LINEUP_CONFIG` (errors and aborts only when set but unreadable; unset it to skip) → `SAFETENSORS_LINEUP_CONFIG` → `CHECKPOINT_PATH` → autodiscovery scan of the machine-local default root (configured in `examples/support/mod.rs`) for a hardcoded candidate list. Because validation runs before precedence resolution, a stale optional lineup can still abort the run even when a higher-priority config is the one used; unset optional lineups you are not actively using to avoid this. The autodiscovery root is a reference-repo convention only; do not copy it into a promoted crate unless you explicitly intend to maintain that machine-local scan.
+`RunConfig::from_env` validates any optional lineups that are set (`CLOUD_LINEUP_CONFIG`, `SAFETENSORS_LINEUP_CONFIG`) before resolving model precedence. It resolves models with the precedence `LINEUP_CONFIG` (errors and aborts only when set but unreadable, or when `LINEUP_STRICT=1` and any declared checkpoint is missing; unset it to skip) → `SAFETENSORS_LINEUP_CONFIG` → `CHECKPOINT_PATH` → autodiscovery scan of the machine-local default root (configured in `examples/support/mod.rs`) for a hardcoded candidate list. Because validation runs before precedence resolution, a stale optional lineup can still abort the run even when a higher-priority config is the one used; unset optional lineups you are not actively using to avoid this. The autodiscovery root is a reference-repo convention only; do not copy it into a promoted crate unless you explicitly intend to maintain that machine-local scan.
 
-Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `tick_telemetry.txt`, `latent_telemetry.csv`, `run_manifest.json`, `summary.json`. `run_manifest.json` stamps the *actual* telemetry source (`synthetic`, `synthetic_fallback`, `csv_<stem>`) so degradation is visible instead of silent.
+Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `tick_telemetry.txt`, `latent_telemetry.csv`, `run_manifest.json`, `summary.json`. `run_manifest.json` stamps the *actual* telemetry source (`synthetic`, `synthetic_fallback`, `csv_<stem>`) so degradation is visible instead of silent. When the run came from `LINEUP_CONFIG`, it also stamps `lineup_declared_count` / `lineup_resolved_count` so a skip-and-continue drop is visible in the artifact, not only in stderr.
 
 ## Conventions
 
