@@ -1,0 +1,15 @@
+CLAUDE.md
+  ai_agent 33,37,47,51-52,92,106,110,112
+.env.example
+  ai_agent 82-91,93-99,109-113,142-145,182-187,200-226
+examples/support/mod.rs
+  ai_agent 9,126,308-311,321-322
+Cargo.lock
+  ai_agent 1335,1337,1398,1400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e3bf8f436943ff3cab54dd39fec4dd4a3400663c",
+  "prompts": {}
+}
