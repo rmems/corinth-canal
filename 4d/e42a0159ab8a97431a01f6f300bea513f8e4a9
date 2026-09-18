@@ -1,0 +1,37 @@
+tests/examples_support_spikenaut.rs
+  s_fb4995c0d68478::t_000091286ea048 119-127,134-148
+examples/support/spikenaut.rs
+  s_fb4995c0d68478::t_edb290c594f754 628-630
+  s_fb4995c0d68478::t_c498fee91d98a7 330-333,339
+  s_fb4995c0d68478::t_1baefa5fc72307 158,165,171
+  s_fb4995c0d68478::t_22deb73015c2cd 370-371
+  s_fb4995c0d68478::t_8bb7b10a477733 925-984
+  s_fb4995c0d68478::t_594aaec9c2a3e4 634-679
+  s_fb4995c0d68478::t_fe09c0d7e033d2 363
+  s_fb4995c0d68478::t_fca558c8eca139 240
+  s_fb4995c0d68478::t_57d373ad99e38e 559-565
+justfile
+  s_fb4995c0d68478::t_e0a09dd044325e 34,36-43
+examples/spikenaut_ingest.rs
+  s_fb4995c0d68478::t_0e3cc094eb705b 99
+  s_fb4995c0d68478::t_35c3f7ce6b2f17 199-207
+  s_fb4995c0d68478::t_68de25936beff3 169-174,181-182
+CLAUDE.md
+  s_fb4995c0d68478::t_24ced9d0f085f4 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4de42a0159ab8a97431a01f6f300bea513f8e4a9",
+  "prompts": {},
+  "sessions": {
+    "s_fb4995c0d68478": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "980b2370-129f-406a-ac21-d4d0867173c1",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
