@@ -25,21 +25,25 @@ struct RawFlags {
     output_root: Option<PathBuf>,
 }
 
-/// Collect process arguments as UTF-8 and validate path operands.
-#[allow(dead_code)] // used by the example binary; unused in the #[path] test
-pub fn from_os_args() -> Result<Cli, String> {
-    parse_argv(collect_utf8_argv()?)
+/// Split a kernel cmdline blob (`NUL`-terminated tokens, argv[0] first).
+pub fn tokens_from_cmdline(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    for raw in bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+    {
+        tokens.push(utf8_token(raw)?);
+    }
+    if tokens.is_empty() {
+        return Ok(tokens);
+    }
+    Ok(tokens.split_off(1))
 }
 
-fn collect_utf8_argv() -> Result<Vec<String>, String> {
-    std::env::args_os()
-        .skip(1)
-        .map(|token| {
-            token
-                .into_string()
-                .map_err(|_| "argument is not valid UTF-8".to_owned())
-        })
-        .collect()
+fn utf8_token(raw: &[u8]) -> Result<String, String> {
+    std::str::from_utf8(raw)
+        .map(str::to_owned)
+        .map_err(|_| "argument is not valid UTF-8".to_owned())
 }
 
 pub fn parse_argv<I, S>(argv: I) -> Result<Cli, String>
@@ -245,5 +249,18 @@ mod tests {
         assert!(user_path("").is_err());
         assert!(user_path("bad\0path").is_err());
         assert!(user_path("ok.jsonl").is_ok());
+    }
+
+    #[test]
+    fn tokens_from_cmdline_skips_argv0_and_rejects_non_utf8() {
+        assert_eq!(
+            tokens_from_cmdline(b"spikenaut_ingest\0in.jsonl\0--smoke\0").unwrap(),
+            vec!["in.jsonl", "--smoke"]
+        );
+        assert_eq!(tokens_from_cmdline(b"").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            tokens_from_cmdline(&[b'b', b'i', b'n', 0, 0xff]).unwrap_err(),
+            "argument is not valid UTF-8"
+        );
     }
 }
