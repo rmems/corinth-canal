@@ -45,7 +45,7 @@ spikenaut-ingest IN OUT='':
 # Convert JSONL and run a CPU dual-SAAQ (1.0 + 1.5) smoke with run_manifest.json.
 #   just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl
 spikenaut-smoke IN:
-    cargo run --example spikenaut_ingest --no-default-features -- {{IN}} --smoke
+    cargo run --example spikenaut_ingest --no-default-features -- "{{IN}}" --smoke
 
 # Full SAAQ latent calibration sweep using current .env.local values.
 saaq:

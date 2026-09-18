@@ -4,7 +4,7 @@
 use serde_json::{Map, Value};
 
 use super::domain::SpikenautDomain;
-use super::fields::{finite_field, first_finite, flatten_telemetry_object};
+use super::fields::{finite_field, first_finite, flatten_telemetry_object, snapshot_if_finite};
 use super::timestamp::timestamp_or_ordinal;
 
 /// Map one JSON object onto a snapshot. `ordinal` is the 0-based emitted-row
@@ -30,7 +30,7 @@ fn map_gpu(fields: &Map<String, Value>, ordinal: u64) -> Option<corinth_canal::T
     let gpu_power_w = first_finite(fields, &["power_w", "gpu_power_w"])?;
     let cpu_tctl_c = first_finite(fields, &["vram_temp_c", "cpu_tctl_c"])?;
     let cpu_package_power_w = first_finite(fields, &["mem_util_pct", "cpu_package_power_w"])?;
-    Some(corinth_canal::TelemetrySnapshot {
+    snapshot_if_finite(corinth_canal::TelemetrySnapshot {
         timestamp_ms: timestamp_or_ordinal(fields, ordinal),
         gpu_temp_c,
         gpu_power_w,
@@ -47,7 +47,7 @@ fn map_mining(
     let gpu_power_w = first_finite(fields, &["power_w", "gpu_power_w"])?;
     let hashrate_mh = finite_field(fields, "hashrate_mh")?;
     let reward_hint = finite_field(fields, "reward_hint")?;
-    Some(corinth_canal::TelemetrySnapshot {
+    snapshot_if_finite(corinth_canal::TelemetrySnapshot {
         timestamp_ms: timestamp_or_ordinal(fields, ordinal),
         gpu_temp_c,
         gpu_power_w,
@@ -62,7 +62,7 @@ fn map_hft(fields: &Map<String, Value>, ordinal: u64) -> Option<corinth_canal::T
     let trade_value_usdt = finite_field(fields, "trade_value_usdt")?;
     let cumulative_pnl = finite_field(fields, "cumulative_pnl")?;
     let price_usd = finite_field(fields, "price_usd")?;
-    Some(corinth_canal::TelemetrySnapshot {
+    snapshot_if_finite(corinth_canal::TelemetrySnapshot {
         timestamp_ms: timestamp_or_ordinal(fields, ordinal),
         // Axon-style affine surrogates: 1-unit move ≈ encoder threshold.
         gpu_temp_c: portfolio_value,
@@ -79,7 +79,7 @@ fn map_qubic(
     // Independent signals only. Never consume `*_derived` as if measured.
     let tick_trace = finite_field(fields, "qubic_tick_trace")?;
     let tick_rate = finite_field(fields, "tick_rate")?;
-    Some(corinth_canal::TelemetrySnapshot {
+    snapshot_if_finite(corinth_canal::TelemetrySnapshot {
         timestamp_ms: timestamp_or_ordinal(fields, ordinal),
         gpu_temp_c: tick_trace * 100.0,
         gpu_power_w: tick_rate * 400.0,
@@ -96,7 +96,7 @@ fn map_state(
     let gpu_power_w = first_finite(fields, &["power_w", "gpu_power_w"])?;
     let cpu_tctl_c = first_finite(fields, &["cpu_temp_c", "vram_temp_c"])?;
     let cpu_package_power_w = first_finite(fields, &["board_power_w", "cpu_util_pct"])?;
-    Some(corinth_canal::TelemetrySnapshot {
+    snapshot_if_finite(corinth_canal::TelemetrySnapshot {
         timestamp_ms: timestamp_or_ordinal(fields, ordinal),
         gpu_temp_c,
         gpu_power_w,
@@ -192,6 +192,17 @@ mod tests {
         assert!((snap.cpu_tctl_c - (70.0 - 19.088085)).abs() < 1e-3);
         assert!((snap.cpu_package_power_w - 700.0).abs() < 1e-3);
         assert!(snap.timestamp_ms > 1_000_000_000_000);
+    }
+
+    #[test]
+    fn hft_drops_overflowing_affine_channels() {
+        let obj = object(json!({
+            "price_usd": 1.0,
+            "trade_value_usdt": 3.4028235e38,
+            "cumulative_pnl": 0.0,
+            "portfolio_value": 1.0
+        }));
+        assert!(map_record(&obj, SpikenautDomain::Hft, 0).is_none());
     }
 
     #[test]
