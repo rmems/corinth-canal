@@ -96,6 +96,7 @@ fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             &run_dir,
             ingested.domain,
             Some(&args.output),
+            &args.output_root,
         )?;
         println!(
             "smoke run_id={} telemetry={} saaq_dual_emit={} latent_rows={} run_dir={}",
@@ -165,12 +166,20 @@ where
         }
     }
 
+    if positional.len() > 2 {
+        return Err(format!(
+            "unexpected extra argument '{}'",
+            positional[2].display()
+        ));
+    }
     let input = positional
         .first()
         .cloned()
         .ok_or_else(|| "missing <input.jsonl>".to_owned())?;
     let output = if let Some(path) = positional.get(1) {
         path.clone()
+    } else if smoke {
+        default_smoke_csv(&input, &output_root)
     } else {
         default_output_csv(&input)
     };
@@ -186,4 +195,13 @@ where
 
 fn default_output_csv(input: &Path) -> PathBuf {
     input.with_extension("csv")
+}
+
+fn default_smoke_csv(input: &Path, output_root: &Path) -> PathBuf {
+    let name = input
+        .file_stem()
+        .map(Path::new)
+        .unwrap_or_else(|| Path::new("spikenaut"))
+        .with_extension("csv");
+    output_root.join(name)
 }
