@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-//! Integration harness for `examples/support/spikenaut.rs`.
+//! Integration harness for `examples/support/spikenaut/`.
 //!
 //! Example targets do not run unit-test harnesses, so this `#[path]` include
 //! is what makes the ingest/mapping tests execute under
 //! `cargo test --no-default-features`.
 
-#[path = "../examples/support/spikenaut.rs"]
+#[path = "../examples/support/spikenaut/mod.rs"]
 mod spikenaut;
 #[path = "../examples/support/telemetry_csv.rs"]
 mod telemetry_csv;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use spikenaut::{
     SPIKENAUT_CSV_HEADER, SpikenautDomain, ingest_jsonl, run_dual_saaq_cpu_smoke,
@@ -33,6 +33,16 @@ fn scratch_dir() -> PathBuf {
     dir
 }
 
+fn unique_scratch(prefix: &str) -> PathBuf {
+    scratch_dir().join(format!(
+        "{prefix}_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
 #[test]
 fn ingest_header_matches_canonical_loader() {
     assert_eq!(SPIKENAUT_CSV_HEADER, TELEMETRY_CSV_HEADER);
@@ -53,13 +63,7 @@ fn ingest_gpu_fixture_drops_null_power_and_stamps_row_index() {
 #[test]
 fn ingest_gpu_csv_round_trips_through_canonical_loader() {
     let ingested = ingest_jsonl(&fixture("gpu_sample.jsonl"), None, None).unwrap();
-    let csv_path = scratch_dir().join(format!(
-        "spikenaut_gpu_{}.csv",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let csv_path = unique_scratch("spikenaut_gpu").with_extension("csv");
     write_canonical_csv(&csv_path, &ingested.rows).unwrap();
     let header = std::fs::read_to_string(&csv_path)
         .unwrap()
@@ -105,13 +109,7 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
         None,
     )
     .unwrap();
-    let run_dir = scratch_dir().join(format!(
-        "spikenaut_smoke_{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let run_dir = unique_scratch("spikenaut_smoke");
     let csv_path = run_dir.join("spikenaut_gpu.csv");
     std::fs::create_dir_all(&run_dir).unwrap();
     write_canonical_csv(&csv_path, &ingested.rows).unwrap();
@@ -125,6 +123,12 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
         &output_root,
     )
     .unwrap();
+    assert_smoke_manifest(&manifest, &output_root);
+    assert_dual_saaq_latent(&run_dir, 4);
+    let _ = std::fs::remove_dir_all(run_dir);
+}
+
+fn assert_smoke_manifest(manifest: &corinth_canal::ExperimentManifest, output_root: &Path) {
     assert!(manifest.saaq_dual_emit);
     assert_eq!(manifest.telemetry_source, "csv_spikenaut_gpu");
     assert_eq!(manifest.run_tag.as_deref(), Some("spikenaut_gpu"));
@@ -146,14 +150,22 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
         "created_at must be RFC3339 UTC, got {}",
         manifest.created_at
     );
+    let parsed: corinth_canal::ExperimentManifest = serde_json::from_str(
+        &std::fs::read_to_string(PathBuf::from(&manifest.run_dir).join("run_manifest.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(parsed.saaq_dual_emit);
+}
 
+fn assert_dual_saaq_latent(run_dir: &Path, expected_rows: usize) {
     let latent = std::fs::read_to_string(run_dir.join("latent_telemetry.csv")).unwrap();
     let mut lines = latent.lines();
     let header = lines.next().unwrap();
     assert!(header.contains("saaq_delta_q_legacy_target"));
     assert!(header.contains("saaq_delta_q_v15_target"));
     let data_rows: Vec<&str> = lines.filter(|line| !line.is_empty()).collect();
-    assert_eq!(data_rows.len(), 4);
+    assert_eq!(data_rows.len(), expected_rows);
     for row in data_rows {
         let cols: Vec<&str> = row.split(',').collect();
         assert_eq!(cols.len(), 14);
@@ -162,10 +174,4 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
         assert!(cols[12].parse::<f32>().is_ok());
         assert!(cols[13].parse::<f32>().is_ok());
     }
-
-    let parsed: corinth_canal::ExperimentManifest =
-        serde_json::from_str(&std::fs::read_to_string(run_dir.join("run_manifest.json")).unwrap())
-            .unwrap();
-    assert!(parsed.saaq_dual_emit);
-    let _ = std::fs::remove_dir_all(run_dir);
 }
