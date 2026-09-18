@@ -116,15 +116,36 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
     std::fs::create_dir_all(&run_dir).unwrap();
     write_canonical_csv(&csv_path, &ingested.rows).unwrap();
 
-    let manifest =
-        run_dual_saaq_cpu_smoke(&ingested.rows, &run_dir, ingested.domain, Some(&csv_path))
-            .unwrap();
+    let output_root = scratch_dir();
+    let manifest = run_dual_saaq_cpu_smoke(
+        &ingested.rows,
+        &run_dir,
+        ingested.domain,
+        Some(&csv_path),
+        &output_root,
+    )
+    .unwrap();
     assert!(manifest.saaq_dual_emit);
     assert_eq!(manifest.telemetry_source, "csv_spikenaut_gpu");
     assert_eq!(manifest.run_tag.as_deref(), Some("spikenaut_gpu"));
     assert_eq!(manifest.saaq_rule, "SaaqV1_5SqrtRate");
     assert_eq!(manifest.validation_status, "completed");
     assert_eq!(manifest.ticks, 4);
+    assert_eq!(manifest.output_root, output_root.to_string_lossy());
+    assert_eq!(
+        manifest.generated_files,
+        vec![
+            "run_manifest.json",
+            "summary.json",
+            "tick_telemetry.txt",
+            "latent_telemetry.csv",
+        ]
+    );
+    assert!(
+        manifest.created_at.ends_with('Z') && manifest.created_at.contains('T'),
+        "created_at must be RFC3339 UTC, got {}",
+        manifest.created_at
+    );
 
     let latent = std::fs::read_to_string(run_dir.join("latent_telemetry.csv")).unwrap();
     let mut lines = latent.lines();

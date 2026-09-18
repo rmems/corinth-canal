@@ -155,17 +155,20 @@ pub fn ingest_jsonl(
         }
         let line = raw?;
         if line.trim().is_empty() {
+            ordinal += 1;
             continue;
         }
         let value: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => {
                 skipped_malformed += 1;
+                ordinal += 1;
                 continue;
             }
         };
         let Some(object) = value.as_object() else {
             skipped_malformed += 1;
+            ordinal += 1;
             continue;
         };
         if domain.is_none() {
@@ -234,6 +237,7 @@ pub fn run_dual_saaq_cpu_smoke(
     run_dir: &Path,
     domain: SpikenautDomain,
     csv_path: Option<&Path>,
+    output_root: &Path,
 ) -> Result<corinth_canal::ExperimentManifest, Box<dyn std::error::Error>> {
     use corinth_canal::moe::{Router, RoutingMode};
     use corinth_canal::projector::{ProjectionMode, Projector};
@@ -323,16 +327,16 @@ pub fn run_dual_saaq_cpu_smoke(
         .unwrap_or("spikenaut_dual_saaq_smoke")
         .to_owned();
     let generated_files = vec![
-        manifest_path.to_string_lossy().into_owned(),
-        summary_path.to_string_lossy().into_owned(),
-        tick_path.to_string_lossy().into_owned(),
-        latent_path.to_string_lossy().into_owned(),
+        "run_manifest.json".to_owned(),
+        "summary.json".to_owned(),
+        "tick_telemetry.txt".to_owned(),
+        "latent_telemetry.csv".to_owned(),
     ];
 
     let manifest = ExperimentManifest {
         run_id: run_id.clone(),
         run_tag: Some(format!("spikenaut_{}", domain.as_str())),
-        created_at: format!("{:?}", std::time::SystemTime::now()),
+        created_at: format_system_time_rfc3339_utc(std::time::SystemTime::now()),
         repo: "corinth-canal".to_owned(),
         commit_sha: None,
         model_slug: "stub_olmoe".to_owned(),
@@ -356,17 +360,15 @@ pub fn run_dual_saaq_cpu_smoke(
         wraparound_loops: 0,
         ticks_effective: rows.len(),
         run_dir: run_dir.to_string_lossy().into_owned(),
-        output_root: run_dir
-            .parent()
-            .unwrap_or(run_dir)
-            .to_string_lossy()
-            .into_owned(),
+        output_root: output_root.to_string_lossy().into_owned(),
         repeat_idx: 0,
         repeat_count: 1,
         validation_status: "completed".to_owned(),
         error: None,
         routing_mode: Some("stub_uniform".to_owned()),
         projection_mode: Some("spiking_ternary".to_owned()),
+        lineup_declared_count: None,
+        lineup_resolved_count: None,
         generated_files,
     };
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
@@ -554,7 +556,13 @@ pub fn parse_timestamp_string(raw: &str) -> Option<u64> {
     let hour: u32 = s.get(11..13)?.parse().ok()?;
     let minute: u32 = s.get(14..16)?.parse().ok()?;
     let second: u32 = s.get(17..19)?.parse().ok()?;
-    if !(1..=12).contains(&month) || day == 0 || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
         return None;
     }
 
@@ -617,7 +625,56 @@ fn apply_tz_offset(unix_ms: i64, tz: &str) -> Option<i64> {
     } else {
         return None;
     };
+    if !(0..=23).contains(&hh) || !(0..=59).contains(&mm) {
+        return None;
+    }
     unix_ms.checked_sub(sign * (hh * 3_600_000 + mm * 60_000))
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+fn format_system_time_rfc3339_utc(now: std::time::SystemTime) -> String {
+    let dur = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+    let millis = dur.subsec_millis();
+    let days = i32::try_from(secs / 86_400).unwrap_or(0);
+    let tod = secs % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60,
+    )
+}
+
+/// Inverse of [`days_from_civil`] (Howard Hinnant).
+fn civil_from_days(z: i32) -> (i32, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = u32::try_from(z - era * 146_097).unwrap_or(0);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = i32::try_from(yoe).unwrap_or(0) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    (year, month, day)
 }
 
 /// Howard Hinnant's public-domain `days_from_civil`.
@@ -864,5 +921,65 @@ mod tests {
     #[test]
     fn parse_timestamp_refuses_chain_tag() {
         assert!(parse_timestamp_string("dynex:919876").is_none());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_nonexistent_calendar_dates() {
+        assert!(parse_timestamp_string("2026-02-30T12:00:00Z").is_none());
+        assert!(parse_timestamp_string("2026-04-31T12:00:00Z").is_none());
+        assert!(parse_timestamp_string("2026-02-29T12:00:00Z").is_none());
+        assert!(parse_timestamp_string("2024-02-29T12:00:00Z").is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_out_of_range_offsets() {
+        assert!(parse_timestamp_string("2026-03-19T12:00:00+99:99").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00+24:00").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00-00:60").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00+00:00").is_some());
+    }
+
+    #[test]
+    fn format_system_time_rfc3339_utc_epoch() {
+        assert_eq!(
+            format_system_time_rfc3339_utc(std::time::UNIX_EPOCH),
+            "1970-01-01T00:00:00.000Z"
+        );
+        assert_eq!(parse_timestamp_string("1970-01-01T00:00:00.000Z"), Some(0));
+    }
+
+    #[test]
+    fn ingest_advances_ordinal_past_blank_and_malformed_lines() {
+        let path = {
+            let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join(format!(
+                "spikenaut_ordinal_{}.jsonl",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::write(
+                &path,
+                concat!(
+                    "\n",
+                    "{not json}\n",
+                    "{\"hashrate_mh\":0.85,\"power_w\":375.8,\"gpu_temp_c\":80.0,\"reward_hint\":0.94,\"timestamp\":null}\n",
+                ),
+            )
+            .unwrap();
+            path
+        };
+        let ingested = ingest_jsonl(&path, Some(SpikenautDomain::Mining), None).unwrap();
+        assert_eq!(ingested.skipped_malformed, 1);
+        assert_eq!(ingested.rows.len(), 1);
+        assert_eq!(
+            ingested.rows[0].timestamp_ms, 2,
+            "blank + malformed must consume ordinals 0 and 1"
+        );
+        let _ = std::fs::remove_file(path);
     }
 }
