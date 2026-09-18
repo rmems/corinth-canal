@@ -133,9 +133,16 @@ fn time_in_range(civil: &CivilTime) -> bool {
 }
 
 fn frac_millis(frac: Option<&str>) -> Option<u32> {
-    let Some(frac) = frac.filter(|f| !f.is_empty()) else {
-        return Some(0);
-    };
+    match frac.filter(|part| !part.is_empty()) {
+        None => Some(0),
+        Some(part) => parse_frac_digits(part),
+    }
+}
+
+fn parse_frac_digits(frac: &str) -> Option<u32> {
+    if !frac.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     let mut digits = frac.chars().take(3).collect::<String>();
     while digits.len() < 3 {
         digits.push('0');
@@ -170,11 +177,23 @@ fn apply_tz_offset(unix_ms: i64, tz: &str) -> Option<i64> {
     if tz.is_empty() || tz.eq_ignore_ascii_case("Z") {
         return Some(unix_ms);
     }
-    let (hh, mm) = tz_hours_minutes(&tz[1..])?;
+    offset_from_signed_tz(unix_ms, tz)
+}
+
+fn offset_from_signed_tz(unix_ms: i64, tz: &str) -> Option<i64> {
+    let sign = tz_sign(tz)?;
+    let (hh, mm) = tz_hours_minutes(tz_offset_body(tz)?)?;
     if !offset_in_range(hh, mm) {
         return None;
     }
-    unix_ms.checked_sub(tz_sign(tz)? * (hh * 3_600_000 + mm * 60_000))
+    unix_ms.checked_sub(sign * (hh * 3_600_000 + mm * 60_000))
+}
+
+fn tz_offset_body(tz: &str) -> Option<&str> {
+    match tz.as_bytes().first() {
+        Some(b'+' | b'-') => tz.get(1..),
+        _ => None,
+    }
 }
 
 fn tz_sign(tz: &str) -> Option<i64> {
@@ -316,6 +335,17 @@ mod tests {
         assert!(parse_timestamp_string("2026-03-19T12:00:00+00junk").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+0000").is_some());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+00").is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_non_ascii_tz_suffix() {
+        assert!(parse_timestamp_string("2026-03-19T12:00:00💥").is_none());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_trailing_frac_garbage() {
+        assert!(parse_timestamp_string("2026-03-19T12:00:00.123junk").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00.380000").is_some());
     }
 
     #[test]

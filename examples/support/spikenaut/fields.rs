@@ -29,6 +29,23 @@ pub(super) fn first_finite(fields: &Map<String, Value>, keys: &[&str]) -> Option
     keys.iter().find_map(|key| finite_field(fields, key))
 }
 
+pub(super) fn snapshot_if_finite(
+    snap: corinth_canal::TelemetrySnapshot,
+) -> Option<corinth_canal::TelemetrySnapshot> {
+    channels_finite(&snap).then_some(snap)
+}
+
+fn channels_finite(snap: &corinth_canal::TelemetrySnapshot) -> bool {
+    [
+        snap.gpu_temp_c,
+        snap.gpu_power_w,
+        snap.cpu_tctl_c,
+        snap.cpu_package_power_w,
+    ]
+    .iter()
+    .all(|value| value.is_finite())
+}
+
 pub(super) fn integer_field(fields: &Map<String, Value>, key: &str) -> Option<u64> {
     match fields.get(key)? {
         Value::Number(n) => number_as_u64(n),
