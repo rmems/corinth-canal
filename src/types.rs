@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Public data types for `corinth-canal`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -141,10 +141,51 @@ impl CheckpointFormat {
     }
 }
 
+/// Infer [`CheckpointFormat`] from a checkpoint path without touching the
+/// filesystem.
+///
+/// This is the CPU-reachable counterpart of the GGUF vs Safetensors branch
+/// in `Router::probe_and_map`. That branch uses `Path::is_dir()`, which a
+/// unit test cannot exercise without a real checkpoint on disk. The
+/// heuristics here match how the two lineups actually name checkpoints:
+///
+/// * `.gguf` (any case) → [`CheckpointFormat::Gguf`]. GGUF lineups always
+///   point at a single file.
+/// * `.safetensors`, `*.safetensors.index.json`, a HF shard such as
+///   `model-00001-of-00003.safetensors`, or a path with no GGUF extension
+///   (HF model directories) → [`CheckpointFormat::Safetensors`].
+/// * Empty / whitespace-only → [`CheckpointFormat::Gguf`], matching
+///   [`ModelConfig::default`] used by the synthetic stub path.
+///
+/// Trailing separators are stripped so a directory path still classifies
+/// the same way with or without a final `/`.
+pub fn checkpoint_format_for_path(path: &str) -> CheckpointFormat {
+    let trimmed = path.trim().trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return CheckpointFormat::Gguf;
+    }
+    let file_name = Path::new(trimmed)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .or_else(|| trimmed.rsplit(['/', '\\']).find(|part| !part.is_empty()))
+        .unwrap_or(trimmed);
+    if Path::new(file_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+    {
+        CheckpointFormat::Gguf
+    } else {
+        CheckpointFormat::Safetensors
+    }
+}
+
 /// Top-level configuration for the hybrid quantization pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
     pub checkpoint_path: String,
+    /// Stamp written to `run_manifest.json`. Derived from
+    /// [`checkpoint_format_for_path`] at config construction; the loader
+    /// inspects the path independently and does not read this field.
     pub checkpoint_format: CheckpointFormat,
     pub model_family: Option<ModelFamily>,
     pub gpu_synapse_tensor_name: String,
@@ -394,9 +435,63 @@ impl CloudModelSpec {
 #[cfg(test)]
 mod tests {
     use super::{
-        CloudModelSpec, ModelArchitectureClass, ModelFamily, ModelTarget, ProjectionMode,
-        RoutingMode,
+        CheckpointFormat, CloudModelSpec, ModelArchitectureClass, ModelFamily, ModelTarget,
+        ProjectionMode, RoutingMode, checkpoint_format_for_path,
     };
+
+    #[test]
+    fn checkpoint_format_for_path_gguf_files_stay_gguf() {
+        for path in [
+            "model.gguf",
+            "MODEL.GGUF",
+            "dir/foo.Gguf",
+            "/abs/path/OLMoE-1B-7B-0125-Instruct-F16.gguf",
+            r"C:\models\ZAYA1-8B-Q8_0.gguf",
+            "Kimi-VL-A3B-Instruct-Q6_K.gguf/",
+        ] {
+            assert_eq!(
+                checkpoint_format_for_path(path),
+                CheckpointFormat::Gguf,
+                "expected Gguf for {path:?}"
+            );
+            assert_eq!(
+                checkpoint_format_for_path(path).as_str(),
+                "gguf",
+                "manifest stamp for {path:?}"
+            );
+        }
+        // Synthetic / unset path keeps ModelConfig::default's GGUF stamp.
+        assert_eq!(checkpoint_format_for_path(""), CheckpointFormat::Gguf);
+        assert_eq!(checkpoint_format_for_path("   "), CheckpointFormat::Gguf);
+    }
+
+    /// Safetensors lineups point at a single file, a shard, an HF index, or
+    /// a model directory. All of those must stamp `safetensors`, not inherit
+    /// `ModelConfig::default`'s GGUF (GH#196 / RM-1208).
+    #[test]
+    fn checkpoint_format_for_path_safetensors_lineup_shapes() {
+        for path in [
+            ".models/safetensors/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16/model.safetensors",
+            "model-00001-of-00003.safetensors",
+            "model.safetensors.index.json",
+            "MODEL.SAFETENSORS",
+            ".models/safetensors/lfm2-8b-a1b",
+            "/absolute/path/to/.models/safetensors/allenai/OLMoE-1B-7B-0125-Instruct",
+            "ibm-granite/granite-3.1-3b-a800m-base/",
+            r"D:\models\trinity-nano-base",
+        ] {
+            assert_eq!(
+                checkpoint_format_for_path(path),
+                CheckpointFormat::Safetensors,
+                "expected Safetensors for {path:?}"
+            );
+            assert_eq!(
+                checkpoint_format_for_path(path).as_str(),
+                "safetensors",
+                "manifest stamp for {path:?}"
+            );
+        }
+    }
 
     #[test]
     fn model_family_slug_covers_new_variants() {
