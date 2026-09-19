@@ -50,4 +50,16 @@ mod tests {
             PromptEmbeddingProvider::SyntheticFallback
         );
     }
+
+    #[test]
+    fn prompt_embedding_provider_maps_hash_and_synthetic_to_fallback() {
+        assert_eq!(
+            resolve_prompt_embedding_provider(Some("hash")),
+            PromptEmbeddingProvider::SyntheticFallback
+        );
+        assert_eq!(
+            resolve_prompt_embedding_provider(Some("synthetic")),
+            PromptEmbeddingProvider::SyntheticFallback
+        );
+    }
 }

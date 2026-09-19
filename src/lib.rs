@@ -115,7 +115,5 @@ pub use experiment::schema::{
     ModelAdapterConfig, RunEntry, RunMatrix,
 };
 
-pub mod tensor;
-
 // New folder name metric, came out of triple code duplication
 pub(crate) mod metric;

@@ -25,7 +25,9 @@ from benchmarks.models import (
 
 class BackendDetectionTests(unittest.TestCase):
     def test_detects_gguf_and_safetensors(self) -> None:
-        self.assertEqual(detect_backend({"path": "tiny.gguf", "source_format": "GGUF"}), "llama.cpp")
+        self.assertEqual(
+            detect_backend({"path": "tiny.gguf", "source_format": "GGUF"}), "llama.cpp"
+        )
         self.assertEqual(detect_backend({"path": "org/model", "source_format": "BF16"}), "vllm")
 
     def test_detects_suffixes_on_path_aliases(self) -> None:
@@ -36,11 +38,15 @@ class BackendDetectionTests(unittest.TestCase):
         self.assertEqual(detect_backend({"checkpoint_path": "ckpt.safetensors"}), "vllm")
 
     def test_explicit_runtime_wins(self) -> None:
-        manifest = {"path": "org/model", "source_format": "safetensors", "runtime_format": "transformers"}
+        manifest = {
+            "path": "org/model",
+            "source_format": "safetensors",
+            "runtime_format": "transformers",
+        }
         self.assertIsInstance(adapter_for_manifest(manifest), HuggingFaceAdapter)
 
     def test_unknown_metadata_has_actionable_error(self) -> None:
-        with self.assertRaisesRegex(ValueError, "runtime_format or source_format"):
+        with self.assertRaisesRegex(ValueError, "cannot detect inference backend"):
             detect_backend({"path": "model.bin"})
 
     def test_pathless_explicit_mock_manifest(self) -> None:
@@ -178,7 +184,9 @@ class OptionalBackendTests(unittest.TestCase):
     def test_generate_after_failed_load_is_unavailable(self) -> None:
         adapter = LlamaCppAdapter({"path": "tiny.gguf"})
         del adapter._mode
-        with mock.patch.object(adapter, "load", side_effect=BackendUnavailableError("missing runtime")):
+        with mock.patch.object(
+            adapter, "load", side_effect=BackendUnavailableError("missing runtime")
+        ):
             with self.assertRaises(BackendUnavailableError):
                 adapter.generate("prompt")
 
@@ -227,6 +235,132 @@ class PackageExportTests(unittest.TestCase):
             path = Path(tmp) / "manifest.json"
             path.write_text('{"runtime_format": "mock"}', encoding="utf-8")
             self.assertEqual(load_manifest(path)["runtime_format"], "mock")
+
+
+
+
+class DetectBackendProducerShapesTest(unittest.TestCase):
+    """`detect_backend` must accept what the Rust producers actually emit.
+
+    These are literal producer-shaped dicts, not adapter-shaped fixtures. The
+    previous implementation keyed off `runtime_format`, which nothing in this
+    repository writes, so every one of these raised ValueError.
+    """
+
+    def test_run_manifest_checkpoint_format_gguf(self):
+        # ExperimentManifest -> run_manifest.json
+        manifest = {"checkpoint_format": "gguf", "checkpoint_path": "/models/m.gguf"}
+        self.assertEqual(detect_backend(manifest), "llama.cpp")
+
+    def test_run_manifest_checkpoint_format_safetensors(self):
+        manifest = {"checkpoint_format": "safetensors", "checkpoint_path": "/models/dir"}
+        self.assertEqual(detect_backend(manifest), "vllm")
+
+    def test_run_matrix_source_format(self):
+        self.assertEqual(
+            detect_backend({"source_format": "gguf", "path": "/models/m.gguf"}),
+            "llama.cpp",
+        )
+
+    def test_model_adapter_config_format_and_loader_hint(self):
+        # ModelAdapterConfig carries `format` and `loader_hint`; every entry on
+        # disk sets loader_hint to an artifact format, not a runtime name.
+        entry = {
+            "model_family": "olmoe",
+            "model_id_or_local_path": "/models/olmoe",
+            "format": "safetensors",
+            "loader_hint": "safetensors",
+        }
+        self.assertEqual(detect_backend(entry), "vllm")
+
+    def test_runtime_format_still_overrides_artifact_metadata(self):
+        manifest = {
+            "runtime_format": "vllm",
+            "checkpoint_format": "gguf",
+            "path": "/models/m.gguf",
+        }
+        self.assertEqual(detect_backend(manifest), "vllm")
+
+    def test_custom_artifact_still_resolves_from_a_path_suffix(self):
+        # Raising as soon as custom_artifact is seen would reject manifests
+        # that previously resolved via the path.
+        manifest = {"source_format": "custom_artifact", "path": "/models/m.gguf"}
+        self.assertEqual(detect_backend(manifest), "llama.cpp")
+
+    def test_sglang_is_named_as_unsupported(self):
+        # Documented in the loader_hint domain of model_adapter_configs.toml
+        # but has no adapter here.
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend({"loader_hint": "sglang", "path": "/models/x"})
+        self.assertIn("sglang", str(ctx.exception))
+        self.assertIn("no adapter", str(ctx.exception))
+
+    def test_unrecognised_values_are_echoed_in_the_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend({"source_format": "mystery", "path": "model.bin"})
+        message = str(ctx.exception)
+        self.assertIn("mystery", message)
+        self.assertIn("source_format", message)
+
+    def test_custom_artifact_gets_an_explanatory_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend({"source_format": "custom_artifact", "path": "/models/x"})
+        self.assertIn("custom_artifact", str(ctx.exception))
+        self.assertIn("runtime_format", str(ctx.exception))
+
+    def test_unknown_metadata_names_the_fields_it_looked_at(self):
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend({"path": "/models/mystery.bin.xz"})
+        message = str(ctx.exception)
+        self.assertIn("checkpoint_format", message)
+        self.assertIn("runtime_format", message)
+
+
+class HuggingFaceAdapterBehaviourTest(unittest.TestCase):
+    """`HuggingFaceAdapter.load`/`generate` were only assertIsInstance-checked.
+
+    Both `trust_remote_code` call sites and the prompt-stripping decode had no
+    behavioural coverage, unlike the llama.cpp and vLLM adapters.
+    """
+
+    def test_trust_remote_code_reaches_both_from_pretrained_calls(self):
+        calls = {}
+
+        tokenizer = mock.MagicMock()
+        encoded = mock.MagicMock()
+        encoded.to.return_value = encoded
+        encoded.__getitem__.return_value = [[1, 2, 3]]
+        tokenizer.return_value = encoded
+        tokenizer.decode.return_value = "the prompt and then the completion"
+        tokenizer.eos_token_id = 0
+
+        model = mock.MagicMock()
+        model.generate.return_value = [[1, 2, 3, 4]]
+        model.device = "cpu"
+
+        def tok_from_pretrained(path, **kwargs):
+            calls["tokenizer"] = kwargs
+            return tokenizer
+
+        def model_from_pretrained(path, **kwargs):
+            calls["model"] = kwargs
+            return model
+
+        stub = types.ModuleType("transformers")
+        stub.AutoTokenizer = mock.MagicMock()
+        stub.AutoTokenizer.from_pretrained = tok_from_pretrained
+        stub.AutoModelForCausalLM = mock.MagicMock()
+        stub.AutoModelForCausalLM.from_pretrained = model_from_pretrained
+
+        with mock.patch.dict(sys.modules, {"transformers": stub}):
+            adapter = HuggingFaceAdapter(
+                {"model_id_or_local_path": "/models/x", "format": "safetensors"},
+                trust_remote_code=True,
+            )
+            adapter.load()
+
+        self.assertTrue(calls["tokenizer"].get("trust_remote_code"))
+        self.assertTrue(calls["model"].get("trust_remote_code"))
 
 
 if __name__ == "__main__":

@@ -27,8 +27,14 @@ latent calibration runs.
 | — | `llama_3_2_dark_champion_q5_k_m` | Dark-Champion/Llama-3.2-8X3B-MOE | LlamaMoe | Q5_K_M |
 | MET-50 | `zaya1_8b_q8_0` | Abiray/ZAYA1-8B | Zaya | Q8_0 |
 | MET-51 | `glm46v_flash_q8_0` | unsloth/GLM-4.6V-Flash | Glm4 | Q8_0 |
-| MET-53 | `kimi_vl_a3b_q6_k` | ssweens/Kimi-VL-A3B-Instruct | DeepSeek2 | Q6_K |
+| MET-53 | `kimi_vl_a3b_q6_k` | ssweens/Kimi-VL-A3B-Instruct | Moonlight16BA3B | Q6_K |
 | MET-54 | `marco_nano_base_q8_0` | mradermacher/Marco-Nano-Base | Qwen3Moe | Q8_0 |
+
+Kimi-VL-A3B (MET-53) is Moonshot's Moonlight-16B-A3B language decoder, not
+DeepSeek-Coder. llama.cpp GGUF packages set `general.architecture =
+deepseek2` because there is no moonlight GGUF architecture; that packaging
+tag is not the `ModelFamily`. `infer_family` maps Kimi/Moonlight filenames to
+`Moonlight16BA3B` and leaves a bare `deepseek2` arch as `DeepSeek2`.
 
 ### Batch B — Local safetensors manifest inspection
 

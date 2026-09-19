@@ -58,7 +58,13 @@ The latent telemetry CSV includes both SAAQ trajectories via
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including
-  `synthetic_fallback` when CSV replay degrades.
+  `synthetic_fallback` when CSV replay degrades. When the run came from
+  `LINEUP_CONFIG`, it also stamps `lineup_declared_count` /
+  `lineup_resolved_count` so a skipped checkpoint is visible in the artifact.
+- `LINEUP_STRICT=1` aborts when any declared GGUF lineup entry fails to
+  resolve, naming each missing slug and path. Unset / false keeps
+  skip-and-continue. `just saaq-campaign` sets it so the two campaign
+  phases cannot silently run different model sets.
 - `PROJECTION_MODE` selects the projector the same way `ROUTING_MODE`
   selects the router. Unset / blank keeps `SpikingTernary`. Accepted
   values: `RateSum`, `TemporalHistogram`, `MembraneSnapshot`,
@@ -97,12 +103,16 @@ Systems, Nsight Compute, and DCGM commands, lives in `docs/CUDA_VALIDATION.md`.
 | Profile | Command |
 |---------|---------|
 | Probe preferred synapse tensor selection only | `just synapse-diag` |
+| Same probe, fail the process on any row error | `just synapse-diag-strict` |
 
 `examples/synapse_diagnostic.rs` is the cheapest way to explain why a checkpoint
-selected `real`, `dequantized-q8_0`, `dequantized-q5_k`, or
-`synthetic-fallback`. It does not run SAAQ ticks or bring up the GPU temporal
-loop; it only loads the GGUF metadata and the preferred synapse tensor facts
-that drive `src/moe/adapter.rs::resolve_adapter`.
+selected any of the eight sources — `real`, `dequantized-q8_0`,
+`dequantized-q5_k`, `dequantized-q6_k`, `dequantized-iq3_m`,
+`dequantized-int4`, `routing-f32` or `synthetic-fallback`. It does not run SAAQ ticks or bring up the GPU temporal
+loop; it only loads checkpoint metadata and the preferred synapse tensor facts
+that drive the adapter. It goes through `Router::load_with_family_and_mode`,
+which dispatches on the path, so it covers safetensors directories as well as
+GGUF files — including the `dequantized-int4` source, which is safetensors-only.
 
 The console line reports both:
 
@@ -116,7 +126,11 @@ field shows `dequantized-q8_0`, that is expected: the adapter branches on the
 actual `ggml_type` of `blk.0.attn_q.weight`, not on the filename suffix.
 
 The example also writes `<output_root>/synapse_diagnostic.json` for a structured
-record of the same fields.
+record of the same fields. Probe failures land on the row as `error` rather
+than aborting the loop. `just synapse-diag` keeps that non-fatal so
+exploratory probing can inspect a mixed lineup; `just synapse-diag-strict`
+(`SYNAPSE_DIAG_STRICT=1`) exits non-zero when any row has `error: Some(_)`.
+An empty resolved-model list always exits non-zero, even without the flag.
 
 ## Cloud model lineup
 
@@ -137,7 +151,11 @@ Each cloud entry carries:
 - `target` — always `"cloud"`
 - `architecture` — `"moe"` or `"dense"`
 - `active_params` / `total_params` — informational parameter counts
-- `provider_format` — expected runtime format (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`, `fp8-safetensors`)
+- `provider_format` — expected runtime format. Either an API protocol the
+  provider speaks (`nvcf-nim`, `openai-compat`, `vertex-ai`, `watsonx-saas`) or
+  a weights format downloaded and run on our own GPU (`safetensors`,
+  `fp8-safetensors`); every shipped entry is the latter. No code validates it;
+  `cloud_lineup_shipped_inventory_parses` asserts the set
 - `required_env_vars` — env var names that must be set for execution
 
 `CLOUD_LINEUP_CONFIG` parsing and cloud execution guards currently live in
@@ -150,7 +168,7 @@ consume cloud lineup config directly.
 |---------|---------|
 | Inspect a single Safetensors checkpoint | `cargo run --example safetensors_manifest --no-default-features -- <checkpoint-or-dir> artifacts/safetensors_manifest.json` |
 
-The safetensors lineup template (`configs/safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
+The safetensors lineup template (`configs/local_safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
 currently uses positional CLI arguments for single-checkpoint inspection.
 
 Local entries onboarded:
@@ -201,13 +219,24 @@ timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w
 ## Model discovery
 
 If `CHECKPOINT_PATH` is unset, `saaq_latent_calibration` auto-discovers
-up to five MoE families under `$HOME/Downloads/SNN_Quantization/`:
+checkpoints under `$HOME/Downloads/SNN_Quantization/`. The candidate list is
+hardcoded in `examples/support/mod.rs::discover_validation_models` — **consult
+that array rather than this list**, which is a snapshot and has drifted before.
+As of this writing it holds eleven entries, by slug:
 
-- `olmoe-0125-gguf/OLMoE-1B-7B-0125-Instruct-F16.gguf`
-- `models/qwen3-moe-i1-GGUF/qwen3-moe.i1-IQ3_M.gguf`
-- `models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-IQ4_NL.gguf`
-- `models/DeepSeek-Coder-V2-Lite-Instruct-GGUF/DeepSeek-Coder-V2-Lite-Instruct-Q6_K_L.gguf`
-- `models/Llama-3.2-8X3B-MOE-Dark-Champion-GGUF/L3.2-8X3B-MOE-Dark-Champion-Inst-18.4B-uncen-ablit_D_AU-q5_k_m.gguf`
+`olmoe_baseline`, `qwen3_moe_i1_iq3_m`, `gemma4_26b_a4b_iq4_nl`,
+`deepseek_coder_v2_lite_q6_k_l`, `llama_3_2_dark_champion_q5_k_m`,
+`zaya1_8b_q8_0`, `glm46v_flash_q8_0`, `kimi_vl_a3b_q6_k`,
+`marco_nano_base_q8_0`, `moonlight_16b_a3b_q4_k_m`,
+`granite_3_1_3b_a800m_q4_k_m`.
+
+Not all of them are MoE. `glm46v_flash_q8_0` is a **dense** checkpoint with no
+`expert_count`, so `resolve_gguf_topology` rejects it (`src/moe/adapter.rs:201`)
+and any sweep that reaches it aborts. That is why `just saaq-campaign` requires
+an explicit `LINEUP_CONFIG` rather than falling through to this scan, and why
+the recipe also sets `LINEUP_STRICT=1`: skip-and-continue on missing
+checkpoints would let the two phases run different model sets and still
+report success.
 
 This discovery root is a machine-local convention on the author's Fedora
 box. CI and contributor machines should set `CHECKPOINT_PATH`

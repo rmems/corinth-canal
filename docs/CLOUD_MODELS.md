@@ -12,12 +12,32 @@ LLM-models-onboarding branch.*
 
 ## Configuration
 
-Cloud model metadata lives in `configs/saaq15_cloud_lineup.toml`. Helper
+Cloud model metadata lives in `configs/saaq_cloud_lineup.toml`. Helper
 parsing/validation lives in `examples/support/mod.rs` and can be referenced via:
 
+> **Note:** the checked-in `saaq_cloud_lineup.toml` is an inventory stub. None
+> of its 15 entries declare `required_env_vars`, so `cloud_execution_guard`
+> has nothing to check and returns success for every entry — the
+> provider-unavailable fail-fast described below cannot be reproduced from
+> this file as it stands. Its slugs (`glm47_flash_cloud`,
+> `deepseek_v4_flash_cloud`, …) are also not the MET-55–64 set tabulated
+> below. Add `required_env_vars` per entry to exercise the guard.
+
 ```bash
-CLOUD_LINEUP_CONFIG=configs/saaq15_cloud_lineup.toml
+CLOUD_LINEUP_CONFIG=configs/saaq_cloud_lineup.toml \
+  cargo run --release --example saaq_latent_calibration
 ```
+
+`saaq_latent_calibration` is `required-features = ["cuda"]`, so that command
+needs a CUDA toolchain. The CPU-runnable check of the shipped file is:
+
+```bash
+cargo test --no-default-features cloud_lineup
+```
+
+Prefixing `cargo test` with `CLOUD_LINEUP_CONFIG` proves nothing: the parse
+tests write their own temporary TOML. The shipped inventory is checked by
+`cloud_lineup_shipped_inventory_parses`, which loads this file directly.
 
 ## Cloud model entries
 
@@ -51,8 +71,11 @@ Main runner integration for cloud lineup metadata is intentionally separate.
 
 ## Required env vars by provider
 
-Every cloud model entry declares the env var names it needs. Values are
-never stored in corinth-canal configs or artifacts.
+The table below gives the env var names a cloud entry **would** declare per
+provider format. It is a convention for future entries, not a description of
+the shipped lineup: as noted above, no checked-in entry declares
+`required_env_vars` today. Values are never stored in corinth-canal configs
+or artifacts.
 
 | Provider format | Required env vars (example names) |
 |-----------------|-----------------------------------|

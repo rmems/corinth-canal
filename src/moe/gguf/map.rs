@@ -20,11 +20,27 @@ use std::slice;
 
 #[derive(Debug)]
 pub(in crate::moe) struct MappedGgufCheckpoint {
-    mmap: MmapMut,
-    tensors: HashMap<String, GgufTensorInfo>,
+    // `registered_gpu_synapse` holds a CUDA host-registration over pages owned
+    // by `mmap`, so `cuMemHostUnregister` must run while the mapping is still
+    // valid. Declaration order below puts it first, but the explicit `Drop`
+    // impl is what actually guarantees it: a future field reorder or refactor
+    // would otherwise silently reintroduce unregister-after-munmap.
     #[cfg(feature = "cuda")]
     registered_gpu_synapse: Option<RegisteredTensorSliceU16>,
+    mmap: MmapMut,
+    tensors: HashMap<String, GgufTensorInfo>,
     metadata: GgufMetadata,
+}
+
+#[cfg(feature = "cuda")]
+impl Drop for MappedGgufCheckpoint {
+    fn drop(&mut self) {
+        // Release the CUDA host-registration before `mmap` is dropped, so the
+        // pages are still mapped when `cuMemHostUnregister` runs. Taking the
+        // Option drops the registration here rather than relying on field
+        // declaration order.
+        self.registered_gpu_synapse.take();
+    }
 }
 
 pub(in crate::moe) fn extract_named_token_embedding_from_checkpoint(
