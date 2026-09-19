@@ -175,6 +175,8 @@ jobs:
           if [ "${avail_kb}" -lt "${threshold_kb}" ]; then
             echo "::warning::$((avail_kb / 1048576)) GiB free (below 20 GiB); clearing target/ before build."
             { cargo clean || rm -rf target; } || true
+61
+
             df -Ph . || true
           fi
       - run: |
