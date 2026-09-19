@@ -17,7 +17,7 @@ just setup                                   # scaffolding sanity check; warns i
 cargo check --all-targets --no-default-features
 cargo test --no-default-features
 cargo fmt --all -- --check
-cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code   # CI's exact lint gate
+cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code # CI's exact lint gate
 ```
 
 On a CUDA box with `nvcc`, `just check` / `just test` exercise the default feature set, and `cargo build --examples` becomes meaningful.
@@ -117,7 +117,7 @@ Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `
 - Commit style is conventional-commits with issue refs, e.g. `refactor(moe): split checkpoint.rs into private gguf/ modules (GH#118 PR-4) (#128)`. Keep behavioral changes separate from structural refactors.
 - Prefer `git` CLI over MCP tools for branch/PR operations here. All work stays in the repo root — no extra worktrees.
 - Task tracking goes through **beads** (`bd create` / `bd ready` / `bd close`), not TodoWrite or markdown TODO lists; `bd remember` holds cross-session notes. Run `bd prime` to reload that context. A session is not finished until changes are committed *and* pushed.
-- CI passes `--locked`, so a `Cargo.lock` that drifts from `Cargo.toml` fails the build before any test runs.
+- CI passes `--locked` on clippy (the first cargo graph resolution) as well as the later test/check/coverage steps, so a `Cargo.lock` that drifts from `Cargo.toml` fails the hosted job before any test runs. Fork PRs only run that hosted job.
 
 ## Code quality tooling
 
@@ -127,6 +127,6 @@ Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `
 
 ## CI
 
-GitHub Actions is primary: `ci.yml` (CPU — fmt, clippy, `cargo test --lib --no-default-features`, `cargo check --examples`, llvm-cov → Codecov; then a self-hosted Ryzen job with a fork guard), `gpu-tests.yml` (CUDA ≥ 13.2 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
+GitHub Actions is primary: `ci.yml` (CPU — fmt, clippy `--locked`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --locked`, llvm-cov → Codecov; then a self-hosted Ryzen job with a fork guard), `gpu-tests.yml` (CUDA ≥ 13.2 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
 
 Note the split in test scope: the hosted job runs only `--lib`, so `tests/` and example-target tests are exercised solely by the Ryzen job (`cargo test --all-targets --no-default-features --locked`), which is skipped for fork PRs. Run `--all-targets` locally before pushing rather than trusting the hosted job.

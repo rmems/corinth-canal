@@ -58,8 +58,13 @@ jobs:
       - name: Benchmark adapter unit tests
         run: python -m unittest discover -s benchmarks/tests -v
 
-      - name: Lint 
-        run: cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code
+      - name: Lint
+        # --locked must be on this step: it is the first cargo command that
+        # resolves the graph. Without it, clippy repairs a stale Cargo.lock
+        # and the later --locked test/check/coverage steps have nothing to
+        # fail on. Fork PRs only run this hosted job (the Ryzen job is
+        # fork-guarded), so this is the lockfile gate they actually get.
+        run: cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code
 
       - name: Build library (CPU-only)
         run: cargo test --lib --no-default-features --locked -- --nocapture

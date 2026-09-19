@@ -202,6 +202,7 @@ Sanitizer, Nsight Systems, Nsight Compute, and DCGM diagnostics, see
 
 ## Notes
 
+- See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting.
 - CPU-only buildability is preserved.
 - CUDA/GPU behavior is preserved behind the `cuda` feature.
 - Machine-local checkpoint discovery under `$HOME/Downloads/SNN_Quantization`
