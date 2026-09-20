@@ -101,8 +101,9 @@ pub use funnel::{
     SparseGifHiddenLayer, TelemetryFunnel,
 };
 pub use latent::{
+    SAAQ_TAU_ANCHORS, SAAQ_TAU_FALLBACK, SAAQ_TAU_RANGE, SaaqTauMap, SaaqTauMapEntry,
     SaaqUpdateRule, SnnDualLatentCalibrator, SnnLatentCalibrator, SnnLatentCsvExporter,
-    SnnLatentSnapshot,
+    SnnLatentSnapshot, saaq_delta_q_to_gif_threshold, saaq_tau_entry, write_saaq_tau_map,
 };
 pub use telemetry::TelemetryEncoder;
 pub use types::{
