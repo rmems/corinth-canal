@@ -1,0 +1,109 @@
+src/latent.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 225-226,296-425,628-687
+src/gpu/wrappers/accelerator.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 373-374,530-537,608,832-834
+configs/hybrid_moe_lineup.toml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1,3-11
+src/experiment/schema.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 71-80,318-362,405-435
+docs/MODULE_STATUS.md
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 17,25-28
+docs/RUN_PROFILES.md
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 61-67,106,109-115,129-133,154-158,171,222-239
+examples/support/config.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 19,24-28,71-80,99-100,104,115,121-123,160-164,257-274,277-279,286-287,289-304,307,314-324,336,339-349,351,378-382
+.github/dependabot.yml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-18
+configs/local_gguf_lineup.template.toml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-60
+examples/support/embedding.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 53-64
+examples/synapse_diagnostic.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 11-17,30,198-213
+benchmarks/models.py
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 16-18,328-331,340-343,557-592,594-602,604-607,609-648,650-652,654-658
+SECURITY.md
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-26
+benchmarks/tests/test_models.py
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 28-30,41-45,49,187-189,240-363
+docs/model_lineup.md
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 30,33-37
+examples/csv_replay.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 138
+examples/support/synapse_diag.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-192
+src/moe/gguf/metadata.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 13-20,182-194,336-346,367,379-483
+examples/saaq_latent_calibration.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 205-209,288-289,405,671-672
+src/moe/tests.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 8,163,2384-2392
+src/types.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 4,144-181,186-188,438-439,442-494
+.claude/settings.example.json
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-52
+Cargo.toml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 11-12,16,22-33,39-43
+tests/examples_support_lineup.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 7-8,203-482
+tests/examples_support_observability.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-12
+tests/examples_support_synapse_diag.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-10
+examples/support/lineup.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 4-6,12-13,235-391
+src/lib.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 104,106
+.gitignore
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 26-27,67-72
+pyproject.toml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-46
+.github/workflows/gpu-tests.yml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 64,66,80,82-91
+src/gpu/wrappers/kernel.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 284-300
+examples/support/observability.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 285,294-467,469-471,735-741,859-876,880,1029-1143
+docs/PROMOTION_RULES.md
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 24-34
+.github/workflows/ci.yml
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 47-57,59,61-67,75-112
+examples/support/telemetry_csv.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 33-36,380,391,405,423
+src/moe/gguf/map.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 23-27,30-31,35-43
+src/moe/adapter.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 12,48-53,64,667-670,776-814,831-835,1042-1092
+src/moe/mod.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 12,77,760-767
+src/model/temporal.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 12-30,32-34,192-212,214-216,219-235,263-266,371-374,389-473
+examples/gpu_smoke_test.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 119
+examples/support/mod.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 8,52-55,66,70,126,308-311,321-322
+tests/env_example_surface.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 1-108
+src/moe/gguf/dequant.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 55-63,81-88,267-283,289-386
+src/moe/gguf/cuda_register.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 119-125
+src/projector.rs
+  s_e4b0c80a3a66d2::t_b9a7a8c2d54816 16,28,47-68,78-82,146-151,154,431-513
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5b96c3f6acb35bac07ec1472ee5177c459c882bf",
+  "prompts": {},
+  "sessions": {
+    "s_e4b0c80a3a66d2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c5ac-3d5d-76a1-af49-4713015e7720",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
