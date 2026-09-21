@@ -8,25 +8,39 @@ license = "Apache-2.0 OR MIT"
 keywords = ["neuromorphic", "snn", "llm", "moe", "hybrid", "spiking"]
 categories = ["science", "algorithms"]
 readme = "README.md"
+# The benchmarks/ Python package is a development tool, not part of the crate.
+exclude = ["benchmarks/**", "pyproject.toml"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
+thiserror = "2.0"
 cust = { version = "0.3.2", optional = true }
-anyhow = { version = "1", features = ["backtrace"] }
 tracing = "0.1"
 memmap2 = "0.9"
 libc = "0.2"
 serde_json = "1.0"
-sentry = { version = "0.48.1", default-features = false, features = ["backtrace", "panic", "anyhow", "transport", "reqwest", "rustls"] }
-# Force rustls to use ring instead of aws-lc-rs to avoid C compilation dependencies
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# `rustls-no-provider` rather than `rustls`: sentry's `rustls` feature turns on
+# `reqwest/rustls`, which is defined as `__rustls-aws-lc-rs` and drags in
+# aws-lc-sys (a BoringSSL C/asm build). `rustls-no-provider` selects the same
+# TLS stack but leaves the CryptoProvider to us — the pinned `rustls` below
+# supplies ring. See `cargo tree -i aws-lc-rs`, which must stay empty.
+# `anyhow` is omitted: no crate code uses it, and sentry's anyhow integration
+# would re-pull the crate solely for an unused `From<anyhow::Error>` impl.
+sentry = { version = "0.48.1", default-features = false, features = ["backtrace", "panic", "transport", "reqwest", "rustls-no-provider"] }
+# Force rustls to use ring instead of aws-lc-rs to avoid C compilation dependencies.
+# Floor is 0.23.45 for RUSTSEC-2026-0285 (TLS 1.3 handshake messages accepted
+# across encryption-level boundaries in 0.23.13..=0.23.44).
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 
 [dev-dependencies]
 dotenvy = "0.15"
 opentelemetry = "0.32.0"
 opentelemetry_sdk = "0.32.0"
-opentelemetry-otlp = { version = "0.32.0", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
+# `reqwest-rustls` is deliberately absent: opentelemetry-http defines it as
+# `reqwest/default-tls`, which is `reqwest/rustls`, which is
+# `__rustls-aws-lc-rs`. The exporter still has TLS — sentry's `transport`
+# feature enables `reqwest/native-tls` for the whole graph.
+opentelemetry-otlp = { version = "0.32.0", features = ["http-proto", "reqwest-blocking-client"] }
 toml    = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 

@@ -44,17 +44,71 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Benchmark adapter unit tests
-        run: python3 -m unittest discover -s benchmarks/tests -v
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
 
-      - name: Lint 
-        run: cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code
+      - name: Install Python lint tooling
+        run: python -m pip install --disable-pip-version-check 'ruff==0.15.14'
+
+      - name: Lint benchmarks (ruff)
+        run: ruff check benchmarks
+
+      - name: Benchmark adapter unit tests
+        run: python -m unittest discover -s benchmarks/tests -v
+
+      - name: Lint
+        # --locked must be on this step: it is the first cargo command that
+        # resolves the graph. Without it, clippy repairs a stale Cargo.lock
+        # and the later --locked test/check/coverage steps have nothing to
+        # fail on. Fork PRs only run this hosted job (the Ryzen job is
+        # fork-guarded), so this is the lockfile gate they actually get.
+        run: cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code
 
       - name: Build library (CPU-only)
         run: cargo test --lib --no-default-features --locked -- --nocapture
 
       - name: Check examples (CPU-only)
         run: cargo check --examples --no-default-features --locked
+
+      - name: Assert ring-only TLS (no aws-lc-rs)
+        run: |
+          set +e -u
+          # Cargo.toml pins rustls to the ring backend to avoid aws-lc-sys, a
+          # BoringSSL C/asm build. That pin is defeated silently by feature
+          # unification: any dependency enabling `reqwest/rustls` (defined as
+          # `__rustls-aws-lc-rs`) drags aws-lc-rs back in for the whole graph,
+          # with no error and no lockfile conflict. It reached main once
+          # already.
+          #
+          # `cargo tree -i <pkg>` exits 0 when the package is in the graph and
+          # non-zero when it is absent — but also non-zero for a manifest,
+          # lockfile, or registry failure. Treating every non-zero exit as
+          # "absent" would let a broken build silently pass this guard, so
+          # both halves are checked explicitly:
+          #   1. ring must be present, which proves the graph resolved at all;
+          #   2. aws-lc-rs must be absent *for the stated reason*, matched on
+          #      cargo's "did not match any packages" message.
+          # Anything else fails the step loudly rather than passing it quietly.
+          if ! cargo tree -i ring --no-default-features >/dev/null 2>&1; then
+            echo "::error::Could not resolve ring in the dependency graph. Either the ring pin in Cargo.toml is gone, or cargo failed to resolve the graph at all — in both cases the aws-lc-rs check below cannot be trusted."
+            cargo tree -i ring --no-default-features
+            exit 1
+          fi
+          aws_lc_tree=$(cargo tree -i aws-lc-rs --no-default-features 2>&1)
+          aws_lc_rc=$?
+          if [ "${aws_lc_rc}" -eq 0 ]; then
+            echo "::error::aws-lc-rs is back in the dependency graph; the ring pin in Cargo.toml has been defeated by feature unification."
+            cargo tree -i aws-lc-rs -e features --no-default-features || true
+            exit 1
+          fi
+          if ! printf '%s\n' "${aws_lc_tree}" | grep -q 'did not match any packages'; then
+            echo "::error::cargo tree failed for a reason other than aws-lc-rs being absent (exit ${aws_lc_rc}); cannot confirm ring-only TLS."
+            printf '%s\n' "${aws_lc_tree}"
+            exit 1
+          fi
+          echo "ring-only TLS confirmed: ring resolves, aws-lc-rs is absent from the graph."
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2
@@ -72,12 +126,6 @@ jobs:
           files: lcov.info
           fail_ci_if_error: true
           verbose: true
-
-      - name: Aikido and Sentry Health Check (triggered via MCP in agent for PR; step for GHA)
-        if: always()
-        run: |
-          echo "Repo health check via Aikido MCP (full_scan on CI files: no issues found)."
-          echo "Sentry: observability script is gitignored (per chore d1d02c8, not present in CI checkouts). Full trigger via agent MCP or protected runs with secrets. See updated AGENTS.md."
 
   cpu-tests-ryzen:
     name: CPU Heavy (Self-hosted Ryzen)

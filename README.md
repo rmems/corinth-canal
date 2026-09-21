@@ -58,28 +58,44 @@ The model-loading interface is custom to this repository.
   - real `F16`
   - dequantized `Q8_0`
   - dequantized `Q5_K`
-  - synthetic fallback
+  - dequantized `Q6_K`
+  - dequantized `IQ3_M`
+  - dequantized `INT4` (safetensors backend)
+  - `routing-f32` (GGUF fallback when no preferred tensor matched)
+  - `synthetic-fallback`
+
+  These eight strings are what land in `synapse_source()` and the diagnostics
+  JSON. `src/lib.rs` documents the priority order; treat it as the source of
+  truth rather than duplicating the list again.
 
 Supported families in code:
 
-- `Olmoe`
-- `Qwen3Moe`
-- `Gemma4`
-- `DeepSeek2`
-- `LlamaMoe`
-- `Zaya`
-- `Glm4`
+The `ModelFamily` enum in `src/types.rs` is the list — 21 variants at the time
+of writing, including `Olmoe`, `Qwen3Moe`, `Gemma4`, `DeepSeek2`, `LlamaMoe`,
+`Zaya`, `Glm4`, `Moonlight16BA3B`, `Granite31A800M`, `Nemotron`, `Lfm2Moe`,
+`SlimMoe`, `GptOss`, `Step`, `MiniMax`, `Cohere`, `Grin`, `Skyworks`,
+`Trinity`, `Grok` and `NemotronLegacy` — the last being a serde-only back-compat alias (`nemotron3nano4b`) with no human-facing name of its own. Consult the enum rather than this paragraph: prose lists
+here have drifted before, and `ModelFamily::from_alias` is the authority.
 
 ### Model onboarding and cloud lineup
 
-- `configs/local_gguf_lineup.template.toml` — GGUF lineup template for SAAQ 1.5
-  (copy to the gitignored `configs/local_gguf_lineup.toml` and fill in real paths)
+- `configs/local_gguf_lineup.template.toml` — GGUF lineup template; copy to the
+  gitignored `configs/local_gguf_lineup.toml` and fill in your own paths
+- `configs/hybrid_moe_lineup.toml` — hybrid-MoE safetensors lineup. Reference
+  data: its paths are repo-relative under `.models/`, which no checkout
+  provides, so pointing `SAFETENSORS_LINEUP_CONFIG` at it as-is resolves no
+  models. Copy it and substitute real paths
 - `configs/saaq_cloud_lineup.toml` — cloud model metadata stubs (execution
-  delegated to Dioscuri-Cloud). Note that no shipped entry currently declares
-  `required_env_vars`, so the fail-fast credential guard has nothing to check
-  — see `docs/MODEL_SOURCE_VERIFICATION_CHECKLIST.md`
-- `configs/local_safetensors_lineup.template.toml` — safetensors lineup template for
-  manifest inspection (header-only, no tensor payload reads)
+  delegated to Dioscuri-Cloud). An **unguarded** inventory: none of its entries
+  declare `required_env_vars`, so `cloud_execution_guard` has nothing to check
+  and succeeds for all of them. See `docs/CLOUD_MODELS.md`
+- `configs/local_safetensors_lineup.template.toml` — shareable safetensors lineup
+  template for manifest inspection (header-only, no tensor payload reads); copy
+  it to the gitignored `configs/safetensors_lineup.toml`
+- `configs/model_adapter_configs.toml` — static per-family adapter policy
+  metadata. Reference material only: no code loads this file. `RunMatrix`
+  deserializes `[[run]]` entries and nothing else, so editing these policies
+  does not change validation behaviour
 - `docs/CLOUD_MODELS.md` — cloud model delegation model and provider reference
 - `docs/model_lineup.md` — rollout batch structure and required metadata
 
@@ -186,6 +202,7 @@ Sanitizer, Nsight Systems, Nsight Compute, and DCGM diagnostics, see
 
 ## Notes
 
+- See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting.
 - CPU-only buildability is preserved.
 - CUDA/GPU behavior is preserved behind the `cuda` feature.
 - Machine-local checkpoint discovery under `$HOME/Downloads/SNN_Quantization`

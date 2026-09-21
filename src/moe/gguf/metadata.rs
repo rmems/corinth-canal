@@ -10,6 +10,14 @@ use super::super::ggml::{
 use crate::error::{HybridError, Result};
 use std::collections::HashMap;
 
+/// Maximum nesting depth for GGUF metadata ARRAY values.
+///
+/// `skip_value` recurses once per nesting level, so a crafted file with deeply
+/// nested arrays would exhaust the stack. A stack overflow aborts the process
+/// with SIGSEGV, which no `Result` can intercept — the bound has to be here.
+/// Real checkpoints nest at most one level (arrays of strings or scalars).
+const MAX_VALUE_NESTING: usize = 8;
+
 #[derive(Debug, Clone)]
 pub(in crate::moe) struct GgufTensorInfo {
     pub(in crate::moe) dims: Vec<usize>,
@@ -171,8 +179,19 @@ pub(in crate::moe) fn parse_checkpoint_layout(
     }
 
     let tensor_data_offset = align_up(cursor.offset, alignment);
-    for tensor in tensors.values_mut() {
-        tensor.absolute_offset = tensor_data_offset + tensor.relative_offset;
+    for (name, tensor) in tensors.iter_mut() {
+        // `relative_offset` comes straight out of the file, so this addition is
+        // attacker-influenced: an unchecked `+` panics in debug and wraps into a
+        // plausible in-bounds offset in release.
+        tensor.absolute_offset = tensor_data_offset
+            .checked_add(tensor.relative_offset)
+            .ok_or_else(|| HybridError::ModelLoad {
+                path: path.into(),
+                reason: format!(
+                    "tensor '{name}' offset overflows: data start {tensor_data_offset} + relative {}",
+                    tensor.relative_offset
+                ),
+            })?;
     }
 
     Ok(ParsedCheckpointLayout {
@@ -314,6 +333,17 @@ impl<'a> GgufCursor<'a> {
     }
 
     fn skip_value(&mut self, value_type: u32, path: &str) -> Result<()> {
+        self.skip_value_depth(value_type, path, 0)
+    }
+
+    fn skip_value_depth(&mut self, value_type: u32, path: &str, depth: usize) -> Result<()> {
+        // `depth` is 0-based for the outermost value, so `>=` admits exactly
+        // MAX_VALUE_NESTING levels. `>` admitted one more than documented.
+        if depth >= MAX_VALUE_NESTING {
+            return Err(HybridError::UnsupportedFormat(format!(
+                "GGUF metadata array nesting exceeds {MAX_VALUE_NESTING} levels"
+            )));
+        }
         match value_type {
             GGUF_VALUE_TYPE_UINT8 | GGUF_VALUE_TYPE_INT8 | GGUF_VALUE_TYPE_BOOL => {
                 self.read_exact(1, path)?;
@@ -334,7 +364,7 @@ impl<'a> GgufCursor<'a> {
                 let nested_type = self.read_u32(path)?;
                 let len = self.read_u64(path)? as usize;
                 for _ in 0..len {
-                    self.skip_value(nested_type, path)?;
+                    self.skip_value_depth(nested_type, path, depth + 1)?;
                 }
             }
             _ => {
@@ -344,5 +374,112 @@ impl<'a> GgufCursor<'a> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+
+    /// Build a GGUF header whose single metadata value is an ARRAY nested
+    /// `depth` levels deep. Before the depth bound this recursed once per
+    /// level and a large depth aborted the process with SIGSEGV.
+    fn gguf_with_nested_array(depth: usize) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"GGUF");
+        buf.extend_from_slice(&3u32.to_le_bytes()); // version
+        buf.extend_from_slice(&0u64.to_le_bytes()); // tensor_count
+        buf.extend_from_slice(&1u64.to_le_bytes()); // kv_count
+
+        let key = b"deep";
+        buf.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        buf.extend_from_slice(key);
+        buf.extend_from_slice(&GGUF_VALUE_TYPE_ARRAY.to_le_bytes());
+
+        // Each level: nested element type, then length 1.
+        for _ in 0..depth {
+            buf.extend_from_slice(&GGUF_VALUE_TYPE_ARRAY.to_le_bytes());
+            buf.extend_from_slice(&1u64.to_le_bytes());
+        }
+        // Innermost element is a single u8.
+        buf.extend_from_slice(&GGUF_VALUE_TYPE_UINT8.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.push(0);
+        buf
+    }
+
+    #[test]
+    fn deeply_nested_metadata_arrays_are_rejected_not_overflowed() {
+        let bytes = gguf_with_nested_array(4096);
+        // `ParsedCheckpointLayout` is not `Debug`, so match rather than unwrap.
+        match parse_checkpoint_layout(&bytes, "crafted.gguf") {
+            Ok(_) => panic!("deeply nested array must be rejected"),
+            Err(err) => assert!(
+                err.to_string().contains("nesting exceeds"),
+                "unexpected error: {err}"
+            ),
+        }
+    }
+
+    #[test]
+    fn nesting_bound_admits_exactly_max_value_nesting_levels() {
+        // `depth` is 0-based, so the guard must reject at MAX_VALUE_NESTING,
+        // not MAX_VALUE_NESTING + 1. Previously nine levels were accepted.
+        // `gguf_with_nested_array(n)` yields n + 1 recursion levels: the KV
+        // value itself is the outermost ARRAY, then n nested ones.
+        let deepest_ok = MAX_VALUE_NESTING - 2;
+        let accepted = gguf_with_nested_array(deepest_ok);
+        assert!(
+            parse_checkpoint_layout(&accepted, "ok.gguf").is_ok(),
+            "{} nested levels must be accepted",
+            deepest_ok
+        );
+
+        let rejected = gguf_with_nested_array(deepest_ok + 1);
+        match parse_checkpoint_layout(&rejected, "too-deep.gguf") {
+            Ok(_) => panic!("{} nested levels must be rejected", deepest_ok + 1),
+            Err(err) => assert!(
+                err.to_string().contains("nesting exceeds"),
+                "unexpected error: {err}"
+            ),
+        }
+    }
+
+    #[test]
+    fn tensor_offset_overflow_is_rejected() {
+        // `relative_offset` is read from the file, so `data_start + relative`
+        // is attacker-influenced. Unchecked it panics in debug and wraps into a
+        // plausible in-bounds offset in release.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"GGUF");
+        buf.extend_from_slice(&3u32.to_le_bytes()); // version
+        buf.extend_from_slice(&1u64.to_le_bytes()); // tensor_count
+        buf.extend_from_slice(&0u64.to_le_bytes()); // kv_count
+
+        let name = b"blk.0.attn_q.weight";
+        buf.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        buf.extend_from_slice(name);
+        buf.extend_from_slice(&1u32.to_le_bytes()); // n_dims
+        buf.extend_from_slice(&4u64.to_le_bytes()); // dim[0]
+        buf.extend_from_slice(&0u32.to_le_bytes()); // ggml_type F32
+        buf.extend_from_slice(&u64::MAX.to_le_bytes()); // relative_offset
+
+        match parse_checkpoint_layout(&buf, "overflow.gguf") {
+            Ok(_) => panic!("overflowing tensor offset must be rejected"),
+            Err(err) => assert!(
+                err.to_string().contains("overflow"),
+                "unexpected error: {err}"
+            ),
+        }
+    }
+
+    #[test]
+    fn shallow_nesting_still_parses() {
+        // One level of nesting is what real checkpoints use.
+        let bytes = gguf_with_nested_array(1);
+        assert!(
+            parse_checkpoint_layout(&bytes, "ok.gguf").is_ok(),
+            "single-level nesting must still be accepted"
+        );
     }
 }

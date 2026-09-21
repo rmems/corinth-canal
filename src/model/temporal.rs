@@ -9,12 +9,29 @@ use super::{
 use crate::funnel::active_neuron_indices;
 use crate::gpu::{GpuAccelerator, GpuError, GpuResult};
 use crate::types::{ModelOutput, TelemetrySnapshot};
+
+/// Cache identity for the all-zero synthetic synapse matrix.
+///
+/// Real and dequantized signatures already include [`crate::moe::Router::model_path`].
+/// The synthetic fallback must too: [`GpuAccelerator::ensure_temporal_state`]
+/// only reallocates when `neuron_count` changes, so a cached
+/// `synthetic-f32::{neuron_count}` would otherwise make a later mapped model
+/// skip real synapse loading and the zero-drive warning (GH#191 / RM-1000).
+///
+/// The empty-path form keeps the historical stub key so the same synthetic
+/// model can reuse weights across ticks without a format change.
+fn synthetic_fallback_signature(model_path: &str, neuron_count: usize) -> String {
+    if model_path.is_empty() {
+        format!("synthetic-f32::{neuron_count}")
+    } else {
+        format!("synthetic-f32::{model_path}::{neuron_count}")
+    }
+}
+
 impl Model {
-    /// GPU-only temporal simulation with GIF (Generalized Integrate-and-Fire).
-    /// Phase 1: reset + load_synapse_weights + project_snapshot_current
-    /// Phase 2: gif_step_weighted_tick (with adaptation, dynamic threshold, weighted synapses)
-    /// Downloads membrane + adaptation; uses existing projector (GIF-compatible via SpikingTernary).
-    /// Fails fast with GpuError::NoGpu if GPU unavailable (no CPU fallback).
+    /// Allocate resident GPU temporal buffers, load synapse weights, and reset state.
+    /// Snapshot projection happens later in [`Self::forward_gpu_temporal`].
+    /// Fails fast with [`GpuError::NoGpu`] if GPU is unavailable (no CPU fallback).
     pub fn prepare_gpu_temporal(&mut self, accelerator: &mut GpuAccelerator) -> GpuResult<()> {
         let neuron_count = self.projector.input_neurons();
         accelerator.ensure_temporal_state(neuron_count)?;
@@ -172,10 +189,50 @@ impl Model {
             return Ok(());
         }
 
-        let fallback_signature = format!("synthetic-f32::{neuron_count}");
+        // Nothing above produced weights, so the GIF layer is about to run with
+        // an all-zero synapse matrix — i.e. zero recurrent drive.
+        //
+        // The signal for whether that is expected is whether a checkpoint is
+        // mapped at all, NOT the declared `synapse_source`. Two reasons:
+        //
+        //  - `resolve_safetensors_adapter` assigns `SyntheticFallback` to
+        //    successfully-mapped float-dtype (F16/BF16/F32) checkpoints,
+        //    because the GPU synapse loader only handles GGUF-registered
+        //    tensors today. Those are exactly the zero-drive-with-a-real-
+        //    checkpoint runs worth flagging, and they declare the synthetic
+        //    source.
+        //  - Conversely, every accessor above returns `Some` only when the
+        //    declared source matches its own quantization, so an adapter
+        //    declaring a non-synthetic source always has exactly one loadable
+        //    tensor: the chain either loads or errors. Keying the warning off
+        //    the declared source would make it unreachable.
+        //
+        // `model_path` is empty only for the synthetic stub constructor.
+        let fallback_signature =
+            synthetic_fallback_signature(self.router.model_path(), neuron_count);
         if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
+            // Already resident. Return before logging: this helper runs on
+            // every prepare/tick/forward call, and logging here would repeat
+            // the same line once per tick for the whole run.
             return Ok(());
         }
+
+        if self.router.model_path().is_empty() {
+            tracing::debug!(
+                neuron_count,
+                "no checkpoint mapped; using the synthetic all-zero synapse matrix"
+            );
+        } else {
+            tracing::warn!(
+                declared_synapse_source = self.router.synapse_source(),
+                neuron_count,
+                "a checkpoint is mapped but no GPU synapse weights could be loaded; \
+                 falling back to an all-zero synapse matrix. This run completes with \
+                 zero recurrent drive while run_manifest.json still names the \
+                 declared source."
+            );
+        }
+
         let synthetic_weights = vec![0.0f32; neuron_count * neuron_count];
         accelerator.load_synapse_weights_named(&fallback_signature, &synthetic_weights)?;
         Ok(())
@@ -196,7 +253,6 @@ impl Model {
             Some(n) => n.to_owned(),
             None => return Ok(false),
         };
-        let fallback_signature = format!("synthetic-f32::{neuron_count}");
         let signature = format!(
             "dequantized-{label}::{}::{tensor_name}",
             self.router.model_path()
@@ -204,9 +260,10 @@ impl Model {
         if accelerator.synapse_signature() == Some(signature.as_str()) {
             return Ok(true);
         }
-        if accelerator.synapse_signature() == Some(fallback_signature.as_str()) {
-            return Ok(false);
-        }
+        // Never treat a resident synthetic fallback as "this dequant is
+        // unavailable". That signature may belong to a previous model that
+        // shared `neuron_count` (GH#191 / RM-1000). If this checkpoint names
+        // a dequant tensor, load it.
         let weights = get_weights(&self.router, &tensor_name)
             .map_err(|e| GpuError::MemoryError(format!("{label} dequantization failed: {e}")))?;
         let (src_rows, src_cols) = self
@@ -311,7 +368,10 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::Model;
+    use super::{Model, synthetic_fallback_signature};
+    use crate::gpu::{GpuAccelerator, GpuContext};
+    use crate::moe::write_test_q8_0_olmoe_checkpoint;
+    use crate::types::ModelConfig;
 
     #[test]
     fn resample_weights_to_square_preserves_square_grid() {
@@ -325,5 +385,91 @@ mod tests {
         let src = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
         let out = Model::resample_weights_to_square(&src, 2, 2, 4);
         assert_eq!(out, vec![0.0, 3.0, 4.0, 7.0]);
+    }
+
+    #[test]
+    fn synthetic_fallback_signature_is_model_specific() {
+        let neuron_count = 32;
+        let stub = synthetic_fallback_signature("", neuron_count);
+        let mapped_a = synthetic_fallback_signature("/tmp/olmoe-a.gguf", neuron_count);
+        let mapped_b = synthetic_fallback_signature("/tmp/olmoe-b.gguf", neuron_count);
+
+        assert_eq!(stub, "synthetic-f32::32");
+        assert_ne!(stub, mapped_a);
+        assert_ne!(mapped_a, mapped_b);
+        assert!(mapped_a.contains("/tmp/olmoe-a.gguf"));
+        // The GH#191 skip: a mapped model must not treat the stub's cached
+        // key as its own fallback, even at the same neuron_count.
+        assert_ne!(mapped_a, format!("synthetic-f32::{neuron_count}"));
+    }
+
+    #[test]
+    fn q8_0_fixture_selects_dequantized_synapse_source() {
+        let path = write_test_q8_0_olmoe_checkpoint("gh191-fixture");
+        let model = Model::new_with_projector_neurons(
+            ModelConfig {
+                checkpoint_path: path.to_string_lossy().into_owned(),
+                ..ModelConfig::default()
+            },
+            32,
+        )
+        .expect("Q8_0 olmoe fixture must load");
+        assert_eq!(model.synapse_source(), "dequantized-q8_0");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reused_accelerator_loads_mapped_synapse_after_synthetic() {
+        if !GpuContext::is_available() {
+            return;
+        }
+        let mut accelerator = GpuAccelerator::new();
+        if !accelerator.is_ready() {
+            eprintln!("skipping GH#191 reuse test: GPU accelerator is not ready");
+            return;
+        }
+
+        let neuron_count = 32;
+        let mut synthetic = Model::new_with_projector_neurons(ModelConfig::default(), neuron_count)
+            .expect("synthetic model should construct");
+        synthetic
+            .prepare_gpu_temporal(&mut accelerator)
+            .expect("synthetic prepare should load the all-zero fallback");
+        assert_eq!(
+            accelerator.synapse_signature(),
+            Some(synthetic_fallback_signature("", neuron_count).as_str())
+        );
+
+        let path = write_test_q8_0_olmoe_checkpoint("gh191-reuse");
+        let mut mapped = Model::new_with_projector_neurons(
+            ModelConfig {
+                checkpoint_path: path.to_string_lossy().into_owned(),
+                ..ModelConfig::default()
+            },
+            neuron_count,
+        )
+        .expect("mapped Q8_0 model should construct");
+        assert_eq!(mapped.synapse_source(), "dequantized-q8_0");
+
+        mapped
+            .prepare_gpu_temporal(&mut accelerator)
+            .expect("mapped prepare should load real dequant weights");
+        let signature = accelerator
+            .synapse_signature()
+            .expect("mapped prepare must record a synapse signature");
+        assert!(
+            signature.starts_with("dequantized-q8_0::"),
+            "expected dequant signature after reuse, got {signature}"
+        );
+        assert!(
+            signature.contains("blk.0.attn_q.weight"),
+            "expected attn_q tensor in signature, got {signature}"
+        );
+        assert!(
+            !signature.starts_with("synthetic-f32::"),
+            "mapped model must not reuse the synthetic fallback cache, got {signature}"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }

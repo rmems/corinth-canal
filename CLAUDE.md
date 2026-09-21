@@ -17,7 +17,7 @@ just setup                                   # scaffolding sanity check; warns i
 cargo check --all-targets --no-default-features
 cargo test --no-default-features
 cargo fmt --all -- --check
-cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code   # CI's exact lint gate
+cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code # CI's exact lint gate
 ```
 
 On a CUDA box with `nvcc`, `just check` / `just test` exercise the default feature set, and `cargo build --examples` becomes meaningful.
@@ -30,10 +30,11 @@ cargo test --lib --no-default-features -- --nocapture
 cargo test --no-default-features --test examples_support_lineup     # #[path] into examples/support/lineup.rs
 cargo test --no-default-features --test examples_support_telemetry  # #[path] into examples/support/telemetry_csv.rs
 cargo test --no-default-features --test examples_support_embedding  # #[path] into examples/support/embedding.rs
+cargo test --no-default-features --test examples_support_synapse_diag  # #[path] into examples/support/synapse_diag.rs
 cargo test --test gpu_sentry_telemetry            # default features; whole file is #[cfg(feature = "cuda")]
 ```
 
-Unit tests live in `#[cfg(test)] mod tests` inside each `src/` file (two are split out: `src/moe/tests.rs`, `src/moe/safetensors/tests.rs`). `tests/` holds integration files that reach into `examples/support/*.rs` via `#[path]`: `examples_support_lineup`, `examples_support_telemetry`, `examples_support_embedding`. Those extracted-file tests run under self-hosted / local `--all-targets` (and plain `cargo test --no-default-features` locally); hosted PR CI is `--lib` only, so only library unit tests such as `ModelFamily::from_alias` run on every PR.
+Unit tests live in `#[cfg(test)] mod tests` inside each `src/` file (two are split out: `src/moe/tests.rs`, `src/moe/safetensors/tests.rs`). `tests/` holds integration files that reach into `examples/support/*.rs` via `#[path]`: `examples_support_lineup`, `examples_support_telemetry`, `examples_support_embedding`, `examples_support_synapse_diag`. Those extracted-file tests run under self-hosted / local `--all-targets` (and plain `cargo test --no-default-features` locally); hosted PR CI is `--lib` only, so only library unit tests such as `ModelFamily::from_alias` run on every PR.
 
 Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --lcov --output-path lcov.info`.
 
@@ -43,10 +44,11 @@ Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --
 
 ```bash
 just saaq                          # primary SAAQ latent calibration loop
-just saaq-csv                      # forces TELEMETRY_SOURCE=csv (TELEMETRY_CSV_PATH overrides; defaults to ./telemetry.csv)
+TELEMETRY_CSV_PATH=/path just saaq-csv   # forces TELEMETRY_SOURCE=csv (defaults to ./telemetry.csv)
 just saaq-campaign                 # 2-phase synthetic + csv baseline campaign
 CHECKPOINT_PATH=/path/model.gguf just smoke   # direct GPU temporal smoke path
 just synapse-diag                  # print preferred GPU synapse tensor + ggml_type per model
+just synapse-diag-strict           # same probe; non-zero if any row has error (or none run)
 just replay /path/telemetry.csv
 just clean-artifacts
 ```
@@ -85,7 +87,7 @@ Module boundaries worth knowing before editing:
 | `src/moe/safetensors.rs` + `safetensors/` | header inspection + manifest generation, plus `MappedSafetensorsCheckpoint` token-embedding extraction and `safetensors_gate_scores` runtime routing |
 | `src/experiment/schema.rs` | `RunMatrix` / `ExperimentManifest` / `ExperimentSummary` — the TOML matrix + `run_manifest.json` schemas the `validate_*` examples check |
 | `src/types.rs` | `TelemetrySnapshot`, `ModelFamily`, `RoutingMode`, `ProjectionMode`, `CloudModelSpec`, `EMBEDDING_DIM` |
-| `src/tensor/mod.rs`, `src/metric.rs` | tiny shared helpers (`Tensor = Vec<f32>`, dot, MSE); `metric` is `pub(crate)` |
+| `src/metric.rs` | tiny shared helper (MSE); `metric` is `pub(crate)` |
 | `examples/support/config.rs` | the env-truth surface; see boundary rule below |
 
 ### Invariants that are easy to break
@@ -96,13 +98,16 @@ Module boundaries worth knowing before editing:
 - **`ModelFamily` has 21 variants** (`src/types.rs`), including `Moonlight16BA3B`, `Granite31A800M`, `Nemotron`/`NemotronLegacy` (serde alias `Nemotron3Nano4B`), `Lfm2Moe`, `SlimMoe`, `GptOss`, `Step`, `MiniMax`, `Cohere`, `Grin`, `Skyworks`, `Trinity`, `Grok`. Read the enum — every prose list is stale: `src/lib.rs`'s doc comment names five, `README.md` names seven.
 - **Do not change CSV schemas** (`latent_telemetry.csv`, the routing telemetry header, canonical telemetry CSV header) unless the task says so. Do not silently change what `src/lib.rs` re-exports.
 - **Sentry/OTel stay disabled when `SENTRY_DSN` / `NR_INSERT_KEY` is blank.** When credentials are unset, no client is created, no network call is made, and the run continues. Wrappers attach the safe fields (`repo`, `command`, `git_sha`, `run_id`, `model_slug`, `telemetry_source`, `validation_status`, `error_category`, `prompt_profile`, `saaq_rule`) and avoid absolute checkpoint or artifact paths. `run_id` is also set as an OTel span attribute.
-- **`configs/` filenames.** The files on disk are `hybrid_moe_lineup.toml`, `local_gguf_lineup.toml` (gitignored; copy from `local_gguf_lineup.template.toml`), `local_safetensors_lineup.template.toml`, `model_adapter_configs.toml`, and `saaq_cloud_lineup.toml` (`safetensors_lineup.toml` is a gitignored local copy created from the template). The old `saaq15_*` names were repaired across the `justfile`, `.env.example` and `docs/` — check `configs/` before quoting a path in new prose. `just saaq-campaign` now falls back to `configs/local_gguf_lineup.toml`, which is machine-local, so it still needs that file to exist or `LINEUP_CONFIG` set.
+- **`configs/` contents.** Five files are tracked as of this writing — `hybrid_moe_lineup.toml`, `local_gguf_lineup.template.toml`, `local_safetensors_lineup.template.toml`, `model_adapter_configs.toml`, `saaq_cloud_lineup.toml` — but list the directory rather than trusting this sentence; it has drifted before. Docs and the `justfile` long cited `saaq15_moe_lineup.toml`, `saaq15_cloud_lineup.toml` and `safetensors_lineup.template.toml`, none of which existed; those are corrected, so check `configs/` before reintroducing a path.
+- **Template files are copied, not edited in place.** The two `*.template.toml` files become gitignored local names (`local_gguf_lineup.toml`, `safetensors_lineup.toml`) carrying machine paths. AGENTS.md forbids committing local absolute paths, so those copies should stay untracked — `git add -f` on one is how nine `/home/raulmc/...` paths reached the repo previously.
+- **`model_adapter_configs.toml` is reference metadata that no code loads.** `RunMatrix` deserializes `[[run]]` only, so editing its policies changes no validation behaviour.
+- **`just saaq-campaign` requires `LINEUP_CONFIG`** and checks it before phase 1. Defaulting it is wrong (set-but-unloadable is a hard error) and so is letting it fall through: autodiscovery's candidate list includes the dense `glm46v_flash_q8_0`, which `resolve_gguf_topology` rejects for missing `expert_count`, aborting the sweep. A baseline campaign also needs its model set pinned to stay comparable across phases. The recipe sets `LINEUP_STRICT=1` so a declared-but-missing checkpoint aborts rather than silently shrinking coverage.
 
 ### Model selection precedence (examples only)
 
-`RunConfig::from_env` validates any optional lineups that are set (`CLOUD_LINEUP_CONFIG`, `SAFETENSORS_LINEUP_CONFIG`) before resolving model precedence. It resolves models with the precedence `LINEUP_CONFIG` (errors and aborts only when set but unreadable; unset it to skip) → `SAFETENSORS_LINEUP_CONFIG` → `CHECKPOINT_PATH` → autodiscovery scan of the machine-local default root (configured in `examples/support/mod.rs`) for a hardcoded candidate list. Because validation runs before precedence resolution, a stale optional lineup can still abort the run even when a higher-priority config is the one used; unset optional lineups you are not actively using to avoid this. The autodiscovery root is a reference-repo convention only; do not copy it into a promoted crate unless you explicitly intend to maintain that machine-local scan.
+`RunConfig::from_env` validates any optional lineups that are set (`CLOUD_LINEUP_CONFIG`, `SAFETENSORS_LINEUP_CONFIG`) before resolving model precedence. It resolves models with the precedence `LINEUP_CONFIG` (errors and aborts only when set but unreadable, or when `LINEUP_STRICT=1` and any declared checkpoint is missing; unset it to skip) → `SAFETENSORS_LINEUP_CONFIG` → `CHECKPOINT_PATH` → autodiscovery scan of the machine-local default root (configured in `examples/support/mod.rs`) for a hardcoded candidate list. Because validation runs before precedence resolution, a stale optional lineup can still abort the run even when a higher-priority config is the one used; unset optional lineups you are not actively using to avoid this. The autodiscovery root is a reference-repo convention only; do not copy it into a promoted crate unless you explicitly intend to maintain that machine-local scan.
 
-Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `tick_telemetry.txt`, `latent_telemetry.csv`, `run_manifest.json`, `summary.json`. `run_manifest.json` stamps the *actual* telemetry source (`synthetic`, `synthetic_fallback`, `csv_<stem>`) so degradation is visible instead of silent.
+Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `tick_telemetry.txt`, `latent_telemetry.csv`, `run_manifest.json`, `summary.json`. `run_manifest.json` stamps the *actual* telemetry source (`synthetic`, `synthetic_fallback`, `csv_<stem>`) so degradation is visible instead of silent. When the run came from `LINEUP_CONFIG`, it also stamps `lineup_declared_count` / `lineup_resolved_count` so a skip-and-continue drop is visible in the artifact, not only in stderr.
 
 ## Conventions
 
@@ -112,7 +117,7 @@ Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `
 - Commit style is conventional-commits with issue refs, e.g. `refactor(moe): split checkpoint.rs into private gguf/ modules (GH#118 PR-4) (#128)`. Keep behavioral changes separate from structural refactors.
 - Prefer `git` CLI over MCP tools for branch/PR operations here. All work stays in the repo root — no extra worktrees.
 - Task tracking goes through **beads** (`bd create` / `bd ready` / `bd close`), not TodoWrite or markdown TODO lists; `bd remember` holds cross-session notes. Run `bd prime` to reload that context. A session is not finished until changes are committed *and* pushed.
-- CI passes `--locked`, so a `Cargo.lock` that drifts from `Cargo.toml` fails the build before any test runs.
+- CI passes `--locked` on clippy (the first cargo graph resolution) as well as the later test/check/coverage steps, so a `Cargo.lock` that drifts from `Cargo.toml` fails the hosted job before any test runs. Fork PRs only run that hosted job.
 
 ## Code quality tooling
 
@@ -122,6 +127,6 @@ Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `
 
 ## CI
 
-GitHub Actions is primary: `ci.yml` (CPU — fmt, clippy, `cargo test --lib --no-default-features`, `cargo check --examples`, llvm-cov → Codecov; then a self-hosted Ryzen job with a fork guard), `gpu-tests.yml` (CUDA ≥ 13.2 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
+GitHub Actions is primary: `ci.yml` (CPU — fmt, clippy `--locked`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --locked`, llvm-cov → Codecov; then a self-hosted Ryzen job with a fork guard), `gpu-tests.yml` (CUDA ≥ 13.2 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
 
 Note the split in test scope: the hosted job runs only `--lib`, so `tests/` and example-target tests are exercised solely by the Ryzen job (`cargo test --all-targets --no-default-features --locked`), which is skipped for fork PRs. Run `--all-targets` locally before pushing rather than trusting the hosted job.

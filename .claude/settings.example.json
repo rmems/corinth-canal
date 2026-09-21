@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": [
+    "Starting point for a per-machine Claude Code config. This file is a",
+    "template only and is not read by Claude Code. Copy it to",
+    ".claude/settings.local.json (gitignored) and adjust to taste:",
+    "",
+    "    cp .claude/settings.example.json .claude/settings.local.json",
+    "",
+    "Only non-mutating commands are pre-approved, so a cloud or web agent can",
+    "investigate the repository without prompting while anything that writes,",
+    "pushes or publishes still asks.",
+    "",
+    "Note the fmt and clippy entries are pinned to their exact check-only",
+    "forms. A bare `cargo fmt` rewrites sources and `cargo clippy --fix`",
+    "applies suggestions, so a `cargo fmt:*` style prefix would have granted",
+    "write access to the tree -- the opposite of what this template promises."
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo fmt --all -- --check)",
+      "Bash(cargo clippy --all-targets --no-default-features -- -D warnings -A dead_code)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo metadata:*)",
+      "Bash(just --list)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch -a:*)",
+      "Bash(git branch -vv:*)",
+      "Bash(git branch --list:*)",
+      "Bash(git branch --show-current:*)",
+      "Bash(git grep:*)",
+      "Bash(git merge-base:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(bd prime)",
+      "Bash(bd ready)",
+      "Bash(bd show:*)",
+      "Bash(bd list:*)",
+      "mcp__github__pull_request_read"
+    ]
+  }
+}

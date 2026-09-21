@@ -202,6 +202,11 @@ struct RunContext<'a> {
     /// Already-sanitized run tag (or `None`). Sanitization is performed
     /// once in `main()` so manifest/summary/run_id all see the same value.
     run_tag: Option<&'a str>,
+    /// Declared `[[model]]` count from `LINEUP_CONFIG`. `None` when the
+    /// run did not come from a GGUF lineup file.
+    lineup_declared_count: Option<usize>,
+    /// How many of those entries resolved on disk.
+    lineup_resolved_count: Option<usize>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -280,6 +285,8 @@ fn run_main(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>
                         projection_mode_override: cfg.projection_mode_override,
                         saaq_rule: cfg.saaq_rule,
                         run_tag: run_tag_ref,
+                        lineup_declared_count: cfg.lineup_declared_count,
+                        lineup_resolved_count: cfg.lineup_resolved_count,
                     };
                     run_validation(observer, &ctx, pending)?;
                 }
@@ -395,7 +402,7 @@ fn run_validation(
     };
 
     if !model.router_loaded() {
-        let error = format!("router did not load for checkpoint '{}'", ctx.spec.path);
+        let error = format!("router did not load for checkpoint '{}'", ctx.spec.slug);
         emit_validation_finish(
             observer,
             ctx,
@@ -661,6 +668,8 @@ fn build_manifest(
         repeat_count: ctx.repeat_count,
         routing_mode: Some(routing_mode_label(config.routing_mode).to_owned()),
         projection_mode: Some(config.projection_mode.as_label().to_owned()),
+        lineup_declared_count: ctx.lineup_declared_count,
+        lineup_resolved_count: ctx.lineup_resolved_count,
         generated_files,
     }
 }

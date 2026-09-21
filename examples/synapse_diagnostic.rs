@@ -8,6 +8,13 @@
 //! `src/moe/adapter.rs::resolve_adapter`. Writes a JSON report to
 //! `<output_root>/synapse_diagnostic.json`.
 //!
+//! Probe failures are recorded on each JSON row rather than aborting the
+//! loop. By default the process still exits 0 after writing the report so
+//! exploratory probing stays non-fatal; set `SYNAPSE_DIAG_STRICT=1` to
+//! fold any `error: Some(_)` row into a non-zero exit. An empty
+//! resolved-model list always exits non-zero — a vacuously empty report
+//! must not look like success.
+//!
 //! No SAAQ ticks, no GPU bring-up, no campaign side effects.
 
 mod support;
@@ -20,6 +27,7 @@ use serde::Serialize;
 use corinth_canal::ModelFamily;
 use corinth_canal::moe::{GpuSynapseTensorDescriptor, Router, RoutingMode};
 use support::RunConfig;
+use support::synapse_diag::synapse_diag_result;
 use support::{
     ValidationModelSpec,
     observability::{self, CommandObserver, SafeDiagnosticData},
@@ -165,13 +173,6 @@ fn run(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>> {
 
     fs::create_dir_all(&cfg.output_root)?;
 
-    if cfg.validation_models.is_empty() {
-        eprintln!(
-            "synapse_diagnostic: no validation models resolved (LINEUP_CONFIG / \
-             CHECKPOINT_PATH / autodiscovery all returned empty)"
-        );
-    }
-
     println!(
         "synapse_diagnostic: probing {} model(s) (output_root={})",
         cfg.validation_models.len(),
@@ -193,7 +194,21 @@ fn run(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>> {
     serde_json::to_writer_pretty(&mut writer, &report)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
-    println!("ok: wrote {}", json_path.display());
 
-    Ok(())
+    let failed = report.iter().filter(|row| row.error.is_some()).count();
+    match synapse_diag_result(cfg.validation_models.len(), failed, cfg.synapse_diag_strict) {
+        Ok(None) => {
+            println!("ok: wrote {}", json_path.display());
+            Ok(())
+        }
+        Ok(Some(warning)) => {
+            eprintln!("{warning}");
+            println!("ok: wrote {}", json_path.display());
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("wrote {}", json_path.display());
+            Err(err.into())
+        }
+    }
 }

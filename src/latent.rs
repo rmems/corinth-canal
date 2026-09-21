@@ -222,7 +222,8 @@ impl SnnDualLatentCalibrator {
     ///
     /// The returned snapshot has:
     /// - `saaq_delta_q_{legacy,v15}_{prev,target}` populated from each rule,
-    /// - `saaq_delta_q_{prev,target}` populated from the [`primary_rule`],
+    /// - `saaq_delta_q_{prev,target}` populated from the rule returned by
+    ///   [`primary_rule`](Self::primary_rule),
     /// - all other fields taken from the legacy calibrator (identical across
     ///   rules by construction, since they are computed from activity alone).
     pub fn observe(
@@ -290,6 +291,136 @@ fn normalized_entropy(weights: &[f32]) -> f32 {
     } else {
         0.0
     }
+}
+
+// ---------------------------------------------------------------------------
+// SAAQ -> gif_threshold control mapping (`saaq-tau-map` export)
+//
+// `saaq_delta_q_target` is currently telemetry-only. The pieces below close the
+// loop: they interpret the SAAQ target as a *desired sparsity fraction* and map
+// it to a `gif_threshold` multiplier via the empirical τ->sparsity anchors
+// measured on Grok-1 embedding weights
+// (`grok-ozempic/reports/grok-1-tau-sweep/results.md`; for near-Gaussian
+// tensors `zeros(τ) ~= erf(τ/sqrt(2))`):
+//
+//   sparsity:   0.25   0.50   0.75   0.90   0.95
+//   gif_threshold: 0.31 0.65  1.12   1.63   1.97
+//
+// The mapping is piecewise-linear through those anchors, monotone in its
+// input, and clamped into `SAAQ_TAU_RANGE` so a pathological target can never
+// ask the quantizer for an invalid or degenerate τ. grok-ozempic consumes the
+// emitted JSON as the `corinth-canal/saaq-tau-map` schema (version 1) through
+// `precision::resolve_threshold` — this file only ever *proposes* τ values;
+// grok-ozempic's manifest precedence still decides what is applied.
+// ---------------------------------------------------------------------------
+
+/// Empirical (target sparsity, gif_threshold) anchor pairs used by
+/// [`saaq_delta_q_to_gif_threshold`]. Sorted by sparsity.
+pub const SAAQ_TAU_ANCHORS: &[(f32, f32)] = &[
+    (0.0, 0.05),
+    (0.25, 0.31),
+    (0.50, 0.65),
+    (0.75, 1.12),
+    (0.90, 1.63),
+    (0.95, 1.97),
+];
+
+/// Inclusive `[min, max]` `gif_threshold` range the SAAQ mapping is allowed to
+/// emit. Bounds are the anchor extremes: below 0.05 the gate barely fires,
+/// above 1.97 sparsity already exceeds 95% on the measured distribution.
+pub const SAAQ_TAU_RANGE: (f32, f32) = (0.05, 1.97);
+
+/// Fallback τ used when `saaq_delta_q_target` is non-finite (NaN from a
+/// broken telemetry tick, etc.). Chosen as the 50%-sparsity anchor so a
+/// degraded signal degrades to mid-range sparsity rather than an extreme.
+pub const SAAQ_TAU_FALLBACK: f32 = 0.65;
+
+/// Map a `saaq_delta_q_target` value to a `gif_threshold` multiplier.
+///
+/// `delta_q` is interpreted as a desired sparsity fraction (0 = keep almost
+/// everything, ~0.95 = keep only the top ~5% of weights by magnitude); it is
+/// clamped to the anchor domain before interpolating. The result is monotone
+/// non-decreasing in `delta_q` and always within [`SAAQ_TAU_RANGE`]; non-finite
+/// input yields [`SAAQ_TAU_FALLBACK`].
+pub fn saaq_delta_q_to_gif_threshold(delta_q: f32) -> f32 {
+    if !delta_q.is_finite() {
+        return SAAQ_TAU_FALLBACK;
+    }
+    let (s_min, s_max) = (
+        SAAQ_TAU_ANCHORS[0].0,
+        SAAQ_TAU_ANCHORS[SAAQ_TAU_ANCHORS.len() - 1].0,
+    );
+    let s = delta_q.clamp(s_min, s_max);
+    // Locate the anchor interval containing s. The table is tiny, so a linear
+    // scan is the clearest correct implementation.
+    let hi = SAAQ_TAU_ANCHORS
+        .iter()
+        .position(|(anchor_s, _)| s <= *anchor_s)
+        .unwrap_or(SAAQ_TAU_ANCHORS.len() - 1)
+        .max(1);
+    let (s0, t0) = SAAQ_TAU_ANCHORS[hi - 1];
+    let (s1, t1) = SAAQ_TAU_ANCHORS[hi];
+    let frac = if s1 > s0 { (s - s0) / (s1 - s0) } else { 0.0 };
+    (t0 + frac * (t1 - t0)).clamp(SAAQ_TAU_RANGE.0, SAAQ_TAU_RANGE.1)
+}
+
+/// One `entries[]` element of a `saaq-tau-map` JSON file.
+///
+/// `pattern` uses grok-ozempic's segment-anchored glob vocabulary (the same
+/// one as manifest `ternary_candidates[].name`); first match wins there.
+/// `tier` / `saaq_delta_q_target` are provenance only — only `pattern` and
+/// `gif_threshold` are load-bearing on the consumer side.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SaaqTauMapEntry {
+    pub pattern: String,
+    pub gif_threshold: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saaq_delta_q_target: Option<f32>,
+}
+
+/// A `corinth-canal/saaq-tau-map` (version 1) document: the per-tensor/tier τ
+/// source grok-ozempic loads via `--saaq-tau-map`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SaaqTauMap {
+    pub schema: String,
+    pub version: u32,
+    pub entries: Vec<SaaqTauMapEntry>,
+}
+
+impl SaaqTauMap {
+    /// Build a map with the canonical schema tag and version.
+    pub fn new(entries: Vec<SaaqTauMapEntry>) -> Self {
+        Self {
+            schema: "corinth-canal/saaq-tau-map".to_string(),
+            version: 1,
+            entries,
+        }
+    }
+}
+
+/// Build a single τ-map entry from a SAAQ target, applying
+/// [`saaq_delta_q_to_gif_threshold`] for the τ value.
+pub fn saaq_tau_entry(
+    pattern: impl Into<String>,
+    tier: Option<String>,
+    saaq_delta_q_target: f32,
+) -> SaaqTauMapEntry {
+    SaaqTauMapEntry {
+        pattern: pattern.into(),
+        gif_threshold: saaq_delta_q_to_gif_threshold(saaq_delta_q_target),
+        tier,
+        saaq_delta_q_target: Some(saaq_delta_q_target),
+    }
+}
+
+/// Serialize a [`SaaqTauMap`] to `path` as pretty JSON.
+pub fn write_saaq_tau_map<P: AsRef<Path>>(path: P, map: &SaaqTauMap) -> Result<()> {
+    let file = File::create(path)?;
+    serde_json::to_writer_pretty(BufWriter::new(file), map)
+        .map_err(|e| HybridError::InvalidConfig(format!("saaq-tau-map serialize failed: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -492,6 +623,68 @@ mod tests {
             merged.saaq_delta_q_target,
             merged.saaq_delta_q_legacy_target
         );
+    }
+
+    #[test]
+    fn saaq_tau_mapping_hits_anchors_and_is_monotone() {
+        // Anchor table passes through exactly.
+        for &(s, tau) in SAAQ_TAU_ANCHORS {
+            assert!(
+                (saaq_delta_q_to_gif_threshold(s) - tau).abs() < 1e-6,
+                "anchor {s} -> {tau}"
+            );
+        }
+        // Monotone non-decreasing over the domain.
+        let mut prev = saaq_delta_q_to_gif_threshold(-0.5);
+        for i in 0..=100 {
+            let s = -0.5 + i as f32 * 0.02;
+            let t = saaq_delta_q_to_gif_threshold(s);
+            assert!(t >= prev, "monotone violated at s={s}: {prev} -> {t}");
+            assert!((SAAQ_TAU_RANGE.0..=SAAQ_TAU_RANGE.1).contains(&t));
+            prev = t;
+        }
+        // Out-of-domain input clamps to the anchor extremes.
+        assert_eq!(saaq_delta_q_to_gif_threshold(-1.0), SAAQ_TAU_RANGE.0);
+        assert_eq!(saaq_delta_q_to_gif_threshold(1.5), SAAQ_TAU_RANGE.1);
+        // Non-finite input degrades to the mid-range fallback.
+        assert_eq!(saaq_delta_q_to_gif_threshold(f32::NAN), SAAQ_TAU_FALLBACK);
+        assert_eq!(
+            saaq_delta_q_to_gif_threshold(f32::INFINITY),
+            SAAQ_TAU_FALLBACK
+        );
+    }
+
+    #[test]
+    fn saaq_tau_map_round_trips_grok_ozempic_schema() {
+        let entry = saaq_tau_entry(
+            "block_*.slot_00.moe_expert.gate",
+            Some("moe_expert".to_string()),
+            0.5,
+        );
+        assert!((entry.gif_threshold - 0.65).abs() < 1e-6);
+        let map = SaaqTauMap::new(vec![entry]);
+        let json = serde_json::to_string(&map).unwrap();
+        let decoded: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded["schema"], "corinth-canal/saaq-tau-map");
+        assert_eq!(decoded["version"], 1);
+        assert_eq!(
+            decoded["entries"][0]["pattern"],
+            "block_*.slot_00.moe_expert.gate"
+        );
+        assert!((decoded["entries"][0]["gif_threshold"].as_f64().unwrap() - 0.65).abs() < 1e-6);
+
+        let path = std::env::temp_dir().join(format!(
+            "corinth_canal_saaq_tau_map_{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        write_saaq_tau_map(&path, &map).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["entries"][0]["tier"], "moe_expert");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

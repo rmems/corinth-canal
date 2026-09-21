@@ -135,7 +135,7 @@ fn process_one_line(
         }
     };
     let activity = funnel.encode_snapshot(&snap);
-    let ternary = activity.ternary_events.clone();
+    let ternary = activity.ternary_events;
     let output = model.forward_activity(
         &activity.spike_train,
         &activity.potentials,

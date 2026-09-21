@@ -116,14 +116,18 @@ impl Drop for RegisteredCudaRegion {
         // in `RegisteredTensorSliceU16::register`, so it is valid to unregister.
         let result = unsafe { cust::sys::cuMemHostUnregister(self.ptr) };
         if result != cust::sys::CUresult::CUDA_SUCCESS {
-            // Silently ignore: panicking inside `drop` is unsound, and the
-            // model remains usable even if CUDA pin-registration is leaked.
+            // Never panic in `drop`, but do not swallow it either: a failed
+            // unregister leaks a pinned mapping, and the empty arm made that
+            // invisible.
+            tracing::warn!(
+                ?result,
+                "cuMemHostUnregister failed; CUDA pinned registration leaked"
+            );
         }
     }
 }
 
 #[cfg(all(feature = "cuda", unix))]
-#[allow(dead_code)]
 fn page_size_bytes(path: &str) -> Result<usize> {
     // SAFETY: `sysconf` is a pure query with no preconditions; valid to call at any time.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -137,7 +141,6 @@ fn page_size_bytes(path: &str) -> Result<usize> {
 }
 
 #[cfg(all(feature = "cuda", not(unix)))]
-#[allow(dead_code)]
 fn page_size_bytes(_path: &str) -> Result<usize> {
     // Fallback for Windows and other platforms (common page size 4KiB is sufficient
     // for the mmap alignment use case here).

@@ -48,8 +48,15 @@ LLM-models-onboarding branch.*
 - [ ] If local GGUF: routing tensor exists and is accessible via the checkpoint
       reader.
 - [ ] If local safetensors: manifest inspection succeeds without errors.
-- [ ] If cloud: provider format is a recognized value (`nvcf-nim`,
-      `openai-compat`, `vertex-ai`, `watsonx-saas`, `fp8-safetensors`).
+- [ ] If cloud: provider format is a recognized value. Two kinds live in this
+      field: an API protocol the provider speaks (`nvcf-nim`, `openai-compat`,
+      `vertex-ai`, `watsonx-saas`) or a weights format downloaded and run on
+      our own GPU (`safetensors`, `fp8-safetensors`). Every entry currently in
+      `configs/saaq_cloud_lineup.toml` is the second kind. Nothing in `src/`
+      validates this field, so the set is enforced only by
+      `cloud_lineup_shipped_inventory_parses` in
+      `tests/examples_support_lineup.rs` — extend both it and this list
+      together when adding a value.
 - [ ] If cloud: required env var names are documented (no values stored).
 - [ ] VRAM / storage assumptions documented if known.
 
@@ -58,8 +65,7 @@ LLM-models-onboarding branch.*
 ## 5. Documentation
 
 - [ ] Model added to the appropriate lineup config:
-  - Local GGUF → `configs/local_gguf_lineup.toml` (gitignored; copy from
-    `configs/local_gguf_lineup.template.toml`)
+  - Local GGUF → `configs/local_gguf_lineup.template.toml` copied locally to `configs/local_gguf_lineup.toml` (gitignored; never commit absolute paths)
   - Local safetensors → `configs/local_safetensors_lineup.template.toml` copied locally to `configs/safetensors_lineup.toml`
   - Cloud → `configs/saaq_cloud_lineup.toml`
 - [ ] Slug follows directory-safe naming convention.
@@ -72,16 +78,35 @@ LLM-models-onboarding branch.*
 
 - [ ] `cargo check --no-default-features` passes.
 - [ ] `cargo test --no-default-features` passes.
-- [ ] For local GGUF: `just synapse-diag` succeeds (needs a CUDA toolchain;
-      `synapse_diagnostic` is `required-features = ["cuda"]` and takes no
-      positional argument -- point it at a checkpoint with `CHECKPOINT_PATH`
-      or `LINEUP_CONFIG`).
+- [ ] For local GGUF: `just synapse-diag-strict` (or
+      `SYNAPSE_DIAG_STRICT=1 just synapse-diag`) exits 0 **and** every row
+      in `artifacts/synapse_diagnostic.json` has `error: null`. Strict
+      mode exits non-zero when any probe records an error. An empty
+      resolved-model list always exits non-zero, even without the flag —
+      `just synapse-diag` without checkpoints is not a pass. Without
+      `SYNAPSE_DIAG_STRICT=1`, probe failures are still written to the report
+      but the process exits 0 (exploratory probing).
+      Not `cargo run --example synapse_diagnostic --no-default-features`: that
+      example is `required-features = ["cuda"]`, so the target does not
+      exist in a CPU build, and it takes no positional path — point it at a
+      checkpoint with `CHECKPOINT_PATH` or `LINEUP_CONFIG`.
 - [ ] For local safetensors: `cargo run --example safetensors_manifest --no-default-features -- <path> artifacts/safetensors_manifest.json` succeeds.
-- [ ] For cloud: `cargo test --no-default-features cloud_lineup` passes
-      (`cloud_lineup_parses_valid_toml`,
-      `cloud_lineup_unknown_family_reported_on_stderr`). The shipped
-      `configs/saaq_cloud_lineup.toml` declares no `required_env_vars`, so
-      there is currently no fail-fast path to observe -- see GH#172 follow-up.
+- [ ] For cloud: `cargo test --no-default-features cloud_lineup` passes.
+      `cloud_lineup_shipped_inventory_parses` loads
+      `configs/saaq_cloud_lineup.toml` itself, so this does check the shipped
+      inventory: it catches malformed TOML, an unknown field, a `target` other
+      than `cloud`, an `architecture` other than `moe`/`dense`, a duplicate
+      slug, a non-`https` `source_url`, and a non-blank `family` that no
+      `ModelFamily` alias resolves. It does **not** check that a `family` is
+      the *correct* one for a model — `FAMILY_ARCHES` in `src/moe/adapter.rs`
+      is the runtime authority there, and any resolvable slug passes here.
+      No CPU-runnable example reads `CLOUD_LINEUP_CONFIG`, so nothing beyond
+      parsing is exercised.
+      Note this still cannot verify fail-fast: no entry in the shipped lineup
+      declares `required_env_vars`, so `cloud_execution_guard` has nothing to
+      check and succeeds for every model. Ticking a "fail-fast verified" box
+      against this file would be vacuous. Exercising the guard needs a lineup
+      entry that declares its credential vars.
 
 ## Quick reference
 
@@ -107,8 +132,11 @@ with open('<path>', 'rb') as f:
 cargo run --example safetensors_manifest --no-default-features -- \
   /path/to/checkpoint.safetensors artifacts/safetensors_manifest.json
 
-# Cloud lineup parse + diagnostics check (CPU, no CUDA toolchain needed).
-# saaq_latent_calibration is required-features = ["cuda"], so it cannot be
-# run under --no-default-features; the lineup logic is covered by tests.
+# Cloud lineup parser check (CPU; no CUDA toolchain needed).
+# NOT `cargo run --example saaq_latent_calibration --no-default-features`:
+# that example is required-features = ["cuda"], so the target does not exist
+# in a CPU build and the command cannot run at all.
+# Includes cloud_lineup_shipped_inventory_parses, which loads
+# configs/saaq_cloud_lineup.toml itself rather than a temporary fixture.
 cargo test --no-default-features cloud_lineup
 ```
