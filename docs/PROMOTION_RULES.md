@@ -76,10 +76,10 @@ directions:
   rmems/engram-parser#10.
 - **`src/moe/gguf/` (parse + mmap + packed K-quant) → `rmems/engram-parser`, as a real
   dependency.** Here corinth *does* intend to consume the modular crate. #144
-  decided option 1 (upstream first): optional `mmap` feature plus Q8_0/Q5_K/Q6_K/IQ3_M
-  packed dequant shipped in rmems/engram-parser#73 (closes #45). #115 is unblocked
-  and consumes that surface; CUDA host-register stays here (this crate /
-  myelin-accelerator).
+  decided option 1 (upstream first): optional `mmap` feature plus Q8_0/Q5_K/Q6_K and
+  internal-only `IQ3_M_BLOCK` packed dequant shipped in rmems/engram-parser#73
+  (closes #45). #115 is unblocked and will consume that surface once adopted;
+  CUDA host-register stays here (this crate / myelin-accelerator).
 
 **Rule of thumb:** a status in `docs/MODULE_STATUS.md` describes *this repo's*
 readiness to hand code off. It does not by itself imply corinth will consume
