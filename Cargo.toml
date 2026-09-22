@@ -50,8 +50,9 @@ cc = "1.0"
 [features]
 # `--no-default-features` is the CPU-only build and does not compile the CUDA
 # backend. `cuda` builds the real backend and requires nvcc. `gpu-stub` implies
-# `cuda`, but permits a build without nvcc by embedding empty fatbins; its GPU
-# API is present, but GPU execution is deliberately unavailable at runtime.
+# `cuda` and always embeds empty fatbins plus the failing shim (even when nvcc
+# is installed), so the CUDA/cust API is present but GPU execution is never
+# available at runtime.
 default = ["cuda"]
 cuda = ["dep:cust"]
 gpu-stub = ["cuda"]
