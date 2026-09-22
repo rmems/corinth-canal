@@ -6,10 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build, test, lint
 
-Three build modes exist and they are not interchangeable:
+Three build modes exist; prefer the one that matches your task unless a maintainer explicitly asks for another profile:
 
 - **CPU-only** (`--no-default-features`): no `nvcc`, no CUDA. The `cuda` feature is *default-on*, and it gates `pub mod gpu` and `pub mod model` in `src/lib.rs`. So under `--no-default-features` there is **no `Model` type at all** — only telemetry/funnel/projector/moe/latent/experiment. The five GPU examples declare `required-features = ["cuda"]` and silently vanish from CPU builds; the four that remain runnable are `validate_matrix`, `validate_local_saaq`, `summarize_local_saaq`, and `safetensors_manifest` (each documents its argv in its module doc comment).
-- **Build modes:** `--no-default-features` is the CPU-only build and does not compile the CUDA backend. The default `cuda` feature makes `build.rs` invoke `nvcc`, compiling `src/gpu/kernels/*.cu` to `sm_120` fatbins plus the `myelin_shim` C-ABI object, and fails when `nvcc` is missing. `--no-default-features --features gpu-stub` (equivalently `--features cuda,gpu-stub`) enables the CUDA/cust API but always writes empty fatbins and the failing shim—even when `nvcc` is on `PATH`—so GPU execution is unavailable at runtime; it is neither CUDA parity nor a hardware test. Hosted CPU CI uses `--no-default-features`; CUDA CI uses `cuda` on a CUDA runner.
+- **CUDA** (default `cuda` feature): `build.rs` invokes `nvcc`, compiling `src/gpu/kernels/*.cu` to `sm_120` fatbins plus the `myelin_shim` C-ABI object. If `nvcc` is missing, the build fails unless you also enable `gpu-stub` (see below). Hosted CUDA CI uses this mode on a CUDA runner.
+- **gpu-stub** (`--features cuda,gpu-stub`, often with `--no-default-features`): exposes the CUDA/cust API for type-checking without a working GPU backend. With this feature enabled, `build.rs` takes the stub path (empty fatbins and the failing shim) before `nvcc` kernel compilation, including when `nvcc` is on `PATH`; GPU execution is then unavailable at runtime. This mode is neither CUDA parity nor a hardware test. Hosted CPU CI uses `--no-default-features` instead of `gpu-stub`.
 - GGUF parsing is unconditional and has no Cargo feature gate. Do not add a parser feature merely to recreate the removed, empty `gguf` feature; the equally unused `ci` feature was also removed.
 
 ```bash
