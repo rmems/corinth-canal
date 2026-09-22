@@ -88,8 +88,19 @@ fn parse_civil_prefix(s: &str) -> Option<CivilTime> {
     if !is_datetime_separator(s.as_bytes().get(10).copied()?) {
         return None;
     }
+    if !has_iso_civil_separators(s.as_bytes()) {
+        return None;
+    }
     let civil = parse_civil_fields(s)?;
     civil_in_range(&civil).then_some(civil)
+}
+
+fn has_iso_civil_separators(bytes: &[u8]) -> bool {
+    bytes.len() >= 19
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
 }
 
 fn parse_civil_fields(s: &str) -> Option<CivilTime> {
@@ -346,6 +357,12 @@ mod tests {
     fn parse_timestamp_rejects_trailing_frac_garbage() {
         assert!(parse_timestamp_string("2026-03-19T12:00:00.123junk").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00.380000").is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_non_iso_civil_separators() {
+        assert!(parse_timestamp_string("2026/03/19T12.00.00Z").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00Z").is_some());
     }
 
     #[test]

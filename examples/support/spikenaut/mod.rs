@@ -32,6 +32,7 @@ pub use domain::{SpikenautDomain, detect_domain};
 pub use ingest::{IngestResult, ingest_jsonl};
 #[allow(unused_imports)]
 pub use map::map_record;
+#[allow(unused_imports)]
 pub use smoke::run_dual_saaq_cpu_smoke;
 #[allow(unused_imports)]
 pub use timestamp::parse_timestamp_string;
