@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build, test, lint
 
-Two build worlds exist and they are not interchangeable:
+Three build modes exist and they are not interchangeable:
 
 - **CPU-only** (`--no-default-features`): no `nvcc`, no CUDA. The `cuda` feature is *default-on*, and it gates `pub mod gpu` and `pub mod model` in `src/lib.rs`. So under `--no-default-features` there is **no `Model` type at all** — only telemetry/funnel/projector/moe/latent/experiment. The five GPU examples declare `required-features = ["cuda"]` and silently vanish from CPU builds; the four that remain runnable are `validate_matrix`, `validate_local_saaq`, `summarize_local_saaq`, and `safetensors_manifest` (each documents its argv in its module doc comment).
-- **CUDA** (default features): `build.rs` shells out to `nvcc`, compiles `src/gpu/kernels/*.cu` to `sm_120` fatbins plus the `myelin_shim` C-ABI object, and panics if `nvcc` is missing. `--features gpu-stub` writes empty fatbins as an optional non-CUDA fallback for local development; CI uses `--no-default-features` (CPU) or the default `cuda` feature on a CUDA runner.
-- The `gguf` and `ci` features in `Cargo.toml` are **declared but referenced nowhere** in `src/`, `examples/`, or `build.rs`. `--features gguf` does not enable GGUF support — GGUF parsing is unconditional.
+- **Build modes:** `--no-default-features` is the CPU-only build and does not compile the CUDA backend. The default `cuda` feature makes `build.rs` invoke `nvcc`, compiling `src/gpu/kernels/*.cu` to `sm_120` fatbins plus the `myelin_shim` C-ABI object, and fails when `nvcc` is missing. `--no-default-features --features gpu-stub` (equivalently `--features cuda,gpu-stub`) enables the CUDA/cust API but permits missing `nvcc` by writing empty fatbins and compiling a failing shim; it cannot execute GPU work and is neither CUDA parity nor a hardware test. Hosted CPU CI uses `--no-default-features`; CUDA CI uses `cuda` on a CUDA runner.
+- GGUF parsing is unconditional and has no Cargo feature gate. Do not add a parser feature merely to recreate the removed, empty `gguf` feature; the equally unused `ci` feature was also removed.
 
 ```bash
 just setup                                   # scaffolding sanity check; warns if .env.local missing

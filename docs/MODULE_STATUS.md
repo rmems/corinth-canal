@@ -37,5 +37,10 @@ Status legend: `reference` · `stabilizing` · `proven` · `frozen`
   `ModelConfig::gpu_routing_telemetry_path`, but any caller that leaves it
   unset still falls back to the CWD-relative filename
   `snn_gpu_routing_telemetry.csv`.
-- **`build.rs` fatbin compilation.** Assumes nvcc + `sm_120` targets on the
-  author's box. `gpu-stub` covers the CI / non-CUDA case.
+- **Build modes.** `--no-default-features` is the CPU-only path and omits the
+  CUDA backend. `cuda` (the default) compiles the real `sm_120` backend and
+  requires `nvcc`. `gpu-stub` implies `cuda` while allowing missing `nvcc` by
+  producing empty fatbins and a failing shim; it exposes the CUDA/cust API but
+  cannot execute GPU work, so it is neither CUDA parity nor a hardware test.
+  Hosted CPU CI uses the CPU-only mode, not `gpu-stub`. GGUF parsing remains
+  unconditional and has no Cargo feature gate.

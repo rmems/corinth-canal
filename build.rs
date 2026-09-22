@@ -118,7 +118,8 @@ fn main() {
             }
             panic!(
                 "nvcc not found. Install CUDA Toolkit (>= 12.8 for sm_120) or set NVCC=/path/to/nvcc. \
-                 To allow building without nvcc and disable GPU at runtime, enable the `gpu-stub` feature."
+                 To allow building the CUDA API without nvcc and disable GPU execution at runtime, \
+                 enable the `gpu-stub` feature (which implies `cuda`)."
             );
         }
     };

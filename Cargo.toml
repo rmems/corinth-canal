@@ -48,14 +48,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 cc = "1.0"
 
 [features]
+# `--no-default-features` is the CPU-only build and does not compile the CUDA
+# backend. `cuda` builds the real backend and requires nvcc. `gpu-stub` implies
+# `cuda`, but permits a build without nvcc by embedding empty fatbins; its GPU
+# API is present, but GPU execution is deliberately unavailable at runtime.
 default = ["cuda"]
-gguf = []
-cuda = ["cust"]
-# Allows building without CUDA Toolkit by creating empty fatbin files.
-# Does NOT depend on cuda feature to enable CPU-only builds.
-gpu-stub = []
-# CI-friendly profile: no cuda dependencies, minimal build for testing CI pipeline.
-ci = []
+cuda = ["dep:cust"]
+gpu-stub = ["cuda"]
 [[example]]
 name = "gpu_smoke_test"
 required-features = ["cuda"]
