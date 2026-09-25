@@ -34,7 +34,7 @@ What applies regardless of what you use:
 - Do not commit or document secrets, tokens, DSNs, API keys, private telemetry,
   or local absolute paths.
 - Do not assume optional third-party APIs are configured. Local and offline
-  behaviour must stay correct when every external integration is unset.
+  behaviour must stay correct when every external integration is unset, unless a maintainer explicitly approves otherwise.
 - Keep tooling documentation high level. Machine-specific setup — install
   locations, subscription tiers, per-workstation permission grants — belongs in
   local, untracked configuration, not in tracked docs.
@@ -146,7 +146,7 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
 - Do not edit files outside this repository, and do not add dependencies, unless
   the task explicitly asks for it. This previously read "limited to approved
   research tools", which depended on an inventory this document no longer keeps;
-  the constraint was always about scope, not about which tool you drive.
+  the constraint was about scope, not about which tool you drive.
 
 ## Git Workflow
 
