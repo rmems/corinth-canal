@@ -34,7 +34,7 @@ What applies regardless of what you use:
 - Do not commit or document secrets, tokens, DSNs, API keys, private telemetry,
   or local absolute paths.
 - Do not assume optional third-party APIs are configured. Local and offline
-  behaviour must stay correct when every external integration is unset, except when a maintainer explicitly approves a different behaviour.
+  behaviour must stay correct when `SENTRY_DSN` and `NR_INSERT_KEY` are unset or empty, except when those vars are set to non-empty values.
 - Keep tooling documentation high level. Machine-specific setup — install
   locations, subscription tiers, per-workstation permission grants — belongs in
   local, untracked configuration, not in tracked docs.
