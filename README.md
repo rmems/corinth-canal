@@ -195,8 +195,8 @@ just saaq
 ### Convert Spikenaut JSONL into replay CSV
 
 ```bash
-just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl OUT=artifacts/spikenaut_gpu.csv
-just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl
+just spikenaut-ingest tests/fixtures/spikenaut/gpu_sample.jsonl artifacts/spikenaut_gpu.csv
+just spikenaut-smoke tests/fixtures/spikenaut/gpu_sample.jsonl
 ```
 
 Field mapping lives in `docs/SPIKENAUT_TELEMETRY.md`. Point

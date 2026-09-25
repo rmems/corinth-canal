@@ -31,8 +31,9 @@ replay PATH:
     cargo run --release --example csv_replay -- {{PATH}}
 
 # Spikenaut-SNN-Telemetry JSONL → canonical replay CSV (CPU-only).
-#   just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl
-#   just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl OUT=artifacts/spikenaut_gpu.csv
+# IN and OUT are positional arguments, not just assignments:
+#   just spikenaut-ingest tests/fixtures/spikenaut/gpu_sample.jsonl
+#   just spikenaut-ingest tests/fixtures/spikenaut/gpu_sample.jsonl artifacts/spikenaut_gpu.csv
 spikenaut-ingest IN OUT='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -43,7 +44,8 @@ spikenaut-ingest IN OUT='':
     cargo run --example spikenaut_ingest --no-default-features -- "{{IN}}" "${extra[@]}"
 
 # Convert JSONL and run a CPU dual-SAAQ (1.0 + 1.5) smoke with run_manifest.json.
-#   just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl
+# IN is a positional argument, not a just assignment:
+#   just spikenaut-smoke tests/fixtures/spikenaut/gpu_sample.jsonl
 spikenaut-smoke IN:
     cargo run --example spikenaut_ingest --no-default-features -- "{{IN}}" --smoke
 

@@ -92,6 +92,30 @@ fn justfile_documents_working_replay_and_saaq_csv() {
         text.contains("TELEMETRY_CSV_PATH=/path/to/telemetry.csv just saaq-csv"),
         "saaq-csv comment must show a shell assignment, not a fake recipe argument"
     );
+    assert!(
+        headings.contains(&"spikenaut-ingest IN OUT='':"),
+        "spikenaut-ingest must stay a positional recipe"
+    );
+    assert!(
+        headings.contains(&"spikenaut-smoke IN:"),
+        "spikenaut-smoke must stay a positional recipe"
+    );
+    assert!(
+        text.contains("just spikenaut-ingest tests/fixtures/spikenaut/gpu_sample.jsonl"),
+        "spikenaut-ingest comment must show the positional form"
+    );
+    assert!(
+        text.contains("just spikenaut-smoke tests/fixtures/spikenaut/gpu_sample.jsonl"),
+        "spikenaut-smoke comment must show the positional form"
+    );
+    assert!(
+        !text.contains("just spikenaut-ingest IN="),
+        "just spikenaut-ingest IN=... passes the literal assignment as the JSONL path"
+    );
+    assert!(
+        !text.contains("just spikenaut-smoke IN="),
+        "just spikenaut-smoke IN=... passes the literal assignment as the JSONL path"
+    );
 }
 
 #[test]
@@ -104,5 +128,21 @@ fn claude_md_documents_working_replay() {
     assert!(
         !text.contains("just replay PATH="),
         "CLAUDE.md must not repeat the assignment form that just treats as the path"
+    );
+    assert!(
+        text.contains("just spikenaut-ingest /path/in.jsonl [/path/out.csv]"),
+        "CLAUDE.md must show the positional spikenaut-ingest form"
+    );
+    assert!(
+        text.contains("just spikenaut-smoke /path/in.jsonl"),
+        "CLAUDE.md must show the positional spikenaut-smoke form"
+    );
+    assert!(
+        !text.contains("just spikenaut-ingest IN="),
+        "CLAUDE.md must not document just assignment form for spikenaut-ingest"
+    );
+    assert!(
+        !text.contains("just spikenaut-smoke IN="),
+        "CLAUDE.md must not document just assignment form for spikenaut-smoke"
     );
 }

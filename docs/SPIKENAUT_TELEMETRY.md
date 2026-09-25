@@ -24,10 +24,10 @@ measured a CPU Tctl.
 
 ```bash
 # JSONL → canonical CSV (CPU-only; no CUDA)
-just spikenaut-ingest IN=tests/fixtures/spikenaut/gpu_sample.jsonl OUT=artifacts/spikenaut_gpu.csv
+just spikenaut-ingest tests/fixtures/spikenaut/gpu_sample.jsonl artifacts/spikenaut_gpu.csv
 
 # Same conversion plus CPU dual-SAAQ (1.0 + 1.5) smoke + run_manifest.json
-just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl
+just spikenaut-smoke tests/fixtures/spikenaut/gpu_sample.jsonl
 
 # GPU campaign replay of a converted corpus (needs a checkpoint)
 TELEMETRY_SOURCE=csv TELEMETRY_CSV_PATH=artifacts/spikenaut_gpu.csv just saaq-csv

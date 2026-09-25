@@ -25,7 +25,7 @@ Format:
 - Telemetry: `csv_spikenaut_gpu`
 - Domain: `spikenaut` (gpu / `neuromorphic_data.jsonl`)
 - Rows: `4` (fixture `tests/fixtures/spikenaut/gpu_sample.jsonl`)
-- Command: `just spikenaut-smoke IN=tests/fixtures/spikenaut/gpu_sample.jsonl`
+- Command: `just spikenaut-smoke tests/fixtures/spikenaut/gpu_sample.jsonl`
 - Artifacts: `artifacts/spikenaut_gpu/dual_saaq_smoke/` (local smoke output; not tracked)
 
 Conclusion: Spikenaut JSONL adapter produced canonical replay CSV; CPU dual-SAAQ smoke completed with `saaq_dual_emit: true` and domain tag `spikenaut_gpu`. Full GPU campaign replay of converted corpora is `TELEMETRY_SOURCE=csv TELEMETRY_CSV_PATH=… just saaq-csv`.

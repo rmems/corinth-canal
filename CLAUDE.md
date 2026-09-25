@@ -49,9 +49,9 @@ just saaq-campaign                 # 2-phase synthetic + csv baseline campaign
 CHECKPOINT_PATH=/path/model.gguf just smoke   # direct GPU temporal smoke path
 just synapse-diag                  # print preferred GPU synapse tensor + ggml_type per model
 just synapse-diag-strict           # same probe; non-zero if any row has error (or none run)
-just replay PATH=/path/telemetry.csv
-just spikenaut-ingest IN=path.jsonl [OUT=path.csv]
-just spikenaut-smoke IN=path.jsonl
+just replay /path/telemetry.csv
+just spikenaut-ingest /path/in.jsonl [/path/out.csv]
+just spikenaut-smoke /path/in.jsonl
 just clean-artifacts
 ```
 

@@ -198,8 +198,8 @@ runtime GGUF bridge.
 | Profile | Command |
 |---------|---------|
 | Ingest canonical telemetry CSV | `just replay /path/to/telemetry.csv` |
-| Spikenaut JSONL → canonical CSV | `just spikenaut-ingest IN=path.jsonl OUT=path.csv` |
-| Spikenaut dual-SAAQ CPU smoke | `just spikenaut-smoke IN=path.jsonl` |
+| Spikenaut JSONL → canonical CSV | `just spikenaut-ingest /path/in.jsonl [/path/out.csv]` |
+| Spikenaut dual-SAAQ CPU smoke | `just spikenaut-smoke /path/in.jsonl` |
 
 Canonical CSV schema consumed by replay and validation:
 
