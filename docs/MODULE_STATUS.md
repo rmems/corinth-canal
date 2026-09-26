@@ -41,7 +41,9 @@ Status legend: `reference` · `stabilizing` · `proven` · `frozen`
   CUDA backend. `cuda` (the default) compiles the real `sm_120` backend and
   requires `nvcc`. `gpu-stub` implies `cuda` and always produces empty fatbins
   and a failing shim (even when `nvcc` is installed); it exposes the CUDA/cust
-  API but cannot execute GPU work, so it is neither CUDA parity nor a hardware
-  test.
-  Hosted CPU CI uses the CPU-only mode, not `gpu-stub`. GGUF parsing remains
-  unconditional and has no Cargo feature gate.
+  API but cannot execute GPU work (`GpuAccelerator::is_ready()` is false under
+  `cfg(gpu_stub)`), so it is neither CUDA parity nor a hardware test. It is not
+  a no-CUDA build: enabling `cust` builds `cust_raw`, whose build script calls
+  `find_cuda_helper::include_cuda()` and panics with "Could not find a cuda installation" when the host has no CUDA
+  library layout. Hosted CPU CI uses the CPU-only mode, not `gpu-stub`. GGUF
+  parsing remains unconditional and has no Cargo feature gate.

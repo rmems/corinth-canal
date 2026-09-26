@@ -29,7 +29,13 @@ impl GpuContext {
     }
 
     /// Returns `true` when a CUDA device is accessible.
+    ///
+    /// Stub builds report unavailable so callers do not select GPU execution
+    /// even when the host driver would otherwise initialise.
     pub fn is_available() -> bool {
+        if cfg!(gpu_stub) {
+            return false;
+        }
         cust::init(cust::CudaFlags::empty()).is_ok() && Device::get_device(0).is_ok()
     }
 }

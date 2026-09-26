@@ -86,7 +86,18 @@ impl GpuAccelerator {
     }
 
     /// Attempt to initialise GPU.  Returns a stub if no device is available.
+    ///
+    /// A `gpu_stub` build never keeps a driver context. Empty fatbins cannot
+    /// execute, so readiness stays false even when the host has a working driver.
     pub fn new() -> Self {
+        if cfg!(gpu_stub) {
+            eprintln!("[GPU] gpu-stub build: GPU execution is unavailable");
+            return Self {
+                temporal_state: None,
+                modules: None,
+                _ctx: None,
+            };
+        }
         match GpuContext::init() {
             Ok(ctx) => match KernelModule::load() {
                 Ok(modules) => Self {
@@ -115,13 +126,19 @@ impl GpuAccelerator {
     }
 
     fn has_context(&self) -> bool {
-        self._ctx.is_some()
+        !cfg!(gpu_stub) && self._ctx.is_some()
     }
 
     /// `true` if a CUDA context is available. PTX-backed helpers may still be
     /// unavailable if module loading failed, but the shim-backed temporal F16
     /// path can still run.
+    ///
+    /// Always `false` under `cfg(gpu_stub)`, including when a driver context
+    /// would otherwise be usable. Stub builds must not select GPU execution.
     pub fn is_ready(&self) -> bool {
+        if cfg!(gpu_stub) {
+            return false;
+        }
         self.has_context()
     }
 
@@ -820,6 +837,17 @@ impl Default for GpuAccelerator {
 mod tests {
     use super::*;
     use crate::gpu::wrappers::context::GpuContext;
+
+    #[cfg(gpu_stub)]
+    #[test]
+    fn gpu_stub_is_ready_is_false_even_with_a_driver() {
+        let accelerator = GpuAccelerator::new();
+        assert!(
+            !accelerator.is_ready(),
+            "gpu_stub must not report GPU readiness"
+        );
+        assert!(accelerator.kernels().is_err());
+    }
 
     #[test]
     fn test_temporal_state_requires_gpu() {

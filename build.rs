@@ -97,6 +97,10 @@ fn main() {
         ("satsolver.cu", "satsolver_sm_120.fatbin"),
     ];
 
+    // `gpu-stub` implies `cuda` and therefore `cust`. This branch never runs
+    // on a host with no CUDA library layout: `cust_raw`'s build script calls
+    // `find_cuda_helper::include_cuda()` first and panics with
+    // "Could not find a cuda installation". Skipping `nvcc` is not a no-CUDA build.
     let stub_enabled = env::var_os("CARGO_FEATURE_GPU_STUB").is_some();
 
     println!("cargo:rustc-cfg=CUDA_ENABLED");

@@ -52,7 +52,10 @@ cc = "1.0"
 # backend. `cuda` builds the real backend and requires nvcc. `gpu-stub` implies
 # `cuda` and always embeds empty fatbins plus the failing shim (even when nvcc
 # is installed), so the CUDA/cust API is present but GPU execution is never
-# available at runtime.
+# available at runtime. It is not a no-CUDA build: enabling `cust` builds
+# `cust_raw`, whose build script calls `find_cuda_helper::include_cuda()` and
+# panics with "Could not find a cuda installation" when the host has no CUDA
+# library layout. CPU-only hosts must omit `gpu-stub`.
 default = ["cuda"]
 cuda = ["dep:cust"]
 gpu-stub = ["cuda"]

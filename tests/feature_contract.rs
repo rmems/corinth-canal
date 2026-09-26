@@ -45,4 +45,70 @@ fn gpu_stub_build_script_forces_stub_before_nvcc_compilation() {
         build_rs.contains("fn build_cuda_stub"),
         "stub fatbin/shim wiring should live in build_cuda_stub"
     );
+    let build_contract = compact_ws(&build_rs);
+    assert!(
+        build_contract.contains("Could not find a cuda installation"),
+        "build.rs must record that cust/find_cuda_helper still requires a CUDA library layout"
+    );
+    assert!(
+        build_contract.contains("not a no-CUDA build"),
+        "gpu-stub must not be described as a build that runs without CUDA libraries"
+    );
+}
+
+fn compact_ws(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn gpu_stub_documents_cust_cuda_library_prerequisite() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
+    let claude = fs::read_to_string(root.join("CLAUDE.md")).expect("read CLAUDE.md");
+    let module_status =
+        fs::read_to_string(root.join("docs/MODULE_STATUS.md")).expect("read MODULE_STATUS.md");
+
+    for (name, text) in [
+        ("Cargo.toml", cargo_toml.as_str()),
+        ("CLAUDE.md", claude.as_str()),
+        ("docs/MODULE_STATUS.md", module_status.as_str()),
+    ] {
+        assert!(
+            text.contains("find_cuda_helper::include_cuda()"),
+            "{name} must name cust's CUDA library probe"
+        );
+        let compact = compact_ws(text);
+        assert!(
+            compact.contains("Could not find a cuda installation"),
+            "{name} must record the panic from a host with no CUDA library layout"
+        );
+        assert!(
+            compact.contains("not a no-CUDA build"),
+            "{name} must state that gpu-stub is not a no-CUDA build"
+        );
+    }
+}
+
+#[test]
+fn gpu_stub_disables_accelerator_readiness_in_source() {
+    let accelerator = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gpu/wrappers/accelerator.rs"),
+    )
+    .expect("read accelerator.rs");
+    let ready = accelerator
+        .find("pub fn is_ready")
+        .expect("GpuAccelerator::is_ready");
+    let body = &accelerator[ready..];
+    let next_fn = body
+        .find("pub fn kernels")
+        .expect("is_ready body ends before kernels");
+    let ready_body = &body[..next_fn];
+    assert!(
+        ready_body.contains("cfg!(gpu_stub)"),
+        "is_ready must consult cfg(gpu_stub)"
+    );
+    assert!(
+        ready_body.contains("return false"),
+        "is_ready must return false under the stub cfg"
+    );
 }
