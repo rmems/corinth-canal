@@ -41,7 +41,7 @@ opentelemetry_sdk = "0.32.0"
 # `__rustls-aws-lc-rs`. The exporter still has TLS — sentry's `transport`
 # feature enables `reqwest/native-tls` for the whole graph.
 opentelemetry-otlp = { version = "0.32.0", features = ["http-proto", "reqwest-blocking-client"] }
-toml    = "0.8"
+toml    = "1.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 [build-dependencies]
