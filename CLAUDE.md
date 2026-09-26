@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build, test, lint
 
-Two build worlds exist and they are not interchangeable:
+Three build modes exist; prefer the one that matches your task unless a maintainer explicitly asks for another profile:
 
 - **CPU-only** (`--no-default-features`): no `nvcc`, no CUDA. The `cuda` feature is *default-on*, and it gates `pub mod gpu` and `pub mod model` in `src/lib.rs`. So under `--no-default-features` there is **no `Model` type at all** — only telemetry/funnel/projector/moe/latent/experiment. The five GPU examples declare `required-features = ["cuda"]` and silently vanish from CPU builds; the four that remain runnable are `validate_matrix`, `validate_local_saaq`, `summarize_local_saaq`, and `safetensors_manifest` (each documents its argv in its module doc comment).
-- **CUDA** (default features): `build.rs` shells out to `nvcc`, compiles `src/gpu/kernels/*.cu` to `sm_120` fatbins plus the `myelin_shim` C-ABI object, and panics if `nvcc` is missing. `--features gpu-stub` writes empty fatbins as an optional non-CUDA fallback for local development; CI uses `--no-default-features` (CPU) or the default `cuda` feature on a CUDA runner.
-- The `gguf` and `ci` features in `Cargo.toml` are **declared but referenced nowhere** in `src/`, `examples/`, or `build.rs`. `--features gguf` does not enable GGUF support — GGUF parsing is unconditional.
+- **CUDA** (default `cuda` feature): `build.rs` invokes `nvcc`, compiling `src/gpu/kernels/*.cu` to `sm_120` fatbins plus the `myelin_shim` C-ABI object. If `nvcc` is missing, the build fails unless you also enable `gpu-stub` (see below). Hosted CUDA CI uses this mode on a CUDA runner.
+- **gpu-stub** (`--features cuda,gpu-stub`, often with `--no-default-features`): exposes the CUDA/cust API for type-checking without a working GPU backend. With this feature enabled, `build.rs` takes the stub path (empty fatbins and the failing shim) before `nvcc` kernel compilation, including when `nvcc` is on `PATH`; `GpuAccelerator::is_ready()` is then false even if a driver is present. This mode is neither CUDA parity nor a hardware test. It is also not a no-CUDA build: `gpu-stub` enables `cust`, and `cust_raw`'s build script calls `find_cuda_helper::include_cuda()` and panics with "Could not find a cuda installation" when no CUDA library layout is present. `cargo check --no-default-features --features gpu-stub` therefore requires that layout and does not replace the CPU-only profile. Hosted CPU CI uses `--no-default-features` instead of `gpu-stub`.
+- GGUF parsing is unconditional and has no Cargo feature gate. Do not add a parser feature merely to recreate the removed, empty `gguf` feature; the equally unused `ci` feature was also removed.
 
 ```bash
 just setup                                   # scaffolding sanity check; warns if .env.local missing

@@ -48,14 +48,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 cc = "1.0"
 
 [features]
+# `--no-default-features` is the CPU-only build and does not compile the CUDA
+# backend. `cuda` builds the real backend and requires nvcc. `gpu-stub` implies
+# `cuda` and always embeds empty fatbins plus the failing shim (even when nvcc
+# is installed), so the CUDA/cust API is present but GPU execution is never
+# available at runtime. It is not a no-CUDA build: enabling `cust` builds
+# `cust_raw`, whose build script calls `find_cuda_helper::include_cuda()` and
+# panics with "Could not find a cuda installation" when the host has no CUDA
+# library layout. CPU-only hosts must omit `gpu-stub`.
 default = ["cuda"]
-gguf = []
-cuda = ["cust"]
-# Allows building without CUDA Toolkit by creating empty fatbin files.
-# Does NOT depend on cuda feature to enable CPU-only builds.
-gpu-stub = []
-# CI-friendly profile: no cuda dependencies, minimal build for testing CI pipeline.
-ci = []
+cuda = ["dep:cust"]
+gpu-stub = ["cuda"]
 [[example]]
 name = "gpu_smoke_test"
 required-features = ["cuda"]

@@ -65,6 +65,10 @@ int myelin_launch_saaq_find_best_walker(
 "#;
 
 fn main() {
+    // Declare the cfg even when the stub feature is off. CUDA CI compiles with
+    // `-D unexpected_cfgs`, and `cfg!(gpu_stub)` is still named on that path.
+    println!("cargo:rustc-check-cfg=cfg(gpu_stub)");
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cu_dir = manifest_dir.join("src").join("gpu").join("kernels");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -97,28 +101,34 @@ fn main() {
         ("satsolver.cu", "satsolver_sm_120.fatbin"),
     ];
 
+    // `gpu-stub` implies `cuda` and therefore `cust`. This branch never runs
+    // on a host with no CUDA library layout: `cust_raw`'s build script calls
+    // `find_cuda_helper::include_cuda()` first and panics with
+    // "Could not find a cuda installation". Skipping `nvcc` is not a no-CUDA build.
     let stub_enabled = env::var_os("CARGO_FEATURE_GPU_STUB").is_some();
 
     println!("cargo:rustc-cfg=CUDA_ENABLED");
 
+    if stub_enabled {
+        println!("cargo:rustc-cfg=gpu_stub");
+        let warning = if find_nvcc().is_some() {
+            "`gpu-stub` feature enabled — forcing empty fatbin stub build (nvcc is present but ignored); \
+             GPU execution is unavailable at runtime"
+        } else {
+            "nvcc not found and `gpu-stub` feature enabled — writing empty fatbin files; \
+             GPU will be unavailable at runtime"
+        };
+        build_cuda_stub(kernels, &out_dir, warning);
+        return;
+    }
+
     let nvcc = match find_nvcc() {
         Some(nvcc) => nvcc,
         None => {
-            if stub_enabled {
-                println!(
-                    "cargo:warning=nvcc not found and `gpu-stub` feature enabled — writing empty fatbin files; GPU will be unavailable at runtime"
-                );
-                for &(_, fatbin_name) in kernels {
-                    fs::write(out_dir.join(fatbin_name), &[] as &[u8]).unwrap_or_else(|e| {
-                        panic!("Failed to write stub fatbin {fatbin_name}: {e}")
-                    });
-                }
-                build_myelin_shim_stub(&out_dir);
-                return;
-            }
             panic!(
                 "nvcc not found. Install CUDA Toolkit (>= 12.8 for sm_120) or set NVCC=/path/to/nvcc. \
-                 To allow building without nvcc and disable GPU at runtime, enable the `gpu-stub` feature."
+                 To allow building the CUDA API without nvcc and disable GPU execution at runtime, \
+                 enable the `gpu-stub` feature (which implies `cuda`)."
             );
         }
     };
@@ -249,6 +259,15 @@ fn build_myelin_shim(nvcc: &Path, host_compiler: Option<&Path>, cu_dir: &Path, o
         .object(&object)
         .compile("myelin_shim");
     println!("cargo:warning=✓ compiled myelin_shim.cu → libmyelin_shim.a");
+}
+
+fn build_cuda_stub(kernels: &[(&str, &str)], out_dir: &Path, warning: &str) {
+    println!("cargo:warning={warning}");
+    for &(_, fatbin_name) in kernels {
+        fs::write(out_dir.join(fatbin_name), &[] as &[u8])
+            .unwrap_or_else(|e| panic!("Failed to write stub fatbin {fatbin_name}: {e}"));
+    }
+    build_myelin_shim_stub(out_dir);
 }
 
 fn build_myelin_shim_stub(out_dir: &Path) {
