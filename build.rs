@@ -65,6 +65,10 @@ int myelin_launch_saaq_find_best_walker(
 "#;
 
 fn main() {
+    // Declare the cfg even when the stub feature is off. CUDA CI compiles with
+    // `-D unexpected_cfgs`, and `cfg!(gpu_stub)` is still named on that path.
+    println!("cargo:rustc-check-cfg=cfg(gpu_stub)");
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let cu_dir = manifest_dir.join("src").join("gpu").join("kernels");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

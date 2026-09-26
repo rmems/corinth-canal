@@ -42,6 +42,10 @@ fn gpu_stub_build_script_forces_stub_before_nvcc_compilation() {
         "gpu-stub builds must emit cfg(gpu_stub) for compile-time contract checks"
     );
     assert!(
+        build_rs.contains("cargo:rustc-check-cfg=cfg(gpu_stub)"),
+        "gpu_stub must be a known cfg so CUDA builds with -D unexpected_cfgs accept it"
+    );
+    assert!(
         build_rs.contains("fn build_cuda_stub"),
         "stub fatbin/shim wiring should live in build_cuda_stub"
     );
