@@ -40,7 +40,7 @@ Coverage mirrors CI with `cargo llvm-cov --lib --no-default-features --locked --
 
 ## Running the research loop
 
-`RunConfig`-based examples read config from env (`.env.local`, auto-loaded via `dotenvy`; copy from `.env.example`, which documents every key). `validate_matrix`, `validate_local_saaq`, `summarize_local_saaq`, and `safetensors_manifest` take positional arguments; `csv_replay` requires a positional CSV path and also reads its remaining configuration from env. Recipes in `justfile`:
+`RunConfig`-based examples read config from env (`.env.local`, auto-loaded via `dotenvy`; copy from `.env.example`, which documents every key). `validate_matrix`, `validate_local_saaq`, `summarize_local_saaq`, and `safetensors_manifest` take positional arguments; `csv_replay` requires a positional CSV path and also reads its remaining configuration from env; `spikenaut_ingest` takes a JSONL path (optional CSV out, `--smoke`). Recipes in `justfile`:
 
 ```bash
 just saaq                          # primary SAAQ latent calibration loop
@@ -50,6 +50,8 @@ CHECKPOINT_PATH=/path/model.gguf just smoke   # direct GPU temporal smoke path
 just synapse-diag                  # print preferred GPU synapse tensor + ggml_type per model
 just synapse-diag-strict           # same probe; non-zero if any row has error (or none run)
 just replay /path/telemetry.csv
+just spikenaut-ingest /path/in.jsonl [/path/out.csv]
+just spikenaut-smoke /path/in.jsonl
 just clean-artifacts
 ```
 
