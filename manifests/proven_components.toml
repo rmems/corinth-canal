@@ -37,14 +37,14 @@ last_proven_run = ""
 path            = "src/moe/checkpoint.rs"
 status          = "reference"
 target_repo     = "rmems-moe"
-owner_notes     = "Façade over src/moe/gguf/; needs proper test battery. Parse layer separately migrating to an rmems/engram-parser dependency (#115, blocked by #144 / rmems/engram-parser#45); the GGUF parse layer uses a real dependency, whereas safetensors is a one-way copy with no dependency."
+owner_notes     = "Façade over src/moe/gguf/; needs proper test battery. Parse/mmap/packed-K-quant layer migrating to an rmems/engram-parser dependency (#115). #144 decided option 1 (upstream first): mmap + Q8_0/Q5_K/Q6_K and internal-only IQ3_M_BLOCK shipped in rmems/engram-parser#73 (closes #45); #115 is unblocked. CUDA host-register stays here. GGUF is a real dependency; safetensors is a one-way copy with no dependency."
 last_proven_run = ""
 
 [[component]]
 path            = "src/moe/gguf/"
 status          = "reference"
 target_repo     = "rmems-moe"
-owner_notes     = "Split of checkpoint: metadata, map, dequant, cuda_register. Needs format test battery. Only the parse half is in scope for the engram-parser dependency in #115; dequant and CUDA stay here."
+owner_notes     = "Split of checkpoint: metadata, map, dequant, cuda_register. Needs format test battery. #144/#45 option 1 shipped in engram-parser#73 (mmap feature + packed Q8_0/Q5_K/Q6_K and internal-only IQ3_M_BLOCK). #115 will consume parse/mmap/packed dequant from engram-parser once adopted; CUDA host-register stays here."
 last_proven_run = ""
 
 [[component]]
