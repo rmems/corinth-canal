@@ -23,9 +23,26 @@ pub(super) fn timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) ->
 
 fn parse_timestamp_field(value: Option<&Value>) -> Option<u64> {
     match value {
-        Some(Value::Number(n)) => numeric_timestamp_ms(n.as_f64()?),
+        Some(Value::Number(n)) => {
+            if let Some(integer) = n.as_u64() {
+                return numeric_integer_timestamp_ms(integer);
+            }
+            numeric_timestamp_ms(n.as_f64()?)
+        }
         Some(Value::String(s)) => parse_timestamp_string(s),
         _ => None,
+    }
+}
+
+fn numeric_integer_timestamp_ms(value: u64) -> Option<u64> {
+    if value >= 10_000_000_000_000_000 {
+        Some(value / 1_000_000)
+    } else if value >= 1_000_000_000_000 {
+        Some(value)
+    } else if value >= 1_000_000_000 {
+        value.checked_mul(1_000)
+    } else {
+        Some(value)
     }
 }
 
@@ -144,8 +161,9 @@ fn time_in_range(civil: &CivilTime) -> bool {
 }
 
 fn frac_millis(frac: Option<&str>) -> Option<u32> {
-    match frac.filter(|part| !part.is_empty()) {
+    match frac {
         None => Some(0),
+        Some("") => None,
         Some(part) => parse_frac_digits(part),
     }
 }
@@ -357,6 +375,18 @@ mod tests {
     fn parse_timestamp_rejects_trailing_frac_garbage() {
         assert!(parse_timestamp_string("2026-03-19T12:00:00.123junk").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00.380000").is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_empty_fraction() {
+        assert!(parse_timestamp_string("2026-03-19T12:00:00.Z").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00.+00:00").is_none());
+    }
+
+    #[test]
+    fn integer_epoch_nanoseconds_keep_millisecond_boundary() {
+        let value = serde_json::json!(1_773_921_536_380_999_999_u64);
+        assert_eq!(parse_timestamp_field(Some(&value)), Some(1_773_921_536_380));
     }
 
     #[test]

@@ -33,11 +33,23 @@ pub fn run_dual_saaq_cpu_smoke(
     }
     std::fs::create_dir_all(run_dir)?;
     let paths = SmokePaths::new(run_dir);
+    clear_previous_completion(&paths)?;
     let metrics = run_smoke_ticks(rows, &paths)?;
     let manifest = smoke_manifest(rows, run_dir, domain, csv_path, output_root);
     std::fs::write(&paths.manifest, serde_json::to_string_pretty(&manifest)?)?;
     write_smoke_summary(&paths, &manifest, metrics)?;
     Ok(manifest)
+}
+
+fn clear_previous_completion(paths: &SmokePaths) -> std::io::Result<()> {
+    for path in [&paths.manifest, &paths.summary] {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 struct SmokeEngine {

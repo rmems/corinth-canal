@@ -128,6 +128,37 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
     let _ = std::fs::remove_dir_all(run_dir);
 }
 
+#[test]
+fn failed_smoke_replacement_clears_completed_metadata() {
+    let ingested = ingest_jsonl(&fixture("gpu_sample.jsonl"), None, None).unwrap();
+    let run_dir = unique_scratch("spikenaut_failed_replace");
+    std::fs::create_dir_all(run_dir.join("tick_telemetry.txt")).unwrap();
+    std::fs::write(
+        run_dir.join("run_manifest.json"),
+        r#"{"validation_status":"completed"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        run_dir.join("summary.json"),
+        r#"{"validation_status":"completed"}"#,
+    )
+    .unwrap();
+
+    assert!(
+        run_dual_saaq_cpu_smoke(
+            &ingested.rows,
+            &run_dir,
+            ingested.domain,
+            None,
+            &scratch_dir(),
+        )
+        .is_err()
+    );
+    assert!(!run_dir.join("run_manifest.json").exists());
+    assert!(!run_dir.join("summary.json").exists());
+    std::fs::remove_dir_all(run_dir).unwrap();
+}
+
 fn assert_smoke_manifest(manifest: &corinth_canal::ExperimentManifest, output_root: &Path) {
     assert!(manifest.saaq_dual_emit);
     assert_eq!(manifest.telemetry_source, "csv_spikenaut_gpu");

@@ -28,10 +28,11 @@ struct RawFlags {
 /// Split a kernel cmdline blob (`NUL`-terminated tokens, argv[0] first).
 pub fn tokens_from_cmdline(bytes: &[u8]) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
-    for raw in bytes
-        .split(|byte| *byte == 0)
-        .filter(|part| !part.is_empty())
-    {
+    let mut parts = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
+    if bytes.last() == Some(&0) {
+        parts.pop();
+    }
+    for raw in parts {
         tokens.push(utf8_token(raw)?);
     }
     if tokens.is_empty() {
@@ -262,5 +263,13 @@ mod tests {
             tokens_from_cmdline(&[b'b', b'i', b'n', 0, 0xff]).unwrap_err(),
             "argument is not valid UTF-8"
         );
+    }
+
+    #[test]
+    fn tokens_from_cmdline_preserves_empty_flag_value() {
+        let tokens =
+            tokens_from_cmdline(b"spikenaut_ingest\0in.jsonl\0--output-root\0\0--smoke\0").unwrap();
+        assert_eq!(tokens, vec!["in.jsonl", "--output-root", "", "--smoke"]);
+        assert_eq!(parse_argv(tokens).unwrap_err(), "empty path");
     }
 }
