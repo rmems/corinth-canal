@@ -35,7 +35,7 @@ rustls = { version = "0.23.45", default-features = false, features = ["ring", "s
 [dev-dependencies]
 dotenvy = "0.15"
 opentelemetry = "0.32.0"
-opentelemetry_sdk = "0.32.0"
+opentelemetry_sdk = "0.33.0"
 # `reqwest-rustls` is deliberately absent: opentelemetry-http defines it as
 # `reqwest/default-tls`, which is `reqwest/rustls`, which is
 # `__rustls-aws-lc-rs`. The exporter still has TLS — sentry's `transport`
