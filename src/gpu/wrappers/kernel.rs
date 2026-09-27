@@ -146,8 +146,8 @@ impl KernelModule {
     fn load_module_from_fatbin(bytes: &[u8], name: &str) -> GpuResult<Module> {
         if bytes.is_empty() {
             return Err(GpuError::ModuleLoadFailed(format!(
-                "fatbin for '{name}' is empty — built with `gpu-stub` feature \
-                 and no nvcc available; rebuild with CUDA Toolkit \u{2265} 12.8"
+                "fatbin for '{name}' is empty — built with `gpu-stub` feature; \
+                 rebuild without `gpu-stub` and with CUDA Toolkit \u{2265} 12.8 for GPU execution"
             )));
         }
 
