@@ -93,12 +93,12 @@ fn justfile_documents_working_replay_and_saaq_csv() {
         "saaq-csv comment must show a shell assignment, not a fake recipe argument"
     );
     assert!(
-        headings.contains(&"spikenaut-ingest IN OUT='':"),
-        "spikenaut-ingest must stay a positional recipe"
+        headings.contains(&"spikenaut-ingest $IN $OUT='':"),
+        "spikenaut-ingest must export its positional paths for safe shell forwarding"
     );
     assert!(
-        headings.contains(&"spikenaut-smoke IN:"),
-        "spikenaut-smoke must stay a positional recipe"
+        headings.contains(&"spikenaut-smoke $IN:"),
+        "spikenaut-smoke must export its positional path for safe shell forwarding"
     );
     assert!(
         text.contains("just spikenaut-ingest tests/fixtures/spikenaut/gpu_sample.jsonl"),

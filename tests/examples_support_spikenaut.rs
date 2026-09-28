@@ -140,6 +140,22 @@ fn ingest_auto_detects_state_vram_fallbacks() {
 }
 
 #[test]
+fn ingest_auto_detects_gpu_with_utilization_metric() {
+    let path = unique_scratch("spikenaut_gpu_util").with_extension("jsonl");
+    std::fs::write(
+        &path,
+        "{\"gpu_temp_c\":45.0,\"power_w\":120.0,\"vram_temp_c\":72.0,\"mem_util_pct\":39.0,\"gpu_util_pct\":85.0}\n",
+    )
+    .unwrap();
+    let ingested = ingest_jsonl(&path, None, None).unwrap();
+    assert_eq!(ingested.domain, SpikenautDomain::Gpu);
+    assert_eq!(ingested.rows.len(), 1);
+    assert_eq!(ingested.rows[0].cpu_tctl_c, 72.0);
+    assert_eq!(ingested.rows[0].cpu_package_power_w, 39.0);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn ingest_auto_detects_qubic_without_unused_tick_identifier() {
     let path = unique_scratch("spikenaut_qubic_no_tick").with_extension("jsonl");
     std::fs::write(
