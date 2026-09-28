@@ -2,7 +2,7 @@
 //! CLI argument parsing for `spikenaut_ingest`.
 
 use std::iter::Peekable;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use super::domain::SpikenautDomain;
 
@@ -145,6 +145,12 @@ where
     I: Iterator<Item = S>,
     S: AsRef<str>,
 {
+    if items
+        .peek()
+        .is_none_or(|value| value.as_ref().starts_with('-'))
+    {
+        return Err(format!("missing value for {flag}"));
+    }
     items
         .next()
         .map(|value| value.as_ref().to_owned())
@@ -208,12 +214,20 @@ fn default_output_csv(input: &Path) -> PathBuf {
 }
 
 fn default_smoke_csv(input: &Path, output_root: &Path) -> PathBuf {
-    let name = input
-        .file_stem()
-        .map(Path::new)
-        .unwrap_or_else(|| Path::new("spikenaut"))
-        .with_extension("csv");
-    output_root.join(name)
+    let mut path = output_root.join(if input.is_absolute() {
+        "absolute"
+    } else {
+        "relative"
+    });
+    for component in input.components() {
+        match component {
+            Component::Normal(name) => path.push(name),
+            Component::ParentDir => path.push("__parent__"),
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    path.set_extension("csv");
+    path
 }
 
 /// Reject empty, NUL, and control-character paths before filesystem use.
@@ -241,8 +255,25 @@ mod tests {
     fn parse_argv_smoke_default_csv_uses_output_root() {
         let cli = parse_argv(["in.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
         assert!(cli.smoke);
-        assert_eq!(cli.output, PathBuf::from("artifacts").join("in.csv"));
+        assert_eq!(cli.output, PathBuf::from("artifacts/relative/in.csv"));
         assert_eq!(cli.output_root, PathBuf::from("artifacts"));
+    }
+
+    #[test]
+    fn smoke_default_csv_keeps_same_stem_inputs_distinct() {
+        let gpu = parse_argv(["gpu/data.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
+        let hft = parse_argv(["hft/data.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
+        assert_ne!(gpu.output, hft.output);
+        assert!(gpu.output.starts_with("artifacts"));
+        assert!(hft.output.starts_with("artifacts"));
+    }
+
+    #[test]
+    fn valued_flags_reject_the_next_flag_as_a_missing_value() {
+        for flag in ["--output-root", "--domain", "--limit"] {
+            let err = parse_argv(["in.jsonl", flag, "--smoke"]).unwrap_err();
+            assert_eq!(err, format!("missing value for {flag}"));
+        }
     }
 
     #[test]
