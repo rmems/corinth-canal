@@ -10,13 +10,7 @@ use super::smoke_artifacts::SmokePaths;
 impl Cli {
     /// Prevent conversion from overwriting its source or smoke artifacts.
     pub fn validate_output_paths(&self, domain: SpikenautDomain) -> std::io::Result<()> {
-        if same_existing_file(&self.input, &self.output)? {
-            return Err(std::io::Error::other(format!(
-                "CSV output '{}' would overwrite input '{}'",
-                self.output.display(),
-                self.input.display()
-            )));
-        }
+        self.validate_input_output()?;
         if !self.smoke {
             return Ok(());
         }
@@ -24,10 +18,7 @@ impl Cli {
             .output_root
             .join(domain.source_slug())
             .join("dual_saaq_smoke");
-        if lexical_smoke_overlap(&self.output, &run_dir)?
-            || canonical_smoke_overlap(&self.output, &run_dir)
-            || reserved_artifact_overlap(&self.output, &run_dir)?
-        {
+        if smoke_output_overlap(&self.output, &run_dir)? {
             return Err(std::io::Error::other(format!(
                 "smoke CSV output '{}' overlaps smoke artifacts in '{}'",
                 self.output.display(),
@@ -36,6 +27,24 @@ impl Cli {
         }
         Ok(())
     }
+
+    fn validate_input_output(&self) -> std::io::Result<()> {
+        if same_existing_file(&self.input, &self.output)? {
+            return Err(std::io::Error::other(format!(
+                "CSV output '{}' would overwrite input '{}'",
+                self.output.display(),
+                self.input.display()
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn smoke_output_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool> {
+    if lexical_smoke_overlap(output, run_dir)? || canonical_smoke_overlap(output, run_dir) {
+        return Ok(true);
+    }
+    reserved_artifact_overlap(output, run_dir)
 }
 
 fn lexical_smoke_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool> {
