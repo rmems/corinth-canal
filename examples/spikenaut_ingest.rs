@@ -45,7 +45,8 @@ fn main() {
 }
 
 fn load_cli() -> Result<Cli, String> {
-    let args = spikenaut::cli::tokens_from_os_args(std::env::args_os().skip(1))?;
+    // CLI arguments are untrusted input and are validated by parse_argv below.
+    let args = spikenaut::cli::tokens_from_os_args(std::env::args_os().skip(1))?; // nosemgrep: rust.lang.security.args-os.args-os
     spikenaut::cli::parse_argv(args)
 }
 
