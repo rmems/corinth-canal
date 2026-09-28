@@ -13,6 +13,7 @@
 //! from the CPU example and integration test.
 
 pub mod cli;
+mod cli_paths;
 mod csv;
 mod domain;
 mod fields;
