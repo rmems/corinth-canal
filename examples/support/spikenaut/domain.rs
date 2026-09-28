@@ -3,7 +3,7 @@
 
 use serde_json::{Map, Value};
 
-use super::fields::{flatten_telemetry_object, has_key, has_pair};
+use super::fields::{finite_field, flatten_telemetry_object, has_key, has_pair};
 
 /// Domain / capture family of a Spikenaut JSONL file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,11 +90,14 @@ pub fn detect_domain(object: &Map<String, Value>) -> Option<SpikenautDomain> {
 }
 
 fn is_state(flat: &Map<String, Value>) -> bool {
-    has_pair(flat, "cpu_temp_c", "board_power_w")
-        || has_pair(flat, "cpu_temp_c", "cpu_util_pct")
-        || has_pair(flat, "vram_temp_c", "board_power_w")
-        || has_pair(flat, "vram_temp_c", "cpu_util_pct")
-        || has_pair(flat, "episode_id", "step_idx")
+    has_finite_pair(flat, "cpu_temp_c", "board_power_w")
+        || has_finite_pair(flat, "cpu_temp_c", "cpu_util_pct")
+        || has_finite_pair(flat, "vram_temp_c", "board_power_w")
+        || has_finite_pair(flat, "vram_temp_c", "cpu_util_pct")
+}
+
+fn has_finite_pair(flat: &Map<String, Value>, left: &str, right: &str) -> bool {
+    finite_field(flat, left).is_some() && finite_field(flat, right).is_some()
 }
 
 fn is_hft(flat: &Map<String, Value>) -> bool {

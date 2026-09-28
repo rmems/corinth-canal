@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! CPU dual-SAAQ (1.0 + 1.5) smoke over already-mapped snapshots.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -31,7 +31,8 @@ pub fn run_dual_saaq_cpu_smoke(
     if rows.is_empty() {
         return Err(std::io::Error::other("dual-SAAQ smoke needs at least one mapped row").into());
     }
-    std::fs::create_dir_all(run_dir)?;
+    reject_symlinked_run_dir(run_dir)?;
+    let _lock = acquire_smoke_lock(run_dir)?;
     let paths = SmokePaths::new(run_dir);
     clear_previous_completion(&paths)?;
     prepare_data_artifacts(&paths)?;
@@ -39,6 +40,30 @@ pub fn run_dual_saaq_cpu_smoke(
     let manifest = smoke_manifest(rows, run_dir, domain, csv_path, output_root);
     publish_smoke_completion(&paths, &manifest, metrics)?;
     Ok(manifest)
+}
+
+fn acquire_smoke_lock(run_dir: &Path) -> std::io::Result<File> {
+    std::fs::create_dir_all(run_dir)?;
+    let lock_path = run_dir.join(".smoke.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn reject_symlinked_run_dir(run_dir: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(run_dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::other(
+            "smoke run directory must not be a symlink",
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn prepare_data_artifacts(paths: &SmokePaths) -> std::io::Result<()> {
@@ -78,7 +103,7 @@ fn publish_smoke_completion(
 }
 
 fn clear_previous_completion(paths: &SmokePaths) -> std::io::Result<()> {
-    for path in [&paths.manifest, &paths.summary] {
+    for path in [&paths.summary, &paths.manifest] {
         match std::fs::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -278,5 +303,38 @@ mod tests {
         assert!(publish_smoke_completion(&paths, &manifest, ExperimentMetrics::default()).is_err());
         assert!(!paths.summary.exists());
         std::fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn summary_cleanup_failure_keeps_old_manifest() {
+        let run_dir = scratch_run_dir("summary_cleanup_failure");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let paths = SmokePaths::new(&run_dir);
+        std::fs::write(&paths.manifest, b"old completed manifest").unwrap();
+        std::fs::create_dir(&paths.summary).unwrap();
+
+        assert!(clear_previous_completion(&paths).is_err());
+        assert_eq!(
+            std::fs::read(&paths.manifest).unwrap(),
+            b"old completed manifest"
+        );
+        std::fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn smoke_lock_excludes_a_second_writer() {
+        let run_dir = scratch_run_dir("shared_lock");
+        let first = acquire_smoke_lock(&run_dir).unwrap();
+        let second = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(run_dir.join(".smoke.lock"))
+            .unwrap();
+        assert!(second.try_lock().is_err());
+        drop(first);
+        assert!(second.try_lock().is_ok());
+        drop(second);
+        std::fs::remove_file(run_dir.join(".smoke.lock")).unwrap();
+        std::fs::remove_dir(run_dir).unwrap();
     }
 }

@@ -170,6 +170,20 @@ fn ingest_auto_detects_gpu_with_utilization_metric() {
 }
 
 #[test]
+fn ingest_gpu_with_null_state_field_stays_gpu() {
+    let path = unique_scratch("spikenaut_gpu_null_state").with_extension("jsonl");
+    std::fs::write(
+        &path,
+        "{\"gpu_temp_c\":45.0,\"power_w\":120.0,\"vram_temp_c\":72.0,\"mem_util_pct\":39.0,\"cpu_util_pct\":null}\n",
+    )
+    .unwrap();
+    let ingested = ingest_jsonl(&path, None, None).unwrap();
+    assert_eq!(ingested.domain, SpikenautDomain::Gpu);
+    assert_eq!(ingested.rows.len(), 1);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn ingest_auto_detects_qubic_without_unused_tick_identifier() {
     let path = unique_scratch("spikenaut_qubic_no_tick").with_extension("jsonl");
     std::fs::write(
@@ -331,6 +345,25 @@ fn smoke_replaces_hardlinked_artifact_without_overwriting_source() {
 
     run_dual_saaq_cpu_smoke(&ingested.rows, &run_dir, ingested.domain, None, &root).unwrap();
     assert_eq!(std::fs::read(&source).unwrap(), original);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn smoke_rejects_symlinked_run_directory_without_touching_target() {
+    let root = unique_scratch("spikenaut_run_dir_symlink");
+    let target = root.join("target");
+    let run_dir = root.join("dual_saaq_smoke");
+    std::fs::create_dir_all(&target).unwrap();
+    let latent = target.join("latent_telemetry.csv");
+    std::fs::write(&latent, b"sentinel").unwrap();
+    std::os::unix::fs::symlink(std::fs::canonicalize(&target).unwrap(), &run_dir).unwrap();
+    let ingested = ingest_jsonl(&fixture("gpu_sample.jsonl"), None, None).unwrap();
+
+    assert!(
+        run_dual_saaq_cpu_smoke(&ingested.rows, &run_dir, ingested.domain, None, &root).is_err()
+    );
+    assert_eq!(std::fs::read(latent).unwrap(), b"sentinel");
     std::fs::remove_dir_all(root).unwrap();
 }
 

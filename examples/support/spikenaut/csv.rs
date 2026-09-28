@@ -134,6 +134,25 @@ mod tests {
     }
 
     #[test]
+    fn completed_replacement_updates_existing_csv() {
+        let root = Path::new("target/tmp-tests").join(format!(
+            "spikenaut_replace_csv_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("replay.csv");
+        std::fs::write(&path, b"old replay").unwrap();
+        write_csv_atomically(&path, |writer| writer.write_all(b"new replay")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new replay");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn csv_header_matches_canonical_replay_contract() {
         assert_eq!(
             SPIKENAUT_CSV_HEADER,
