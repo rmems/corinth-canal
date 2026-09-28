@@ -9,7 +9,7 @@ pub(super) fn timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) ->
     if let Some(ms) = parse_timestamp_field(fields.get("timestamp")) {
         return ms;
     }
-    if let Some(ms) = parse_timestamp_field(fields.get("ts_utc")) {
+    if let Some(ms) = parse_ts_utc_ns(fields.get("ts_utc")) {
         return ms;
     }
     if let Some(ms) = integer_field(fields, "row_index") {
@@ -19,6 +19,14 @@ pub(super) fn timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) ->
         return ms;
     }
     ordinal
+}
+
+fn parse_ts_utc_ns(value: Option<&Value>) -> Option<u64> {
+    match value? {
+        Value::Number(number) => number.as_u64().map(|ns| ns / 1_000_000),
+        Value::String(raw) => raw.parse::<u64>().ok().map(|ns| ns / 1_000_000),
+        _ => None,
+    }
 }
 
 fn parse_timestamp_field(value: Option<&Value>) -> Option<u64> {
@@ -242,7 +250,7 @@ fn tz_sign(tz: &str) -> Option<i64> {
 }
 
 fn offset_in_range(hh: i64, mm: i64) -> bool {
-    (0..=23).contains(&hh) && (0..=59).contains(&mm)
+    (0..=14).contains(&hh) && (0..=59).contains(&mm) && (hh != 14 || mm == 0)
 }
 
 fn tz_hours_minutes(body: &str) -> Option<(i64, i64)> {
@@ -367,6 +375,10 @@ mod tests {
         assert!(parse_timestamp_string("2026-03-19T12:00:00+99:99").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+24:00").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00-00:60").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00+15:00").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00+14:30").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00-14:01").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00+14:00").is_some());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+00:00").is_some());
     }
 

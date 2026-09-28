@@ -119,6 +119,20 @@ fn ingest_auto_detects_state_cpu_util_fallback() {
 }
 
 #[test]
+fn ingest_state_ts_utc_uses_nanoseconds_even_for_small_values() {
+    let path = unique_scratch("spikenaut_state_small_ns").with_extension("jsonl");
+    std::fs::write(
+        &path,
+        "{\"ts_utc\":1000000000,\"gpu_temp_c\":45.0,\"power_w\":120.0,\"cpu_temp_c\":72.0,\"board_power_w\":95.0}\n",
+    )
+    .unwrap();
+    let ingested = ingest_jsonl(&path, None, None).unwrap();
+    assert_eq!(ingested.domain, SpikenautDomain::State);
+    assert_eq!(ingested.rows[0].timestamp_ms, 1_000);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn ingest_auto_detects_state_vram_fallbacks() {
     let path = unique_scratch("spikenaut_state_vram").with_extension("jsonl");
     std::fs::write(
@@ -195,6 +209,13 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
     .unwrap();
     assert_smoke_manifest(&manifest, &output_root);
     assert_dual_saaq_latent(&run_dir, 4);
+    let tick_text = std::fs::read_to_string(run_dir.join("tick_telemetry.txt")).unwrap();
+    let timestamps: Vec<u64> = tick_text
+        .lines()
+        .skip(1)
+        .map(|line| line.split(',').nth(1).unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(timestamps, [1, 2, 3, 4]);
     let _ = std::fs::remove_dir_all(run_dir);
 }
 

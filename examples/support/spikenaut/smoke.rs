@@ -132,7 +132,11 @@ fn write_smoke_tick_rows<W: Write>(
     metrics: &mut ExperimentMetrics,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for (tick, snap) in rows.iter().enumerate() {
-        process_smoke_tick(engine, exporter, tick_writer, tick, snap, metrics)?;
+        let mut replay_snap = snap.clone();
+        // Match telemetry_snapshot_for_tick so smoke and CSV campaigns use the
+        // same elapsed-time basis while the source CSV keeps its timestamps.
+        replay_snap.timestamp_ms = tick as u64 + 1;
+        process_smoke_tick(engine, exporter, tick_writer, tick, &replay_snap, metrics)?;
     }
     Ok(())
 }

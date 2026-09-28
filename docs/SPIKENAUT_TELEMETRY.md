@@ -140,7 +140,9 @@ GPU campaign replay of a file named `spikenaut_gpu.csv` gets the same
 ## Dual-SAAQ smoke
 
 `--smoke` runs `SnnDualLatentCalibrator` on the CPU funnel + projector +
-`RoutingMode::StubUniform` router (no CUDA, no checkpoint). It writes the
+`RoutingMode::StubUniform` router (no CUDA, no checkpoint). The smoke loop
+uses consecutive tick timestamps, matching CSV campaign replay. The canonical
+CSV keeps the source timestamps or ordinals for provenance. Smoke writes the
 usual validation files:
 
 - `tick_telemetry.txt`

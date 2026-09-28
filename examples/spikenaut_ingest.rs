@@ -51,6 +51,7 @@ fn load_cli() -> Result<Cli, String> {
 
 fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let ingested = ingest_mapped_rows(cli)?;
+    cli.validate_smoke_output(ingested.domain)?;
     write_and_reload_csv(&cli.output, &ingested.rows)?;
     print_ingest_report(&ingested, &cli.output);
     maybe_run_smoke(cli, &ingested)

@@ -6,6 +6,50 @@ use std::path::{Component, Path, PathBuf};
 
 use super::domain::SpikenautDomain;
 
+impl Cli {
+    /// Keep the replay CSV outside the smoke run directory, whose files are
+    /// replaced when a smoke run starts.
+    pub fn validate_smoke_output(&self, domain: SpikenautDomain) -> std::io::Result<()> {
+        if !self.smoke {
+            return Ok(());
+        }
+        let run_dir = self
+            .output_root
+            .join(domain.source_slug())
+            .join("dual_saaq_smoke");
+        if normalized_absolute_path(&self.output)?.starts_with(normalized_absolute_path(&run_dir)?)
+        {
+            return Err(std::io::Error::other(format!(
+                "smoke CSV output '{}' overlaps smoke artifacts in '{}'",
+                self.output.display(),
+                run_dir.display()
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn normalized_absolute_path(path: &Path) -> std::io::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    Ok(normalized)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cli {
     pub input: PathBuf,
@@ -221,12 +265,16 @@ fn default_smoke_csv(input: &Path, output_root: &Path) -> PathBuf {
     });
     for component in input.components() {
         match component {
-            Component::Normal(name) => path.push(name),
-            Component::ParentDir => path.push("__parent__"),
+            Component::Normal(name) => {
+                let mut encoded = std::ffi::OsString::from("n_");
+                encoded.push(name);
+                path.push(encoded);
+            }
+            Component::ParentDir => path.push("p_"),
             Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
         }
     }
-    path.set_extension("csv");
+    path.as_mut_os_string().push(".csv");
     path
 }
 
@@ -255,7 +303,10 @@ mod tests {
     fn parse_argv_smoke_default_csv_uses_output_root() {
         let cli = parse_argv(["in.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
         assert!(cli.smoke);
-        assert_eq!(cli.output, PathBuf::from("artifacts/relative/in.csv"));
+        assert_eq!(
+            cli.output,
+            PathBuf::from("artifacts/relative/n_in.jsonl.csv")
+        );
         assert_eq!(cli.output_root, PathBuf::from("artifacts"));
     }
 
@@ -266,6 +317,28 @@ mod tests {
         assert_ne!(gpu.output, hft.output);
         assert!(gpu.output.starts_with("artifacts"));
         assert!(hft.output.starts_with("artifacts"));
+    }
+
+    #[test]
+    fn smoke_default_csv_distinguishes_parent_from_literal_component() {
+        let parent = parse_argv(["../run.jsonl", "--smoke"]).unwrap();
+        let literal = parse_argv(["__parent__/run.jsonl", "--smoke"]).unwrap();
+        assert_ne!(parent.output, literal.output);
+        let other_extension = parse_argv(["../run.txt", "--smoke"]).unwrap();
+        assert_ne!(parent.output, other_extension.output);
+    }
+
+    #[test]
+    fn smoke_rejects_csv_outputs_inside_its_artifact_directory() {
+        for output in [
+            "artifacts/spikenaut_gpu/dual_saaq_smoke/latent_telemetry.csv",
+            "artifacts/spikenaut_gpu/dual_saaq_smoke/../dual_saaq_smoke/summary.json",
+        ] {
+            let cli = parse_argv(["in.jsonl", output, "--smoke"]).unwrap();
+            assert!(cli.validate_smoke_output(SpikenautDomain::Gpu).is_err());
+        }
+        let cli = parse_argv(["in.jsonl", "artifacts/safe.csv", "--smoke"]).unwrap();
+        assert!(cli.validate_smoke_output(SpikenautDomain::Gpu).is_ok());
     }
 
     #[test]
