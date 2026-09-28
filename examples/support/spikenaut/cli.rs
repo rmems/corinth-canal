@@ -217,7 +217,16 @@ fn default_smoke_csv(input: &Path, output_root: &Path) -> PathBuf {
                 path.push(encoded);
             }
             Component::ParentDir => path.push("p_"),
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+            Component::Prefix(prefix) => {
+                let hex = prefix
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                path.push(format!("x_{hex}"));
+            }
+            Component::CurDir | Component::RootDir => {}
         }
     }
     path.as_mut_os_string().push(".csv");
@@ -272,6 +281,14 @@ mod tests {
         assert_ne!(parent.output, literal.output);
         let other_extension = parse_argv(["../run.txt", "--smoke"]).unwrap();
         assert_ne!(parent.output, other_extension.output);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn smoke_default_csv_distinguishes_windows_drives() {
+        let c = parse_argv([r"C:\capture\data.jsonl", "--smoke"]).unwrap();
+        let d = parse_argv([r"D:\capture\data.jsonl", "--smoke"]).unwrap();
+        assert_ne!(c.output, d.output);
     }
 
     #[test]

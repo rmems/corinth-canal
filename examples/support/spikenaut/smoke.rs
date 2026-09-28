@@ -33,8 +33,8 @@ pub fn run_dual_saaq_cpu_smoke(
     }
     std::fs::create_dir_all(run_dir)?;
     let paths = SmokePaths::new(run_dir);
-    prepare_data_artifacts(&paths)?;
     clear_previous_completion(&paths)?;
+    prepare_data_artifacts(&paths)?;
     let metrics = run_smoke_ticks(rows, &paths)?;
     let manifest = smoke_manifest(rows, run_dir, domain, csv_path, output_root);
     publish_smoke_completion(&paths, &manifest, metrics)?;

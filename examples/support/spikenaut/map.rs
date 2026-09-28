@@ -185,6 +185,8 @@ mod tests {
             "gpu_temp_c": 80.0,
             "reward_hint": 0.94,
             "timestamp": null,
+            "row_index": 99,
+            "step_idx": 88,
             "blockchain": "dynex"
         }));
         let snap = map_record(&obj, SpikenautDomain::Mining, 7).unwrap();

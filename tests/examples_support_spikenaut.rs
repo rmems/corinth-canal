@@ -258,6 +258,44 @@ fn failed_smoke_replacement_clears_completed_metadata() {
 
 #[cfg(unix)]
 #[test]
+fn failed_smoke_artifact_preparation_clears_previous_completion() {
+    let ingested = ingest_jsonl(&fixture("gpu_sample.jsonl"), None, None).unwrap();
+    let run_dir = unique_scratch("spikenaut_failed_preparation");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(run_dir.join("latent_telemetry.csv"), b"old latent").unwrap();
+    std::os::unix::fs::symlink(
+        run_dir.join("missing_tick"),
+        run_dir.join("tick_telemetry.txt"),
+    )
+    .unwrap();
+    std::fs::write(
+        run_dir.join("run_manifest.json"),
+        r#"{"validation_status":"completed"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        run_dir.join("summary.json"),
+        r#"{"validation_status":"completed"}"#,
+    )
+    .unwrap();
+
+    assert!(
+        run_dual_saaq_cpu_smoke(
+            &ingested.rows,
+            &run_dir,
+            ingested.domain,
+            None,
+            &scratch_dir()
+        )
+        .is_err()
+    );
+    assert!(!run_dir.join("run_manifest.json").exists());
+    assert!(!run_dir.join("summary.json").exists());
+    std::fs::remove_dir_all(run_dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn smoke_rejects_artifact_symlink_without_overwriting_source() {
     let root = unique_scratch("spikenaut_artifact_symlink");
     let run_dir = root.join("run");

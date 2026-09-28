@@ -6,19 +6,7 @@ use serde_json::{Map, Value};
 use super::fields::integer_field;
 
 pub(super) fn timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) -> u64 {
-    if let Some(ms) = parse_timestamp_field(fields.get("timestamp")) {
-        return ms;
-    }
-    if let Some(ms) = parse_ts_utc_ns(fields.get("ts_utc")) {
-        return ms;
-    }
-    if let Some(ms) = integer_field(fields, "row_index") {
-        return ms;
-    }
-    if let Some(ms) = integer_field(fields, "step_idx") {
-        return ms;
-    }
-    ordinal
+    parse_timestamp_field(fields.get("timestamp")).unwrap_or(ordinal)
 }
 
 pub(super) fn state_timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) -> u64 {
