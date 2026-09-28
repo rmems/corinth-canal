@@ -33,11 +33,29 @@ pub fn run_dual_saaq_cpu_smoke(
     }
     std::fs::create_dir_all(run_dir)?;
     let paths = SmokePaths::new(run_dir);
+    reject_symlinked_data_artifacts(&paths)?;
     clear_previous_completion(&paths)?;
     let metrics = run_smoke_ticks(rows, &paths)?;
     let manifest = smoke_manifest(rows, run_dir, domain, csv_path, output_root);
     publish_smoke_completion(&paths, &manifest, metrics)?;
     Ok(manifest)
+}
+
+fn reject_symlinked_data_artifacts(paths: &SmokePaths) -> std::io::Result<()> {
+    for path in [&paths.latent, &paths.tick] {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(std::io::Error::other(format!(
+                    "smoke artifact '{}' must not be a symlink",
+                    path.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn publish_smoke_completion(

@@ -41,7 +41,7 @@ impl Cli {
 }
 
 fn smoke_output_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool> {
-    if lexical_smoke_overlap(output, run_dir)? || canonical_smoke_overlap(output, run_dir) {
+    if lexical_smoke_overlap(output, run_dir)? || canonical_smoke_overlap(output, run_dir)? {
         return Ok(true);
     }
     reserved_artifact_overlap(output, run_dir)
@@ -54,13 +54,32 @@ fn lexical_smoke_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool>
         || symlink_target(&output)?.is_some_and(|target| target.starts_with(&run_dir)))
 }
 
-fn canonical_smoke_overlap(output: &Path, run_dir: &Path) -> bool {
-    match (
-        std::fs::canonicalize(output),
-        std::fs::canonicalize(run_dir),
-    ) {
-        (Ok(output), Ok(run_dir)) => output.starts_with(run_dir),
-        _ => false,
+fn canonical_smoke_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool> {
+    Ok(resolved_path(output)?.starts_with(resolved_path(run_dir)?))
+}
+
+/// Resolve symlinks in the longest existing prefix while retaining a new leaf.
+fn resolved_path(path: &Path) -> std::io::Result<PathBuf> {
+    let mut current = absolute_path(path)?;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::canonicalize(&current) {
+            Ok(mut resolved) => {
+                for component in missing.into_iter().rev() {
+                    resolved.push(component);
+                }
+                return normalized_absolute_path(&resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = current.file_name().ok_or(error)?;
+                missing.push(name.to_os_string());
+                current = current
+                    .parent()
+                    .ok_or_else(|| std::io::Error::other("output path has no existing ancestor"))?
+                    .to_path_buf();
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -109,11 +128,7 @@ fn symlink_target(path: &Path) -> std::io::Result<Option<PathBuf>> {
 }
 
 fn normalized_absolute_path(path: &Path) -> std::io::Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
+    let absolute = absolute_path(path)?;
     let mut normalized = PathBuf::new();
     for component in absolute.components() {
         match component {
@@ -127,6 +142,14 @@ fn normalized_absolute_path(path: &Path) -> std::io::Result<PathBuf> {
         }
     }
     Ok(normalized)
+}
+
+fn absolute_path(path: &Path) -> std::io::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -465,6 +488,35 @@ mod tests {
         let cli = parse_argv([
             "in.jsonl",
             alias.to_str().unwrap(),
+            "--smoke",
+            "--output-root",
+            root.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn smoke_output_symlinked_parent_cannot_alias_new_artifact() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_parent_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let run_dir = root.join("spikenaut_gpu/dual_saaq_smoke");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(std::fs::canonicalize(&run_dir).unwrap(), &alias).unwrap();
+        let output = alias.join("latent_telemetry.csv");
+        assert!(!output.exists());
+        let cli = parse_argv([
+            "in.jsonl",
+            output.to_str().unwrap(),
             "--smoke",
             "--output-root",
             root.to_str().unwrap(),

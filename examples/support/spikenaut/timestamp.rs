@@ -21,6 +21,12 @@ pub(super) fn timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) ->
     ordinal
 }
 
+pub(super) fn state_timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) -> u64 {
+    parse_ts_utc_ns(fields.get("ts_utc"))
+        .or_else(|| integer_field(fields, "step_idx"))
+        .unwrap_or(ordinal)
+}
+
 fn parse_ts_utc_ns(value: Option<&Value>) -> Option<u64> {
     match value? {
         Value::Number(number) => number.as_u64().map(|ns| ns / 1_000_000),

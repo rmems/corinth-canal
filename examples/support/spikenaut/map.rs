@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use super::domain::SpikenautDomain;
 use super::fields::{finite_field, first_finite, flatten_telemetry_object, snapshot_if_finite};
-use super::timestamp::timestamp_or_ordinal;
+use super::timestamp::{state_timestamp_or_ordinal, timestamp_or_ordinal};
 
 /// Map one JSON object onto a snapshot. `ordinal` is the 0-based emitted-row
 /// candidate (file order, including skipped lines) used only when the source
@@ -97,7 +97,7 @@ fn map_state(
     let cpu_tctl_c = first_finite(fields, &["cpu_temp_c", "vram_temp_c"])?;
     let cpu_package_power_w = first_finite(fields, &["board_power_w", "cpu_util_pct"])?;
     snapshot_if_finite(corinth_canal::TelemetrySnapshot {
-        timestamp_ms: timestamp_or_ordinal(fields, ordinal),
+        timestamp_ms: state_timestamp_or_ordinal(fields, ordinal),
         gpu_temp_c,
         gpu_power_w,
         cpu_tctl_c,
@@ -241,6 +241,24 @@ mod tests {
         assert_eq!(snap.timestamp_ms, 3);
         assert!((snap.cpu_tctl_c - 71.5).abs() < 1e-4);
         assert!((snap.cpu_package_power_w - 95.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn state_prefers_ts_utc_over_generic_timestamp() {
+        let obj = object(json!({
+            "telemetry": {
+                "ts_utc": 1_000_000_000_u64,
+                "timestamp": "2026-03-19T12:00:00Z",
+                "step_idx": 7,
+                "gpu_temp_c": 45.0,
+                "power_w": 120.0,
+                "cpu_temp_c": 72.0,
+                "board_power_w": 95.0
+            }
+        }));
+        assert_eq!(detect_domain(&obj), Some(SpikenautDomain::State));
+        let snap = map_record(&obj, SpikenautDomain::State, 99).unwrap();
+        assert_eq!(snap.timestamp_ms, 1_000);
     }
 
     #[test]
