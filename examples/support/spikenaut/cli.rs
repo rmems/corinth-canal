@@ -24,25 +24,10 @@ impl Cli {
             .output_root
             .join(domain.source_slug())
             .join("dual_saaq_smoke");
-        let output = normalized_absolute_path(&self.output)?;
-        let run_dir_absolute = normalized_absolute_path(&run_dir)?;
-        let lexical_alias = output.starts_with(&run_dir_absolute)
-            || symlink_target(&self.output)?
-                .is_some_and(|target| target.starts_with(&run_dir_absolute));
-        let resolved_alias = match (
-            std::fs::canonicalize(&self.output),
-            std::fs::canonicalize(&run_dir),
-        ) {
-            (Ok(output), Ok(run_dir)) => output.starts_with(run_dir),
-            _ => false,
-        };
-        let paths = SmokePaths::new(&run_dir);
-        let hardlink_alias = [&paths.latent, &paths.tick, &paths.manifest, &paths.summary]
-            .into_iter()
-            .try_fold(false, |found, reserved| {
-                Ok::<bool, std::io::Error>(found || same_existing_file(&self.output, reserved)?)
-            })?;
-        if lexical_alias || resolved_alias || hardlink_alias {
+        if lexical_smoke_overlap(&self.output, &run_dir)?
+            || canonical_smoke_overlap(&self.output, &run_dir)
+            || reserved_artifact_overlap(&self.output, &run_dir)?
+        {
             return Err(std::io::Error::other(format!(
                 "smoke CSV output '{}' overlaps smoke artifacts in '{}'",
                 self.output.display(),
@@ -51,6 +36,32 @@ impl Cli {
         }
         Ok(())
     }
+}
+
+fn lexical_smoke_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool> {
+    let output = normalized_absolute_path(output)?;
+    let run_dir = normalized_absolute_path(run_dir)?;
+    Ok(output.starts_with(&run_dir)
+        || symlink_target(&output)?.is_some_and(|target| target.starts_with(&run_dir)))
+}
+
+fn canonical_smoke_overlap(output: &Path, run_dir: &Path) -> bool {
+    match (
+        std::fs::canonicalize(output),
+        std::fs::canonicalize(run_dir),
+    ) {
+        (Ok(output), Ok(run_dir)) => output.starts_with(run_dir),
+        _ => false,
+    }
+}
+
+fn reserved_artifact_overlap(output: &Path, run_dir: &Path) -> std::io::Result<bool> {
+    let paths = SmokePaths::new(run_dir);
+    [&paths.latent, &paths.tick, &paths.manifest, &paths.summary]
+        .into_iter()
+        .try_fold(false, |found, reserved| {
+            Ok(found || same_existing_file(output, reserved)?)
+        })
 }
 
 fn same_existing_file(left: &Path, right: &Path) -> std::io::Result<bool> {
