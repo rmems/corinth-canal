@@ -1,0 +1,462 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//! CLI argument parsing for `spikenaut_ingest`.
+
+use std::ffi::OsString;
+use std::iter::Peekable;
+use std::path::{Component, Path, PathBuf};
+
+use super::domain::SpikenautDomain;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cli {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    pub domain: Option<SpikenautDomain>,
+    pub limit: Option<usize>,
+    pub smoke: bool,
+    pub output_root: PathBuf,
+}
+
+#[derive(Debug, Default)]
+struct RawFlags {
+    positional: Vec<PathBuf>,
+    domain: Option<SpikenautDomain>,
+    limit: Option<usize>,
+    smoke: bool,
+    output_root: Option<PathBuf>,
+}
+
+pub fn tokens_from_os_args(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<Vec<String>, String> {
+    args.into_iter()
+        .map(|arg| {
+            arg.into_string()
+                .map_err(|_| "argument is not valid UTF-8".to_owned())
+        })
+        .collect()
+}
+
+pub fn parse_argv<I, S>(argv: I) -> Result<Cli, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut parsed = RawFlags::default();
+    let mut items = argv.into_iter().peekable();
+    while let Some(raw) = items.next() {
+        apply_token(&mut parsed, raw.as_ref(), &mut items)?;
+    }
+    finish_cli(parsed)
+}
+
+fn apply_token<I, S>(
+    parsed: &mut RawFlags,
+    token: &str,
+    items: &mut Peekable<I>,
+) -> Result<(), String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    if token.starts_with('-') {
+        apply_flag(parsed, token, items)
+    } else {
+        parsed.positional.push(user_path(token)?);
+        Ok(())
+    }
+}
+
+fn apply_flag<I, S>(
+    parsed: &mut RawFlags,
+    flag: &str,
+    items: &mut Peekable<I>,
+) -> Result<(), String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    if flag == "--help" || flag == "-h" {
+        return Err("convert Spikenaut JSONL to canonical replay CSV".to_owned());
+    }
+    if flag == "--smoke" {
+        parsed.smoke = true;
+        return Ok(());
+    }
+    apply_valued_flag(parsed, flag, items)
+}
+
+fn apply_valued_flag<I, S>(
+    parsed: &mut RawFlags,
+    flag: &str,
+    items: &mut Peekable<I>,
+) -> Result<(), String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    match flag {
+        "--domain" => set_domain(parsed, items),
+        "--limit" => set_limit(parsed, items),
+        "--output-root" => set_output_root(parsed, items),
+        _ => Err(format!("unknown flag '{flag}'")),
+    }
+}
+
+fn set_domain<I, S>(parsed: &mut RawFlags, items: &mut Peekable<I>) -> Result<(), String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    parsed.domain = parse_domain_flag(&next_value(items, "--domain")?)?;
+    Ok(())
+}
+
+fn set_limit<I, S>(parsed: &mut RawFlags, items: &mut Peekable<I>) -> Result<(), String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    parsed.limit = Some(parse_limit(&next_value(items, "--limit")?)?);
+    Ok(())
+}
+
+fn set_output_root<I, S>(parsed: &mut RawFlags, items: &mut Peekable<I>) -> Result<(), String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    parsed.output_root = Some(user_path(&next_value(items, "--output-root")?)?);
+    Ok(())
+}
+
+fn next_value<I, S>(items: &mut Peekable<I>, flag: &str) -> Result<String, String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    if items
+        .peek()
+        .is_none_or(|value| value.as_ref().starts_with('-'))
+    {
+        return Err(format!("missing value for {flag}"));
+    }
+    items
+        .next()
+        .map(|value| value.as_ref().to_owned())
+        .ok_or_else(|| format!("missing value for {flag}"))
+}
+
+fn parse_domain_flag(value: &str) -> Result<Option<SpikenautDomain>, String> {
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(None);
+    }
+    SpikenautDomain::from_alias(value)
+        .map(Some)
+        .ok_or_else(|| format!("unknown --domain '{value}'"))
+}
+
+fn parse_limit(value: &str) -> Result<usize, String> {
+    value
+        .parse()
+        .map_err(|_| format!("invalid --limit '{value}'"))
+}
+
+fn finish_cli(parsed: RawFlags) -> Result<Cli, String> {
+    if parsed.positional.len() > 2 {
+        return Err(format!(
+            "unexpected extra argument '{}'",
+            parsed.positional[2].display()
+        ));
+    }
+    let input = parsed
+        .positional
+        .first()
+        .cloned()
+        .ok_or_else(|| "missing <input.jsonl>".to_owned())?;
+    let output_root = parsed
+        .output_root
+        .unwrap_or_else(|| PathBuf::from("artifacts"));
+    let output = resolve_output(&parsed.positional, parsed.smoke, &output_root);
+    Ok(Cli {
+        input,
+        output,
+        domain: parsed.domain,
+        limit: parsed.limit,
+        smoke: parsed.smoke,
+        output_root,
+    })
+}
+
+fn resolve_output(positional: &[PathBuf], smoke: bool, output_root: &Path) -> PathBuf {
+    if let Some(path) = positional.get(1) {
+        return path.clone();
+    }
+    if smoke {
+        default_smoke_csv(&positional[0], output_root)
+    } else {
+        default_output_csv(&positional[0])
+    }
+}
+
+fn default_output_csv(input: &Path) -> PathBuf {
+    input.with_extension("csv")
+}
+
+fn default_smoke_csv(input: &Path, output_root: &Path) -> PathBuf {
+    let mut path = output_root.join(if input.is_absolute() {
+        "absolute"
+    } else {
+        "relative"
+    });
+    for component in input.components() {
+        match component {
+            Component::Normal(name) => {
+                let mut encoded = std::ffi::OsString::from("n_");
+                encoded.push(name);
+                path.push(encoded);
+            }
+            Component::ParentDir => path.push("p_"),
+            Component::Prefix(prefix) => {
+                let hex = prefix
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                path.push(format!("x_{hex}"));
+            }
+            Component::CurDir | Component::RootDir => {}
+        }
+    }
+    path.as_mut_os_string().push(".csv");
+    path
+}
+
+/// Reject empty, NUL, and control-character paths before filesystem use.
+fn user_path(raw: &str) -> Result<PathBuf, String> {
+    if raw.is_empty() {
+        return Err("empty path".to_owned());
+    }
+    if raw.contains('\0') || raw.chars().any(char::is_control) {
+        return Err("path contains control characters".to_owned());
+    }
+    Ok(PathBuf::from(raw))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_argv_rejects_extra_positionals() {
+        let err = parse_argv(["in.jsonl", "out.csv", "extra"]).unwrap_err();
+        assert_eq!(err, "unexpected extra argument 'extra'");
+    }
+
+    #[test]
+    fn parse_argv_smoke_default_csv_uses_output_root() {
+        let cli = parse_argv(["in.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
+        assert!(cli.smoke);
+        assert_eq!(
+            cli.output,
+            PathBuf::from("artifacts/relative/n_in.jsonl.csv")
+        );
+        assert_eq!(cli.output_root, PathBuf::from("artifacts"));
+    }
+
+    #[test]
+    fn smoke_default_csv_keeps_same_stem_inputs_distinct() {
+        let gpu = parse_argv(["gpu/data.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
+        let hft = parse_argv(["hft/data.jsonl", "--smoke", "--output-root", "artifacts"]).unwrap();
+        assert_ne!(gpu.output, hft.output);
+        assert!(gpu.output.starts_with("artifacts"));
+        assert!(hft.output.starts_with("artifacts"));
+    }
+
+    #[test]
+    fn smoke_default_csv_distinguishes_parent_from_literal_component() {
+        let parent = parse_argv(["../run.jsonl", "--smoke"]).unwrap();
+        let literal = parse_argv(["__parent__/run.jsonl", "--smoke"]).unwrap();
+        assert_ne!(parent.output, literal.output);
+        let other_extension = parse_argv(["../run.txt", "--smoke"]).unwrap();
+        assert_ne!(parent.output, other_extension.output);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn smoke_default_csv_distinguishes_windows_drives() {
+        let c = parse_argv([r"C:\capture\data.jsonl", "--smoke"]).unwrap();
+        let d = parse_argv([r"D:\capture\data.jsonl", "--smoke"]).unwrap();
+        assert_ne!(c.output, d.output);
+    }
+
+    #[test]
+    fn smoke_rejects_csv_outputs_inside_its_artifact_directory() {
+        for output in [
+            "artifacts/spikenaut_gpu/dual_saaq_smoke/latent_telemetry.csv",
+            "artifacts/spikenaut_gpu/dual_saaq_smoke/../dual_saaq_smoke/summary.json",
+        ] {
+            let cli = parse_argv(["in.jsonl", output, "--smoke"]).unwrap();
+            assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        }
+        let cli = parse_argv(["in.jsonl", "artifacts/safe.csv", "--smoke"]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_ok());
+    }
+
+    #[test]
+    fn output_cannot_alias_input_file() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_input_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.csv");
+        std::fs::write(&input, b"source JSONL").unwrap();
+        let input_arg = input.to_str().unwrap();
+        let cli = parse_argv([input_arg]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        let cli = parse_argv([input_arg, input_arg]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        let hardlink = root.join("hardlink.csv");
+        std::fs::hard_link(&input, &hardlink).unwrap();
+        let cli = parse_argv([input_arg, hardlink.to_str().unwrap()]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn smoke_output_symlink_cannot_alias_existing_artifact() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_artifact_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let run_dir = root.join("spikenaut_gpu/dual_saaq_smoke");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let latent = run_dir.join("latent_telemetry.csv");
+        std::fs::write(&latent, b"old latent").unwrap();
+        let alias = root.join("safe.csv");
+        std::os::unix::fs::symlink(std::fs::canonicalize(&latent).unwrap(), &alias).unwrap();
+        let cli = parse_argv([
+            "in.jsonl",
+            alias.to_str().unwrap(),
+            "--smoke",
+            "--output-root",
+            root.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn smoke_output_symlinked_parent_cannot_alias_new_artifact() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_parent_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let run_dir = root.join("spikenaut_gpu/dual_saaq_smoke");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(std::fs::canonicalize(&run_dir).unwrap(), &alias).unwrap();
+        let output = alias.join("latent_telemetry.csv");
+        assert!(!output.exists());
+        let cli = parse_argv([
+            "in.jsonl",
+            output.to_str().unwrap(),
+            "--smoke",
+            "--output-root",
+            root.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_csv_output_symlink_is_rejected() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_dangling_output_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let output = root.join("output.csv");
+        std::os::unix::fs::symlink(root.join("missing.csv"), &output).unwrap();
+        let cli = parse_argv(["in.jsonl", output.to_str().unwrap()]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn smoke_input_cannot_be_an_artifact_path() {
+        let cli = parse_argv([
+            "artifacts/spikenaut_gpu/dual_saaq_smoke/latent_telemetry.csv",
+            "artifacts/replay.csv",
+            "--smoke",
+        ])
+        .unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+    }
+
+    #[test]
+    fn valued_flags_reject_the_next_flag_as_a_missing_value() {
+        for flag in ["--output-root", "--domain", "--limit"] {
+            let err = parse_argv(["in.jsonl", flag, "--smoke"]).unwrap_err();
+            assert_eq!(err, format!("missing value for {flag}"));
+        }
+    }
+
+    #[test]
+    fn user_path_rejects_control_characters() {
+        assert!(user_path("").is_err());
+        assert!(user_path("bad\0path").is_err());
+        assert!(user_path("ok.jsonl").is_ok());
+    }
+
+    #[test]
+    fn os_args_preserve_empty_values() {
+        assert_eq!(
+            tokens_from_os_args([
+                OsString::from("in.jsonl"),
+                OsString::from(""),
+                OsString::from("--smoke")
+            ])
+            .unwrap(),
+            vec!["in.jsonl", "", "--smoke"]
+        );
+        assert_eq!(
+            tokens_from_os_args(Vec::new()).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn os_args_reject_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let invalid = OsString::from_vec(vec![0xff]);
+        assert_eq!(
+            tokens_from_os_args([invalid]).unwrap_err(),
+            "argument is not valid UTF-8"
+        );
+    }
+}
