@@ -1,0 +1,29 @@
+examples/support/spikenaut/smoke.rs
+  s_56648ef5bafb70::t_2a17a6628cafaa 37
+examples/support/spikenaut/map.rs
+  s_56648ef5bafb70::t_972e3c86a76b7f 188-189
+examples/support/spikenaut/cli.rs
+  s_56648ef5bafb70::t_2a17a6628cafaa 220-229
+  s_56648ef5bafb70::t_972e3c86a76b7f 286-293
+examples/support/spikenaut/timestamp.rs
+  s_56648ef5bafb70::t_2a17a6628cafaa 9
+tests/examples_support_spikenaut.rs
+  s_56648ef5bafb70::t_ebc4009f929841 266-280,282-291
+  s_56648ef5bafb70::t_972e3c86a76b7f 261-265,281,292-296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "80b1df432a4d4e48c88b2986f9582c44a20974d1",
+  "prompts": {},
+  "sessions": {
+    "s_56648ef5bafb70": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0e542-a5a8-70e1-b943-4b543b7ba897",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
