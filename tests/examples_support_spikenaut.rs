@@ -279,6 +279,23 @@ fn smoke_rejects_artifact_symlink_without_overwriting_source() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn smoke_replaces_hardlinked_artifact_without_overwriting_source() {
+    let root = unique_scratch("spikenaut_artifact_hardlink");
+    let run_dir = root.join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let source = root.join("source.jsonl");
+    let original = std::fs::read(fixture("gpu_sample.jsonl")).unwrap();
+    std::fs::write(&source, &original).unwrap();
+    let ingested = ingest_jsonl(&source, None, None).unwrap();
+    std::fs::hard_link(&source, run_dir.join("tick_telemetry.txt")).unwrap();
+
+    run_dual_saaq_cpu_smoke(&ingested.rows, &run_dir, ingested.domain, None, &root).unwrap();
+    assert_eq!(std::fs::read(&source).unwrap(), original);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn assert_smoke_manifest(manifest: &corinth_canal::ExperimentManifest, output_root: &Path) {
     assert!(manifest.saaq_dual_emit);
     assert_eq!(manifest.telemetry_source, "csv_spikenaut_gpu");

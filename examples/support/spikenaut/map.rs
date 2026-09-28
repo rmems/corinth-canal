@@ -5,7 +5,9 @@ use serde_json::{Map, Value};
 
 use super::domain::SpikenautDomain;
 use super::fields::{finite_field, first_finite, flatten_telemetry_object, snapshot_if_finite};
-use super::timestamp::{state_timestamp_or_ordinal, timestamp_or_ordinal};
+use super::timestamp::{
+    gpu_timestamp_or_ordinal, state_timestamp_or_ordinal, timestamp_or_ordinal,
+};
 
 /// Map one JSON object onto a snapshot. `ordinal` is the 0-based emitted-row
 /// candidate (file order, including skipped lines) used only when the source
@@ -31,7 +33,7 @@ fn map_gpu(fields: &Map<String, Value>, ordinal: u64) -> Option<corinth_canal::T
     let cpu_tctl_c = first_finite(fields, &["vram_temp_c", "cpu_tctl_c"])?;
     let cpu_package_power_w = first_finite(fields, &["mem_util_pct", "cpu_package_power_w"])?;
     snapshot_if_finite(corinth_canal::TelemetrySnapshot {
-        timestamp_ms: timestamp_or_ordinal(fields, ordinal),
+        timestamp_ms: gpu_timestamp_or_ordinal(fields, ordinal),
         gpu_temp_c,
         gpu_power_w,
         cpu_tctl_c,
@@ -130,6 +132,20 @@ mod tests {
         assert!((snap.gpu_power_w - 22.502).abs() < 1e-3);
         assert!((snap.cpu_tctl_c - 39.0).abs() < 1e-4);
         assert!((snap.cpu_package_power_w - 26.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn gpu_prefers_row_index_over_generic_timestamp() {
+        let obj = object(json!({
+            "gpu_temp_c": 31.0,
+            "power_w": 22.502,
+            "vram_temp_c": 39.0,
+            "mem_util_pct": 26.0,
+            "row_index": 12,
+            "timestamp": "2026-03-19T12:00:00Z"
+        }));
+        let snap = map_record(&obj, SpikenautDomain::Gpu, 99).unwrap();
+        assert_eq!(snap.timestamp_ms, 12);
     }
 
     #[test]

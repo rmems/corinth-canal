@@ -18,6 +18,13 @@ impl Cli {
             .output_root
             .join(domain.source_slug())
             .join("dual_saaq_smoke");
+        if smoke_output_overlap(&self.input, &run_dir)? {
+            return Err(std::io::Error::other(format!(
+                "smoke input '{}' overlaps smoke artifacts in '{}'",
+                self.input.display(),
+                run_dir.display()
+            )));
+        }
         if smoke_output_overlap(&self.output, &run_dir)? {
             return Err(std::io::Error::other(format!(
                 "smoke CSV output '{}' overlaps smoke artifacts in '{}'",
@@ -29,6 +36,7 @@ impl Cli {
     }
 
     fn validate_input_output(&self) -> std::io::Result<()> {
+        reject_output_symlink(&self.output)?;
         if same_existing_file(&self.input, &self.output)? {
             return Err(std::io::Error::other(format!(
                 "CSV output '{}' would overwrite input '{}'",
@@ -37,6 +45,18 @@ impl Cli {
             )));
         }
         Ok(())
+    }
+}
+
+fn reject_output_symlink(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::other(format!(
+            "CSV output '{}' must not be a symlink",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 

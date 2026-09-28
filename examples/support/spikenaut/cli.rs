@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! CLI argument parsing for `spikenaut_ingest`.
 
+use std::ffi::OsString;
 use std::iter::Peekable;
 use std::path::{Component, Path, PathBuf};
 
@@ -25,26 +26,15 @@ struct RawFlags {
     output_root: Option<PathBuf>,
 }
 
-/// Split a kernel cmdline blob (`NUL`-terminated tokens, argv[0] first).
-pub fn tokens_from_cmdline(bytes: &[u8]) -> Result<Vec<String>, String> {
-    let mut tokens = Vec::new();
-    let mut parts = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
-    if bytes.last() == Some(&0) {
-        parts.pop();
-    }
-    for raw in parts {
-        tokens.push(utf8_token(raw)?);
-    }
-    if tokens.is_empty() {
-        return Ok(tokens);
-    }
-    Ok(tokens.split_off(1))
-}
-
-fn utf8_token(raw: &[u8]) -> Result<String, String> {
-    std::str::from_utf8(raw)
-        .map(str::to_owned)
-        .map_err(|_| "argument is not valid UTF-8".to_owned())
+pub fn tokens_from_os_args(
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<Vec<String>, String> {
+    args.into_iter()
+        .map(|arg| {
+            arg.into_string()
+                .map_err(|_| "argument is not valid UTF-8".to_owned())
+        })
+        .collect()
 }
 
 pub fn parse_argv<I, S>(argv: I) -> Result<Cli, String>
@@ -380,6 +370,36 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn dangling_csv_output_symlink_is_rejected() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_dangling_output_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let output = root.join("output.csv");
+        std::os::unix::fs::symlink(root.join("missing.csv"), &output).unwrap();
+        let cli = parse_argv(["in.jsonl", output.to_str().unwrap()]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn smoke_input_cannot_be_an_artifact_path() {
+        let cli = parse_argv([
+            "artifacts/spikenaut_gpu/dual_saaq_smoke/latent_telemetry.csv",
+            "artifacts/replay.csv",
+            "--smoke",
+        ])
+        .unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+    }
+
     #[test]
     fn valued_flags_reject_the_next_flag_as_a_missing_value() {
         for flag in ["--output-root", "--domain", "--limit"] {
@@ -396,23 +416,30 @@ mod tests {
     }
 
     #[test]
-    fn tokens_from_cmdline_skips_argv0_and_rejects_non_utf8() {
+    fn os_args_preserve_empty_values() {
         assert_eq!(
-            tokens_from_cmdline(b"spikenaut_ingest\0in.jsonl\0--smoke\0").unwrap(),
-            vec!["in.jsonl", "--smoke"]
+            tokens_from_os_args([
+                OsString::from("in.jsonl"),
+                OsString::from(""),
+                OsString::from("--smoke")
+            ])
+            .unwrap(),
+            vec!["in.jsonl", "", "--smoke"]
         );
-        assert_eq!(tokens_from_cmdline(b"").unwrap(), Vec::<String>::new());
         assert_eq!(
-            tokens_from_cmdline(&[b'b', b'i', b'n', 0, 0xff]).unwrap_err(),
-            "argument is not valid UTF-8"
+            tokens_from_os_args(Vec::new()).unwrap(),
+            Vec::<String>::new()
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn tokens_from_cmdline_preserves_empty_flag_value() {
-        let tokens =
-            tokens_from_cmdline(b"spikenaut_ingest\0in.jsonl\0--output-root\0\0--smoke\0").unwrap();
-        assert_eq!(tokens, vec!["in.jsonl", "--output-root", "", "--smoke"]);
-        assert_eq!(parse_argv(tokens).unwrap_err(), "empty path");
+    fn os_args_reject_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let invalid = OsString::from_vec(vec![0xff]);
+        assert_eq!(
+            tokens_from_os_args([invalid]).unwrap_err(),
+            "argument is not valid UTF-8"
+        );
     }
 }

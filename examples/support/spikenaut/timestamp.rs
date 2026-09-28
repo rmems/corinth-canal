@@ -27,6 +27,10 @@ pub(super) fn state_timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u
         .unwrap_or(ordinal)
 }
 
+pub(super) fn gpu_timestamp_or_ordinal(fields: &Map<String, Value>, ordinal: u64) -> u64 {
+    integer_field(fields, "row_index").unwrap_or(ordinal)
+}
+
 fn parse_ts_utc_ns(value: Option<&Value>) -> Option<u64> {
     match value? {
         Value::Number(number) => number.as_u64().map(|ns| ns / 1_000_000),

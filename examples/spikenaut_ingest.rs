@@ -45,16 +45,16 @@ fn main() {
 }
 
 fn load_cli() -> Result<Cli, String> {
-    let bytes = std::fs::read("/proc/self/cmdline").map_err(|error| error.to_string())?;
-    spikenaut::cli::parse_argv(spikenaut::cli::tokens_from_cmdline(&bytes)?)
+    let args = spikenaut::cli::tokens_from_os_args(std::env::args_os().skip(1))?;
+    spikenaut::cli::parse_argv(args)
 }
 
 fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let ingested = ingest_mapped_rows(cli)?;
     cli.validate_output_paths(ingested.domain)?;
-    write_and_reload_csv(&cli.output, &ingested.rows)?;
+    let replay_rows = write_and_reload_csv(&cli.output, &ingested.rows)?;
     print_ingest_report(&ingested, &cli.output);
-    maybe_run_smoke(cli, &ingested)
+    maybe_run_smoke(cli, &ingested, &replay_rows)
 }
 
 fn ingest_mapped_rows(cli: &Cli) -> Result<spikenaut::IngestResult, Box<dyn std::error::Error>> {
@@ -74,7 +74,7 @@ fn ingest_mapped_rows(cli: &Cli) -> Result<spikenaut::IngestResult, Box<dyn std:
 fn write_and_reload_csv(
     output: &std::path::Path,
     rows: &[corinth_canal::TelemetrySnapshot],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<corinth_canal::TelemetrySnapshot>, Box<dyn std::error::Error>> {
     write_canonical_csv(output, rows)?;
     let reloaded = load_csv_telemetry_rows(output)?;
     if reloaded.len() != rows.len() {
@@ -85,7 +85,7 @@ fn write_and_reload_csv(
         ))
         .into());
     }
-    Ok(())
+    Ok(reloaded)
 }
 
 fn print_ingest_report(ingested: &spikenaut::IngestResult, output: &std::path::Path) {
@@ -102,6 +102,7 @@ fn print_ingest_report(ingested: &spikenaut::IngestResult, output: &std::path::P
 fn maybe_run_smoke(
     cli: &Cli,
     ingested: &spikenaut::IngestResult,
+    replay_rows: &[corinth_canal::TelemetrySnapshot],
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !cli.smoke {
         return Ok(());
@@ -111,7 +112,7 @@ fn maybe_run_smoke(
         .join(ingested.domain.source_slug())
         .join("dual_saaq_smoke");
     let manifest = run_dual_saaq_cpu_smoke(
-        &ingested.rows,
+        replay_rows,
         &run_dir,
         ingested.domain,
         Some(&cli.output),
@@ -122,7 +123,7 @@ fn maybe_run_smoke(
         manifest.run_id,
         manifest.telemetry_source,
         manifest.saaq_dual_emit,
-        ingested.rows.len(),
+        replay_rows.len(),
         run_dir.display()
     );
     Ok(())

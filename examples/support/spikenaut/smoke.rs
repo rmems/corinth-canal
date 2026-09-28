@@ -33,7 +33,7 @@ pub fn run_dual_saaq_cpu_smoke(
     }
     std::fs::create_dir_all(run_dir)?;
     let paths = SmokePaths::new(run_dir);
-    reject_symlinked_data_artifacts(&paths)?;
+    prepare_data_artifacts(&paths)?;
     clear_previous_completion(&paths)?;
     let metrics = run_smoke_ticks(rows, &paths)?;
     let manifest = smoke_manifest(rows, run_dir, domain, csv_path, output_root);
@@ -41,7 +41,7 @@ pub fn run_dual_saaq_cpu_smoke(
     Ok(manifest)
 }
 
-fn reject_symlinked_data_artifacts(paths: &SmokePaths) -> std::io::Result<()> {
+fn prepare_data_artifacts(paths: &SmokePaths) -> std::io::Result<()> {
     for path in [&paths.latent, &paths.tick] {
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -50,6 +50,7 @@ fn reject_symlinked_data_artifacts(paths: &SmokePaths) -> std::io::Result<()> {
                     path.display()
                 )));
             }
+            Ok(metadata) if metadata.is_file() => std::fs::remove_file(path)?,
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
