@@ -198,7 +198,7 @@ fn write_tick_line<W: Write>(
     writeln!(
         tick_writer,
         "{},{},{:.6},{:.6},{:.6},{:.6},{:?}",
-        tick,
+        tick + 1,
         snap.timestamp_ms,
         snap.gpu_temp_c,
         snap.gpu_power_w,

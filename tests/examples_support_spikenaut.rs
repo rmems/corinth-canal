@@ -210,11 +210,17 @@ fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
     assert_smoke_manifest(&manifest, &output_root);
     assert_dual_saaq_latent(&run_dir, 4);
     let tick_text = std::fs::read_to_string(run_dir.join("tick_telemetry.txt")).unwrap();
+    let ticks: Vec<u64> = tick_text
+        .lines()
+        .skip(1)
+        .map(|line| line.split(',').next().unwrap().parse().unwrap())
+        .collect();
     let timestamps: Vec<u64> = tick_text
         .lines()
         .skip(1)
         .map(|line| line.split(',').nth(1).unwrap().parse().unwrap())
         .collect();
+    assert_eq!(ticks, [1, 2, 3, 4]);
     assert_eq!(timestamps, [1, 2, 3, 4]);
     let _ = std::fs::remove_dir_all(run_dir);
 }

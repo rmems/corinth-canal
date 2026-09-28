@@ -218,7 +218,6 @@ fn split_frac_and_tz(rest: &str) -> (Option<&str>, &str) {
 }
 
 fn apply_tz_offset(unix_ms: i64, tz: &str) -> Option<i64> {
-    let tz = tz.trim();
     if tz.is_empty() || tz.eq_ignore_ascii_case("Z") {
         return Some(unix_ms);
     }
@@ -384,6 +383,8 @@ mod tests {
 
     #[test]
     fn parse_timestamp_rejects_trailing_offset_garbage() {
+        assert!(parse_timestamp_string("2026-03-19T12:00:00 +00:00").is_none());
+        assert!(parse_timestamp_string("2026-03-19T12:00:00.123 Z").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+00:00junk").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+0000junk").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00+00junk").is_none());

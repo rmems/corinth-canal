@@ -5,11 +5,18 @@ use std::iter::Peekable;
 use std::path::{Component, Path, PathBuf};
 
 use super::domain::SpikenautDomain;
+use super::smoke_artifacts::SmokePaths;
 
 impl Cli {
-    /// Keep the replay CSV outside the smoke run directory, whose files are
-    /// replaced when a smoke run starts.
-    pub fn validate_smoke_output(&self, domain: SpikenautDomain) -> std::io::Result<()> {
+    /// Prevent conversion from overwriting its source or smoke artifacts.
+    pub fn validate_output_paths(&self, domain: SpikenautDomain) -> std::io::Result<()> {
+        if same_existing_file(&self.input, &self.output)? {
+            return Err(std::io::Error::other(format!(
+                "CSV output '{}' would overwrite input '{}'",
+                self.output.display(),
+                self.input.display()
+            )));
+        }
         if !self.smoke {
             return Ok(());
         }
@@ -17,8 +24,25 @@ impl Cli {
             .output_root
             .join(domain.source_slug())
             .join("dual_saaq_smoke");
-        if normalized_absolute_path(&self.output)?.starts_with(normalized_absolute_path(&run_dir)?)
-        {
+        let output = normalized_absolute_path(&self.output)?;
+        let run_dir_absolute = normalized_absolute_path(&run_dir)?;
+        let lexical_alias = output.starts_with(&run_dir_absolute)
+            || symlink_target(&self.output)?
+                .is_some_and(|target| target.starts_with(&run_dir_absolute));
+        let resolved_alias = match (
+            std::fs::canonicalize(&self.output),
+            std::fs::canonicalize(&run_dir),
+        ) {
+            (Ok(output), Ok(run_dir)) => output.starts_with(run_dir),
+            _ => false,
+        };
+        let paths = SmokePaths::new(&run_dir);
+        let hardlink_alias = [&paths.latent, &paths.tick, &paths.manifest, &paths.summary]
+            .into_iter()
+            .try_fold(false, |found, reserved| {
+                Ok::<bool, std::io::Error>(found || same_existing_file(&self.output, reserved)?)
+            })?;
+        if lexical_alias || resolved_alias || hardlink_alias {
             return Err(std::io::Error::other(format!(
                 "smoke CSV output '{}' overlaps smoke artifacts in '{}'",
                 self.output.display(),
@@ -27,6 +51,41 @@ impl Cli {
         }
         Ok(())
     }
+}
+
+fn same_existing_file(left: &Path, right: &Path) -> std::io::Result<bool> {
+    if normalized_absolute_path(left)? == normalized_absolute_path(right)? {
+        return Ok(true);
+    }
+    if let (Ok(left), Ok(right)) = (std::fs::canonicalize(left), std::fs::canonicalize(right))
+        && left == right
+    {
+        return Ok(true);
+    }
+    #[cfg(unix)]
+    if let (Ok(left), Ok(right)) = (std::fs::metadata(left), std::fs::metadata(right)) {
+        use std::os::unix::fs::MetadataExt;
+        return Ok(left.dev() == right.dev() && left.ino() == right.ino());
+    }
+    Ok(false)
+}
+
+fn symlink_target(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(None);
+    }
+    let target = std::fs::read_link(path)?;
+    let target = if target.is_absolute() {
+        target
+    } else {
+        path.parent().unwrap_or_else(|| Path::new(".")).join(target)
+    };
+    normalized_absolute_path(&target).map(Some)
 }
 
 fn normalized_absolute_path(path: &Path) -> std::io::Result<PathBuf> {
@@ -335,10 +394,64 @@ mod tests {
             "artifacts/spikenaut_gpu/dual_saaq_smoke/../dual_saaq_smoke/summary.json",
         ] {
             let cli = parse_argv(["in.jsonl", output, "--smoke"]).unwrap();
-            assert!(cli.validate_smoke_output(SpikenautDomain::Gpu).is_err());
+            assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
         }
         let cli = parse_argv(["in.jsonl", "artifacts/safe.csv", "--smoke"]).unwrap();
-        assert!(cli.validate_smoke_output(SpikenautDomain::Gpu).is_ok());
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_ok());
+    }
+
+    #[test]
+    fn output_cannot_alias_input_file() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_input_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.csv");
+        std::fs::write(&input, b"source JSONL").unwrap();
+        let input_arg = input.to_str().unwrap();
+        let cli = parse_argv([input_arg]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        let cli = parse_argv([input_arg, input_arg]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        let hardlink = root.join("hardlink.csv");
+        std::fs::hard_link(&input, &hardlink).unwrap();
+        let cli = parse_argv([input_arg, hardlink.to_str().unwrap()]).unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn smoke_output_symlink_cannot_alias_existing_artifact() {
+        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
+            "spikenaut_artifact_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let run_dir = root.join("spikenaut_gpu/dual_saaq_smoke");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let latent = run_dir.join("latent_telemetry.csv");
+        std::fs::write(&latent, b"old latent").unwrap();
+        let alias = root.join("safe.csv");
+        std::os::unix::fs::symlink(std::fs::canonicalize(&latent).unwrap(), &alias).unwrap();
+        let cli = parse_argv([
+            "in.jsonl",
+            alias.to_str().unwrap(),
+            "--smoke",
+            "--output-root",
+            root.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
