@@ -165,7 +165,7 @@ fn date_in_range(civil: &CivilTime) -> bool {
 }
 
 fn time_in_range(civil: &CivilTime) -> bool {
-    civil.hour <= 23 && civil.minute <= 59 && civil.second <= 60
+    civil.hour <= 23 && civil.minute <= 59 && civil.second <= 59
 }
 
 fn frac_millis(frac: Option<&str>) -> Option<u32> {
@@ -355,6 +355,11 @@ mod tests {
         assert!(parse_timestamp_string("2026-04-31T12:00:00Z").is_none());
         assert!(parse_timestamp_string("2026-02-29T12:00:00Z").is_none());
         assert!(parse_timestamp_string("2024-02-29T12:00:00Z").is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_impossible_leap_second() {
+        assert!(parse_timestamp_string("2026-03-19T12:00:60Z").is_none());
     }
 
     #[test]

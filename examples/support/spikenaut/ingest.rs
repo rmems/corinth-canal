@@ -26,13 +26,21 @@ pub fn ingest_jsonl(
     forced: Option<SpikenautDomain>,
     limit: Option<usize>,
 ) -> Result<IngestResult, Box<dyn std::error::Error>> {
-    let reader = BufReader::new(File::open(path)?);
+    let mut reader = BufReader::new(File::open(path)?);
     let mut acc = IngestAccumulator::new(forced);
-    for raw in reader.lines() {
+    let mut raw = Vec::new();
+    loop {
         if acc.reached_limit(limit) {
             break;
         }
-        acc.consume_line(&raw?)?;
+        raw.clear();
+        if reader.read_until(b'\n', &mut raw)? == 0 {
+            break;
+        }
+        match std::str::from_utf8(&raw) {
+            Ok(line) => acc.consume_line(line)?,
+            Err(_) => acc.consume_malformed_line(),
+        }
     }
     acc.finish(path)
 }
@@ -67,12 +75,14 @@ impl IngestAccumulator {
         }
         match parse_object_line(line) {
             LineParse::Object(object) => self.consume_object(&object),
-            LineParse::Malformed => {
-                self.skipped_malformed += 1;
-                self.ordinal += 1;
-            }
+            LineParse::Malformed => self.consume_malformed_line(),
         }
         Ok(())
+    }
+
+    fn consume_malformed_line(&mut self) {
+        self.skipped_malformed += 1;
+        self.ordinal += 1;
     }
 
     fn consume_object(&mut self, object: &Map<String, Value>) {
@@ -156,5 +166,31 @@ mod tests {
             "blank + malformed must consume ordinals 0 and 1"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ingest_skips_invalid_utf8_record_and_keeps_later_rows() {
+        let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!(
+            "spikenaut_invalid_utf8_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut data = b"{\"bad\":\xff}\n".to_vec();
+        data.extend_from_slice(
+            b"{\"hashrate_mh\":0.85,\"power_w\":375.8,\"gpu_temp_c\":80.0,\"reward_hint\":0.94}\n",
+        );
+        std::fs::write(&path, data).unwrap();
+
+        let ingested = ingest_jsonl(&path, Some(SpikenautDomain::Mining), None).unwrap();
+        assert_eq!(ingested.skipped_malformed, 1);
+        assert_eq!(ingested.rows.len(), 1);
+        assert_eq!(ingested.rows[0].timestamp_ms, 1);
+        std::fs::remove_file(path).unwrap();
     }
 }

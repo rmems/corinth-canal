@@ -45,8 +45,16 @@ fn publish_smoke_completion(
     manifest: &ExperimentManifest,
     metrics: ExperimentMetrics,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    write_smoke_summary(paths, manifest, metrics)?;
-    std::fs::write(&paths.manifest, serde_json::to_string_pretty(&manifest)?)?;
+    let manifest_json = serde_json::to_string_pretty(manifest)?;
+    if let Err(error) = write_smoke_summary(paths, manifest, metrics) {
+        let _ = std::fs::remove_file(&paths.summary);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::write(&paths.manifest, manifest_json) {
+        let _ = std::fs::remove_file(&paths.summary);
+        let _ = std::fs::remove_file(&paths.manifest);
+        return Err(error.into());
+    }
     Ok(())
 }
 
@@ -209,19 +217,23 @@ fn record_smoke_metrics(metrics: &mut ExperimentMetrics, snap: &corinth_canal::T
 mod tests {
     use super::*;
 
-    #[test]
-    fn summary_write_failure_does_not_publish_completed_manifest() {
+    fn scratch_run_dir(label: &str) -> std::path::PathBuf {
         let scratch = std::env::var_os("CARGO_TARGET_TMPDIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
-        let run_dir = scratch.join(format!(
-            "spikenaut_summary_failure_{}_{}",
+        scratch.join(format!(
+            "spikenaut_{label}_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
+        ))
+    }
+
+    #[test]
+    fn summary_write_failure_does_not_publish_completed_manifest() {
+        let run_dir = scratch_run_dir("summary_failure");
         std::fs::create_dir_all(&run_dir).unwrap();
         let paths = SmokePaths::new(&run_dir);
         std::fs::create_dir(&paths.summary).unwrap();
@@ -229,6 +241,19 @@ mod tests {
 
         assert!(publish_smoke_completion(&paths, &manifest, ExperimentMetrics::default()).is_err());
         assert!(!paths.manifest.exists());
+        std::fs::remove_dir_all(run_dir).unwrap();
+    }
+
+    #[test]
+    fn manifest_write_failure_removes_completed_summary() {
+        let run_dir = scratch_run_dir("manifest_failure");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let paths = SmokePaths::new(&run_dir);
+        std::fs::create_dir(&paths.manifest).unwrap();
+        let manifest = smoke_manifest(&[], &run_dir, SpikenautDomain::Gpu, None, &run_dir);
+
+        assert!(publish_smoke_completion(&paths, &manifest, ExperimentMetrics::default()).is_err());
+        assert!(!paths.summary.exists());
         std::fs::remove_dir_all(run_dir).unwrap();
     }
 }
