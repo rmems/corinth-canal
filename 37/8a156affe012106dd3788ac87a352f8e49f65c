@@ -1,20 +1,8 @@
-examples/support/spikenaut/cli.rs
-  s_56648ef5bafb70::t_4c38fc6de8e5d3 20-21,306-309
-  s_56648ef5bafb70::t_e0f312fcf63349 268-273
-  s_56648ef5bafb70::t_e7d26f74536586 277,327-328
-  s_56648ef5bafb70::t_76b34aea3b931b 323-326,342-343
-  s_56648ef5bafb70::t_701dabab0ffe33 9-19,22-52,329-341
-tests/examples_support_spikenaut.rs
-  s_56648ef5bafb70::t_76b34aea3b931b 122-134,212-218
-examples/support/spikenaut/smoke.rs
-  s_56648ef5bafb70::t_e0f312fcf63349 135-139
-examples/support/spikenaut/timestamp.rs
-  s_56648ef5bafb70::t_76b34aea3b931b 378-381
-  s_56648ef5bafb70::t_e0f312fcf63349 12,24-31,253
 docs/SPIKENAUT_TELEMETRY.md
-  s_56648ef5bafb70::t_7b6fd121ac6d07 143-145
-examples/spikenaut_ingest.rs
-  s_56648ef5bafb70::t_701dabab0ffe33 54
+  ea7e27c09f0fe66d 143-145
+examples/support/spikenaut/cli.rs
+  s_56648ef5bafb70::t_1848bb133b3909 342-343
+  s_56648ef5bafb70::t_f4c34648464f1c 268-273,277,306-309
 ---
 {
   "schema_version": "authorship/3.0.0",
