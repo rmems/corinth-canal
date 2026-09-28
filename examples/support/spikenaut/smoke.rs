@@ -211,7 +211,10 @@ mod tests {
 
     #[test]
     fn summary_write_failure_does_not_publish_completed_manifest() {
-        let run_dir = std::env::temp_dir().join(format!(
+        let scratch = std::env::var_os("CARGO_TARGET_TMPDIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
+        let run_dir = scratch.join(format!(
             "spikenaut_summary_failure_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
