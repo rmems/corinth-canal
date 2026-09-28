@@ -119,6 +119,43 @@ fn ingest_auto_detects_state_cpu_util_fallback() {
 }
 
 #[test]
+fn ingest_auto_detects_state_vram_fallbacks() {
+    let path = unique_scratch("spikenaut_state_vram").with_extension("jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            "{\"ts_utc\":1773921536380999999,\"gpu_temp_c\":45.0,\"power_w\":120.0,\"vram_temp_c\":72.0,\"board_power_w\":95.0}\n",
+            "{\"ts_utc\":1773921536381000000,\"gpu_temp_c\":46.0,\"power_w\":121.0,\"vram_temp_c\":73.0,\"cpu_util_pct\":39.0}\n",
+        ),
+    )
+    .unwrap();
+    let ingested = ingest_jsonl(&path, None, None).unwrap();
+    assert_eq!(ingested.domain, SpikenautDomain::State);
+    assert_eq!(ingested.rows.len(), 2);
+    assert_eq!(ingested.rows[0].cpu_tctl_c, 72.0);
+    assert_eq!(ingested.rows[0].cpu_package_power_w, 95.0);
+    assert_eq!(ingested.rows[1].cpu_tctl_c, 73.0);
+    assert_eq!(ingested.rows[1].cpu_package_power_w, 39.0);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn ingest_auto_detects_qubic_without_unused_tick_identifier() {
+    let path = unique_scratch("spikenaut_qubic_no_tick").with_extension("jsonl");
+    std::fs::write(
+        &path,
+        "{\"timestamp\":\"2026-03-19T12:00:00Z\",\"tick_rate\":0.25,\"qubic_tick_trace\":0.5}\n",
+    )
+    .unwrap();
+    let ingested = ingest_jsonl(&path, None, None).unwrap();
+    assert_eq!(ingested.domain, SpikenautDomain::Qubic);
+    assert_eq!(ingested.rows.len(), 1);
+    assert_eq!(ingested.rows[0].gpu_temp_c, 50.0);
+    assert_eq!(ingested.rows[0].gpu_power_w, 100.0);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
     let ingested = ingest_jsonl(
         &fixture("gpu_sample.jsonl"),

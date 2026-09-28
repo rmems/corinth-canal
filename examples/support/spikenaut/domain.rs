@@ -93,6 +93,8 @@ fn is_state(flat: &Map<String, Value>) -> bool {
     has_key(flat, "gpu_util_pct")
         || has_pair(flat, "cpu_temp_c", "board_power_w")
         || has_pair(flat, "cpu_temp_c", "cpu_util_pct")
+        || has_pair(flat, "vram_temp_c", "board_power_w")
+        || has_pair(flat, "vram_temp_c", "cpu_util_pct")
         || has_pair(flat, "episode_id", "step_idx")
 }
 
@@ -103,7 +105,7 @@ fn is_hft(flat: &Map<String, Value>) -> bool {
 }
 
 fn is_qubic(flat: &Map<String, Value>) -> bool {
-    has_pair(flat, "tick", "tick_rate") && !has_key(flat, "hashrate_mh")
+    has_pair(flat, "qubic_tick_trace", "tick_rate") && !has_key(flat, "hashrate_mh")
 }
 
 fn is_mining(flat: &Map<String, Value>) -> bool {
