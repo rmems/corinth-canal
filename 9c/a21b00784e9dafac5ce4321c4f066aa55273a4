@@ -1,0 +1,21 @@
+examples/support/spikenaut/cli.rs
+  s_56648ef5bafb70::t_1848bb133b3909 263,266-278
+  s_56648ef5bafb70::t_9f3016e3c75458 264-265
+  s_56648ef5bafb70::t_f4c34648464f1c 5,148-153,217-230,258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9ca21b00784e9dafac5ce4321c4f066aa55273a4",
+  "prompts": {},
+  "sessions": {
+    "s_56648ef5bafb70": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0e542-a5a8-70e1-b943-4b543b7ba897",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
