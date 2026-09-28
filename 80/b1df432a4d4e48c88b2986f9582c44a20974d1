@@ -1,15 +1,5 @@
-examples/support/spikenaut/smoke.rs
-  s_56648ef5bafb70::t_2a17a6628cafaa 37
-examples/support/spikenaut/map.rs
-  s_56648ef5bafb70::t_972e3c86a76b7f 188-189
 examples/support/spikenaut/cli.rs
-  s_56648ef5bafb70::t_2a17a6628cafaa 220-229
-  s_56648ef5bafb70::t_972e3c86a76b7f 286-293
-examples/support/spikenaut/timestamp.rs
-  s_56648ef5bafb70::t_2a17a6628cafaa 9
-tests/examples_support_spikenaut.rs
-  s_56648ef5bafb70::t_ebc4009f929841 266-280,282-291
-  s_56648ef5bafb70::t_972e3c86a76b7f 261-265,281,292-296
+  s_56648ef5bafb70::t_f4c34648464f1c 220-229
 ---
 {
   "schema_version": "authorship/3.0.0",
