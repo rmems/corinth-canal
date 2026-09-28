@@ -36,9 +36,18 @@ pub fn run_dual_saaq_cpu_smoke(
     clear_previous_completion(&paths)?;
     let metrics = run_smoke_ticks(rows, &paths)?;
     let manifest = smoke_manifest(rows, run_dir, domain, csv_path, output_root);
-    std::fs::write(&paths.manifest, serde_json::to_string_pretty(&manifest)?)?;
-    write_smoke_summary(&paths, &manifest, metrics)?;
+    publish_smoke_completion(&paths, &manifest, metrics)?;
     Ok(manifest)
+}
+
+fn publish_smoke_completion(
+    paths: &SmokePaths,
+    manifest: &ExperimentManifest,
+    metrics: ExperimentMetrics,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_smoke_summary(paths, manifest, metrics)?;
+    std::fs::write(&paths.manifest, serde_json::to_string_pretty(&manifest)?)?;
+    Ok(())
 }
 
 fn clear_previous_completion(paths: &SmokePaths) -> std::io::Result<()> {
@@ -194,4 +203,29 @@ fn record_smoke_metrics(metrics: &mut ExperimentMetrics, snap: &corinth_canal::T
     metrics.last_timestamp_ms = Some(snap.timestamp_ms);
     metrics.ticks_completed += 1;
     metrics.latent_rows += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_write_failure_does_not_publish_completed_manifest() {
+        let run_dir = std::env::temp_dir().join(format!(
+            "spikenaut_summary_failure_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let paths = SmokePaths::new(&run_dir);
+        std::fs::create_dir(&paths.summary).unwrap();
+        let manifest = smoke_manifest(&[], &run_dir, SpikenautDomain::Gpu, None, &run_dir);
+
+        assert!(publish_smoke_completion(&paths, &manifest, ExperimentMetrics::default()).is_err());
+        assert!(!paths.manifest.exists());
+        std::fs::remove_dir_all(run_dir).unwrap();
+    }
 }

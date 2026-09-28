@@ -102,6 +102,23 @@ fn ingest_mining_hft_qubic_domains() {
 }
 
 #[test]
+fn ingest_auto_detects_state_cpu_util_fallback() {
+    let path = unique_scratch("spikenaut_state_fallback").with_extension("jsonl");
+    std::fs::write(
+        &path,
+        "{\"ts_utc\":1773921536380999999,\"gpu_temp_c\":45.0,\"power_w\":120.0,\"cpu_temp_c\":72.0,\"cpu_util_pct\":38.0}\n",
+    )
+    .unwrap();
+    let ingested = ingest_jsonl(&path, None, None).unwrap();
+    assert_eq!(ingested.domain, SpikenautDomain::State);
+    assert_eq!(ingested.rows.len(), 1);
+    assert_eq!(ingested.rows[0].timestamp_ms, 1_773_921_536_380);
+    assert_eq!(ingested.rows[0].cpu_tctl_c, 72.0);
+    assert_eq!(ingested.rows[0].cpu_package_power_w, 38.0);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn dual_saaq_cpu_smoke_writes_manifest_and_both_rule_columns() {
     let ingested = ingest_jsonl(
         &fixture("gpu_sample.jsonl"),

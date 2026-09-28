@@ -92,6 +92,7 @@ pub fn detect_domain(object: &Map<String, Value>) -> Option<SpikenautDomain> {
 fn is_state(flat: &Map<String, Value>) -> bool {
     has_key(flat, "gpu_util_pct")
         || has_pair(flat, "cpu_temp_c", "board_power_w")
+        || has_pair(flat, "cpu_temp_c", "cpu_util_pct")
         || has_pair(flat, "episode_id", "step_idx")
 }
 

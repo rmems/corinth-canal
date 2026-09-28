@@ -136,15 +136,23 @@ fn is_datetime_separator(sep: u8) -> bool {
 }
 
 fn parse_i32_range(s: &str, start: usize, end: usize) -> Option<i32> {
-    s.get(start..end)?.parse().ok()
+    ascii_digit_range(s, start, end)?.parse().ok()
 }
 
 fn parse_u32_range(s: &str, start: usize, end: usize) -> Option<u32> {
-    s.get(start..end)?.parse().ok()
+    ascii_digit_range(s, start, end)?.parse().ok()
 }
 
 fn parse_i64_range(s: &str, start: usize, end: usize) -> Option<i64> {
-    s.get(start..end)?.parse().ok()
+    ascii_digit_range(s, start, end)?.parse().ok()
+}
+
+fn ascii_digit_range(s: &str, start: usize, end: usize) -> Option<&str> {
+    let digits = s.get(start..end)?;
+    digits
+        .bytes()
+        .all(|byte| byte.is_ascii_digit())
+        .then_some(digits)
 }
 
 fn civil_in_range(civil: &CivilTime) -> bool {
@@ -393,6 +401,20 @@ mod tests {
     fn parse_timestamp_rejects_non_iso_civil_separators() {
         assert!(parse_timestamp_string("2026/03/19T12.00.00Z").is_none());
         assert!(parse_timestamp_string("2026-03-19T12:00:00Z").is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_rejects_signs_in_fixed_width_fields() {
+        for value in [
+            "+026-03-19T12:00:00Z",
+            "2026-+3-19T12:00:00Z",
+            "2026-03-+9T12:00:00Z",
+            "2026-03-19T+2:00:00Z",
+            "2026-03-19T12:+0:00Z",
+            "2026-03-19T12:00:+0Z",
+        ] {
+            assert!(parse_timestamp_string(value).is_none(), "{value}");
+        }
     }
 
     #[test]
