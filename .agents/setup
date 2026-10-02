@@ -6,7 +6,7 @@
 # be safe to run more than once. See https://ampcode.com/docs/orbs/customizing
 #
 # Installs only what this repo's CI and manifests need:
-#   - apt: build-essential, pkg-config, libssl-dev
+#   - apt: build-essential, pkg-config, libssl-dev, curl, ca-certificates
 #   - Rust stable (+rustfmt, clippy, llvm-tools-preview) [default]
 #   - uv + Python 3.11 venv with ruff==0.15.14 (benchmarks lint)
 #   - cargo fetch --locked
@@ -35,8 +35,8 @@ apt_install() {
   fi
 }
 
-# --- System packages (C toolchain for build.rs (cc); libssl-dev for openssl-sys) ---
-apt_install build-essential pkg-config libssl-dev
+# --- System packages (C toolchain for build.rs (cc); libssl-dev for openssl-sys; curl for the installers) ---
+apt_install build-essential pkg-config libssl-dev curl ca-certificates
 
 # --- Rust (rustup) ---
 export PATH="$HOME/.cargo/bin:$PATH"
