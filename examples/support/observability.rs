@@ -275,16 +275,16 @@ pub fn init_sentry(command: &'static str) -> Option<ClientInitGuard> {
         }
     };
 
-    let guard = sentry::init(sentry::ClientOptions {
-        dsn: Some(parsed_dsn),
-        release: Some(Cow::Owned(release)),
-        environment: Some(Cow::Owned(environment)),
-        sample_rate: 1.0,
-        traces_sample_rate: 0.0,
-        default_integrations: true,
-        before_send: Some(std::sync::Arc::new(|event| Some(redact_event(event)))),
-        ..Default::default()
-    });
+    let mut options = sentry::ClientOptions::default();
+    options.dsn = Some(parsed_dsn);
+    options.release = Some(Cow::Owned(release));
+    options.environment = Some(Cow::Owned(environment));
+    options.event_sampling_strategy = sentry::EventSamplingStrategy::FixedRate(1.0);
+    options.traces_sampling_strategy = sentry::TracesSamplingStrategy::FixedRate(0.0);
+    options.default_integrations = true;
+    options.before_send = Some(std::sync::Arc::new(|event| Some(redact_event(event))));
+
+    let guard = sentry::init(options);
 
     annotate_scope(command, &run_id(), &git_sha, SafeDiagnosticData::default());
 
