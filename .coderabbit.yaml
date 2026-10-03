@@ -1,5 +1,7 @@
+---
+# yamllint disable-line rule:line-length
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# Draft CodeRabbit config for rmems/corinth-canal (generated locally, not pushed).
+# CodeRabbit config for rmems/corinth-canal.
 language: en-US
 reviews:
   profile: chill
@@ -9,25 +11,68 @@ reviews:
     enabled: true
     drafts: false
   path_filters:
-  - '!**/target/**'
-  - '!artifacts/**'
+    - '!**/target/**'
+    - '!artifacts/**'
   path_instructions:
-  - path: '**/*.rs'
-    instructions: 'Rust edition 2024; no `rust-version`; CI uses stable. Do not suggest downgrading the edition or using std/language APIs newer than the pinned toolchain/MSRV. CI gate: `cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --no-default-features --locked`. Flag anything that would fail `cargo fmt --check` or clippy `-D warnings`. The default feature is `cuda`, so plain `cargo build`/`cargo test` needs nvcc; everything outside the CUDA wrappers must build and test with `--no-default-features` and no CUDA toolkit. Flag code that makes the CPU path depend on `cust`/CUDA symbols without a `#[cfg(feature = "cuda")]` gate. Do not change CSV telemetry schemas or `src/lib.rs` re-exports unless the PR says so.'
-  - path: src/{gpu/wrappers,moe/gguf,moe/safetensors}/**/*.rs
-    instructions: 'Scrutinize every `unsafe` block (currently in `src/gpu/wrappers/*`, `src/moe/gguf/{cuda_register,map}.rs`, `src/moe/safetensors/{map,paths}.rs`): require a written safety justification covering aliasing, lifetimes, alignment and bounds; prefer a safe abstraction when one exists. Flag any new `unsafe` outside these files. For the CUDA FFI (`ffi.rs`, `memory.rs`, `kernel.rs`, `accelerator.rs`), check that device buffers are freed exactly once, host/device sizes match the kernel signature, launch results are checked, and nothing is `Send`/`Sync` without justification. For mmap code, check the file cannot be truncated or mutated while mapped.'
-  - path: src/gpu/kernels/**
-    instructions: CUDA kernels built by `build.rs` (CUDA 13.2, sm_120). Check bounds, grid/block math, shared-memory races and that the C ABI in `myelin_shim.h` matches the Rust `extern` declarations. They only run on the self-hosted GPU runner.
-  - path: build.rs
-    instructions: Must not require nvcc when the `cuda` feature is disabled; `--no-default-features` builds on hosts without CUDA.
-  - path: '**/Cargo.toml'
-    instructions: Cargo manifest. Call out new dependencies and feature changes, and keep `rust-version` / `edition` consistent with CI. Keep `default = ["cuda"]` behaviour and the `gpu-stub` feature consistent with the CI's `--no-default-features` jobs.
-  - path: benchmarks/**/*.py
-    instructions: 'Python 3.11 (CI). CI gate: `ruff check benchmarks` (ruff 0.15.14) and `python -m unittest discover -s benchmarks/tests`. Keep code compatible with the declared Python floor.'
-  - path: Dockerfile
-    instructions: Dockerfile. Keep secrets out of layers and build args, and keep toolchain versions in line with the CI pins.
-  - path: .github/workflows/**
-    instructions: GitHub Actions workflows. Keep `permissions:` least-privilege and job commands in sync with the local gates documented in the repo. Every `uses:` is pinned to a full commit SHA today; new or bumped actions must be too. GPU tests run on `[self-hosted, Linux, X64, cuda-13.2, sm_120, gpu]` and must stay gated away from untrusted PRs.
+    - path: '**/*.rs'
+      instructions: >-
+        Rust edition 2024; no rust-version; CI uses stable. Do not suggest
+        downgrading the edition or using std/language APIs newer than the pinned
+        toolchain/MSRV. CI gate: cargo clippy --all-targets
+        --no-default-features --locked -- -D warnings -A dead_code, cargo test
+        --lib --no-default-features --locked, cargo check --examples
+        --no-default-features --locked. Flag anything that would fail cargo fmt
+        --check or clippy -D warnings. The default feature is cuda, so plain
+        cargo build/cargo test needs nvcc; everything outside the CUDA wrappers
+        must build and test with --no-default-features and no CUDA toolkit. Flag
+        code that makes the CPU path depend on cust/CUDA symbols without a
+        #[cfg(feature = "cuda")] gate. Flag any new unsafe code outside the
+        existing unsafe implementation files. Do not change CSV telemetry
+        schemas or src/lib.rs re-exports unless the PR says so.
+    - path: src/{gpu/wrappers,moe/gguf,moe/safetensors}/**/*.rs
+      instructions: >-
+        Scrutinize every unsafe block (currently in src/gpu/wrappers/*,
+        src/moe/gguf/{cuda_register,map}.rs,
+        src/moe/safetensors/{map,paths}.rs): require a written safety
+        justification covering aliasing, lifetimes, alignment and bounds;
+        prefer a safe abstraction when one exists. For the CUDA FFI (ffi.rs,
+        memory.rs, kernel.rs, accelerator.rs), check that device buffers are
+        freed exactly once, host/device sizes match the kernel signature,
+        launch results are checked, and nothing is Send/Sync without
+        justification. For mmap code, check the file cannot be truncated or
+        mutated while mapped.
+    - path: src/gpu/kernels/**
+      instructions: >-
+        CUDA kernels built by build.rs (CUDA 13.2, sm_120). Check bounds,
+        grid/block math, shared-memory races and that the C ABI in
+        myelin_shim.h matches the Rust extern declarations. They only run on
+        the self-hosted GPU runner.
+    - path: build.rs
+      instructions: >-
+        Must not require nvcc when the cuda feature is disabled;
+        --no-default-features builds on hosts without CUDA.
+    - path: '**/Cargo.toml'
+      instructions: >-
+        Cargo manifest. Call out new dependencies and feature changes, and keep
+        rust-version / edition consistent with CI. Keep default = ["cuda"]
+        behaviour and the gpu-stub feature consistent with the CI's
+        --no-default-features jobs.
+    - path: benchmarks/**/*.py
+      instructions: >-
+        Python 3.11 (CI). CI gate: ruff check benchmarks (ruff 0.15.14) and
+        python -m unittest discover -s benchmarks/tests. Keep code compatible
+        with the declared Python floor.
+    - path: Dockerfile
+      instructions: >-
+        Dockerfile. Keep secrets out of layers and build args, and keep
+        toolchain versions in line with the CI pins.
+    - path: .github/workflows/**
+      instructions: >-
+        GitHub Actions workflows. Keep permissions: least-privilege and job
+        commands in sync with the local gates documented in the repo. Every
+        uses: reference is pinned to a full commit SHA today; new or bumped
+        actions must be too. GPU tests run on [self-hosted, Linux, X64,
+        cuda-13.2, sm_120, gpu] and must stay gated away from untrusted PRs.
   tools:
     clippy:
       enabled: true
