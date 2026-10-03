@@ -12,23 +12,24 @@ reviews:
     drafts: false
   path_filters:
     - '!**/target/**'
-    - '!artifacts/**'
   path_instructions:
     - path: '**/*.rs'
       instructions: >-
-        Rust edition 2024; no rust-version; CI uses stable. Do not suggest
-        downgrading the edition or using std/language APIs newer than the pinned
-        toolchain/MSRV. CI gate: cargo clippy --all-targets
+        Rust edition 2024; no rust-version; CI uses stable. CI gate: cargo
+        clippy --all-targets
         --no-default-features --locked -- -D warnings -A dead_code, cargo test
         --lib --no-default-features --locked, cargo check --examples
         --no-default-features --locked. Flag anything that would fail cargo fmt
         --check or clippy -D warnings. The default feature is cuda, so plain
-        cargo build/cargo test needs nvcc; everything outside the CUDA wrappers
-        must build and test with --no-default-features and no CUDA toolkit. Flag
-        code that makes the CPU path depend on cust/CUDA symbols without a
-        #[cfg(feature = "cuda")] gate. Flag any new unsafe code outside the
+        cargo build/cargo test needs nvcc. Flag any new unsafe code outside the
         existing unsafe implementation files. Do not change CSV telemetry
         schemas or src/lib.rs re-exports unless the PR says so.
+    # yamllint disable-line rule:line-length
+    - path: 'src/{lib.rs,error.rs,experiment/**,funnel.rs,latent.rs,metric.rs,moe/**,projector.rs,telemetry.rs,types.rs}'
+      instructions: >-
+        The CPU profile compiles these modules with --no-default-features and
+        no CUDA toolkit. Flag unconditional dependencies on cust/CUDA symbols;
+        code behind a cuda feature gate is allowed.
     - path: src/{gpu/wrappers,moe/gguf,moe/safetensors}/**/*.rs
       instructions: >-
         Scrutinize every unsafe block (currently in src/gpu/wrappers/*,
