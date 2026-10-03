@@ -1,5 +1,7 @@
 # AGENTS.md
 
+See @CLAUDE.md for additional repository context. The @-mention makes Amp load it; Amp reads `CLAUDE.md` on its own only when no `AGENTS.md` exists. Where the two files overlap, this file takes precedence, as `CLAUDE.md` itself states.
+
 ## Project identity
 
 `corinth-canal` is the single-crate reference implementation for the `rmems`
