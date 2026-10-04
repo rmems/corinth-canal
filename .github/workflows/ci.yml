@@ -111,7 +111,7 @@ jobs:
           echo "ring-only TLS confirmed: ring resolves, aws-lc-rs is absent from the graph."
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-llvm-cov
 
