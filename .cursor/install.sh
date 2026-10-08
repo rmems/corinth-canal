@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Cursor Cloud Agent install script for corinth-canal (`install` in .cursor/environment.json).
+#
+# Cursor runs this from the repository root during every Build, on its default
+# Ubuntu base image (CPU only: cloud agents have no GPU), then snapshots the disk.
+# It must be idempotent. Shell exports don't survive into agent runs, so the tools
+# it installs are exposed through /etc/profile.d and /usr/local/bin.
+# See https://cursor.com/docs/cloud-agent/setup
+#
+# Installs only what this repo's CI and docs already require:
+#   - apt: build-essential, pkg-config, libssl-dev, curl, ca-certificates
+#   - Rust stable (+rustfmt, clippy, llvm-tools-preview) [default]
+#   - uv + ruff==0.15.14 as a user tool (benchmarks lint; CI pins this version)
+#   - just (justfile / `just setup` in CLAUDE.md and README)
+#   - cargo-llvm-cov (coverage step in .github/workflows/ci.yml and CLAUDE.md)
+#   - cargo fetch --locked
+#   - tool directories exposed to later shells (/etc/profile.d + /usr/local/bin links)
+#
+# It ends with a dependency fetch/prebuild, not a test run.
+# sm_120 / CUDA 13.2 stay out of this script: cloud agents have no GPU.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  SUDO="sudo"
+fi
+
+# Download a URL to a file. Fail if curl did not finish; do not pipe into a shell.
+# Checksums are verified only when the publisher actually ships one.
+download() {
+  local url="$1" dest="$2"
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+    --retry 5 --retry-all-errors -o "$dest" "$url"
+}
+
+# rustup publishes a sha256 next to rustup-init. The hash file names the binary
+# `./rustup-init`, so verify against a copy with that basename.
+verify_rustup_init() {
+  local bin="$1" sum_file="$2" tmp
+  tmp="$(mktemp -d)"
+  cp "$bin" "$tmp/rustup-init"
+  cp "$sum_file" "$tmp/rustup-init.sha256"
+  (cd "$tmp" && sha256sum -c rustup-init.sha256)
+  rm -rf "$tmp"
+}
+
+# Install apt packages that are not already present.
+# Do not expand an empty array: bash < 4.4 treats ${missing[@]} and ${#missing[@]}
+# as unset under `set -u` when nothing needs installing.
+apt_install() {
+  local missing=() pkg count=0
+  for pkg in "$@"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing+=("$pkg")
+      count=$((count + 1))
+    fi
+  done
+  if [ "$count" -gt 0 ]; then
+    $SUDO apt-get -o Acquire::Retries=5 update -qq
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends "${missing[@]}"
+  fi
+}
+
+# Ensure a rustup toolchain and its components without failing when they are
+# already installed. `toolchain install` errors if stable exists under a
+# different profile; `component add` is the idempotent follow-up.
+ensure_rust_toolchain() {
+  if ! rustup toolchain list | grep -q '^stable'; then
+    rustup toolchain install stable --profile minimal \
+      --component rustfmt --component clippy --component llvm-tools-preview
+  fi
+  rustup component add rustfmt clippy llvm-tools-preview --toolchain stable
+  rustup default stable
+}
+
+# Link one executable into /usr/local/bin. Replace our own symlink; refuse to
+# delete a pre-existing regular file.
+link_tool() {
+  local tool="$1" name dest
+  name="${tool##*/}"
+  dest="/usr/local/bin/$name"
+  case "$name" in
+    # uv's installer also drops env/env.fish (sourced, not run) in ~/.local/bin.
+    # Some base images ship gh at /usr/local/bin/gh plus a ~/.local/bin/gh wrapper
+    # that execs it. Linking the wrapper over the real binary would recurse.
+    python* | pip* | activate* | deactivate | Activate.ps1 | env | env.fish | gh) return 0 ;;
+  esac
+  if [ -f "$tool" ] && [ -x "$tool" ]; then
+    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+      echo "Not replacing existing $dest" >&2
+      return 0
+    fi
+    $SUDO ln -sfn "$tool" "$dest"
+  fi
+}
+
+# --- System packages (C toolchain for build.rs (cc); libssl-dev for openssl-sys; curl for the installers) ---
+apt_install build-essential pkg-config libssl-dev curl ca-certificates
+
+# --- Rust (rustup) ---
+export PATH="$HOME/.cargo/bin:$PATH"
+if ! command -v rustup >/dev/null 2>&1; then
+  rustup_tmp="$(mktemp -d)"
+  download "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init" \
+    "$rustup_tmp/rustup-init"
+  download "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init.sha256" \
+    "$rustup_tmp/rustup-init.sha256"
+  verify_rustup_init "$rustup_tmp/rustup-init" "$rustup_tmp/rustup-init.sha256"
+  chmod +x "$rustup_tmp/rustup-init"
+  "$rustup_tmp/rustup-init" -y --default-toolchain none --profile minimal --no-modify-path
+  rm -rf "$rustup_tmp"
+fi
+# ci.yml uses stable + rustfmt, clippy, llvm-tools-preview.
+ensure_rust_toolchain
+
+# --- Python (uv) ---
+# The uv install script has no published checksum; do not invent one.
+# Download it, fail if the download did not complete, then run it.
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  uv_script="$(mktemp)"
+  download "https://astral.sh/uv/install.sh" "$uv_script"
+  UV_NO_MODIFY_PATH=1 sh "$uv_script"
+  rm -f "$uv_script"
+fi
+# ci.yml benchmarks step pins ruff==0.15.14 and runs `python -m unittest`.
+# Install ruff as a uv tool so later shells
+# see it without a virtualenv.
+uv python install 3.11
+uv tool install --python 3.11 'ruff==0.15.14'
+
+# --- just (CLAUDE.md / README: `just setup`) ---
+# Pinned release plus the publisher's SHA256SUMS. The distro just package isn't pinned.
+mkdir -p "$HOME/.local/bin"
+if ! command -v just >/dev/null 2>&1; then
+  just_version="1.58.0"
+  just_asset="just-${just_version}-x86_64-unknown-linux-musl.tar.gz"
+  just_tmp="$(mktemp -d)"
+  download "https://github.com/casey/just/releases/download/${just_version}/${just_asset}" \
+    "$just_tmp/$just_asset"
+  download "https://github.com/casey/just/releases/download/${just_version}/SHA256SUMS" \
+    "$just_tmp/SHA256SUMS"
+  grep -F "  ${just_asset}" "$just_tmp/SHA256SUMS" >"$just_tmp/just.sha256"
+  [ -s "$just_tmp/just.sha256" ]
+  (cd "$just_tmp" && sha256sum -c just.sha256)
+  tar -xzf "$just_tmp/$just_asset" -C "$just_tmp" just
+  install -m 0755 "$just_tmp/just" "$HOME/.local/bin/just"
+  rm -rf "$just_tmp"
+fi
+
+# --- cargo-llvm-cov (ci.yml coverage step; CLAUDE.md documents the same command) ---
+# The release publishes no checksum file, so this does not claim one. Download the
+# tarball, fail if curl did not finish, then install the binary.
+if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+  host="$(rustc -vV | awk '/^host:/{print $2}')"
+  llc_version="0.9.1"
+  llc_asset="cargo-llvm-cov-${host}.tar.gz"
+  llc_tmp="$(mktemp -d)"
+  download "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${llc_version}/${llc_asset}" \
+    "$llc_tmp/$llc_asset"
+  tar -xzf "$llc_tmp/$llc_asset" -C "$llc_tmp"
+  [ -x "$llc_tmp/cargo-llvm-cov" ]
+  install -m 0755 "$llc_tmp/cargo-llvm-cov" "$HOME/.cargo/bin/cargo-llvm-cov"
+  rm -rf "$llc_tmp"
+fi
+
+# --- Prefetch crates (no build, no tests) ---
+# Fetching is feature-independent; build/test with --no-default-features (default feature `cuda` needs nvcc).
+cargo fetch --locked
+
+# --- Expose the tools to later shells ---
+# The PATH exports above last only for this script; Cursor starts the agent's shells
+# separately. Login shells get these directories from /etc/profile.d, and every other
+# shell finds the entry points through symlinks in /usr/local/bin (on the default PATH).
+# The links skip python and pip so the system python3 stays the default.
+tool_dirs=("$HOME/.cargo/bin" "$HOME/.local/bin")
+# shellcheck disable=SC2016 # $PATH must expand when the profile is sourced, not now.
+printf 'export PATH=%q:$PATH\n' "$(IFS=:; echo "${tool_dirs[*]}")" |
+  $SUDO tee /etc/profile.d/cursor-env-corinth-canal.sh >/dev/null
+for dir in "${tool_dirs[@]}"; do
+  [ -d "$dir" ] || continue
+  for tool in "$dir"/*; do
+    [ -e "$tool" ] || continue
+    link_tool "$tool"
+  done
+done
+
+echo "Cursor install for corinth-canal finished."
