@@ -85,6 +85,10 @@
 pub mod error;
 pub mod experiment;
 pub mod funnel;
+// Kept outside funnel.rs so that file stays byte-identical to the revision
+// neuromod's Corinth parity fixture pins by SHA-256 (#157).
+#[cfg(test)]
+mod funnel_neuromod_parity;
 #[cfg(feature = "cuda")]
 pub mod gpu;
 pub mod latent;

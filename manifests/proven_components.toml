@@ -78,8 +78,8 @@ last_proven_run = ""
 [[component]]
 path            = "src/funnel.rs"
 status          = "reference"
-target_repo     = "rmems-funnel"
-owner_notes     = "GIF layer shared between CPU and GPU callers."
+target_repo     = "Limen-Neural/neuromod"
+owner_notes     = "GIF layer shared between CPU and GPU callers. #157: SparseGifHiddenLayer upstreamed to neuromod 0.7.0 (neuromod#101, parity fixture neuromod#144); src/funnel_neuromod_parity.rs guards the local copy against that fixture. Local copy stays; adoption deferred to a follow-up issue. SignedSplitBankBridge and TelemetryFunnel stay here."
 last_proven_run = ""
 
 [[component]]
