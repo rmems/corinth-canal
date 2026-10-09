@@ -153,18 +153,20 @@ jobs:
     steps:
       - name: Windows prep (Git Bash on PATH, no CRLF conversion)
         if: runner.os == 'Windows'
-        shell: powershell
+        # cmd, not powershell: the runner host's execution policy blocks the
+        # temp .ps1 scripts Actions generates.
+        shell: cmd
         run: |
-          # The runner service runs as NETWORK SERVICE and may have been started
-          # before Git for Windows was installed, so put Git (and its bash) on
-          # PATH explicitly for the bash steps and actions that follow.
-          "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "C:\Program Files\Git\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # Git for Windows defaults to core.autocrlf=true; check out byte-exact
-          # LF sources so source-hash / fixture tests match Linux.
-          "GIT_CONFIG_COUNT=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "GIT_CONFIG_KEY_0=core.autocrlf" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "GIT_CONFIG_VALUE_0=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          rem The runner service runs as NETWORK SERVICE and may have been started
+          rem before Git for Windows was installed, so put Git (and its bash) on
+          rem PATH explicitly for the bash steps and actions that follow.
+          >>"%GITHUB_PATH%" echo C:\Program Files\Git\cmd
+          >>"%GITHUB_PATH%" echo C:\Program Files\Git\bin
+          rem Git for Windows defaults to core.autocrlf=true; check out byte-exact
+          rem LF sources so source-hash / fixture tests match Linux.
+          >>"%GITHUB_ENV%" echo GIT_CONFIG_COUNT=1
+          >>"%GITHUB_ENV%" echo GIT_CONFIG_KEY_0=core.autocrlf
+          >>"%GITHUB_ENV%" echo GIT_CONFIG_VALUE_0=false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
         with:
           persist-credentials: false
