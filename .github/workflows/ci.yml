@@ -62,7 +62,7 @@ jobs:
         # --locked must be on this step: it is the first cargo command that
         # resolves the graph. Without it, clippy repairs a stale Cargo.lock
         # and the later --locked test/check/coverage steps have nothing to
-        # fail on. Fork PRs only run this hosted job (the Ryzen job is
+        # fail on. Fork PRs only run this hosted job (the self-hosted job is
         # fork-guarded), so this is the lockfile gate they actually get.
         run: cargo clippy --all-targets --no-default-features --locked -- -D warnings -A dead_code
 
@@ -128,20 +128,45 @@ jobs:
           verbose: true
 
   cpu-tests-ryzen:
-    name: CPU Heavy (Self-hosted Ryzen)
+    name: CPU Heavy (Self-hosted)
     needs: cpu-tests-github
     # SECURITY: Fork guard — prevent fork PRs from running on self-hosted runners.
     # Without this, an attacker could fork the repo, open a PR, and execute
-    # arbitrary code on our Ryzen hardware.
+    # arbitrary code on our self-hosted hardware.
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, Linux, X64, ryzen]
+    # Any online self-hosted X64 runner registered to this repo can take this
+    # job: ShipOfTheseus (Fedora, Ryzen) or DESKTOP-4E1V5HV (Windows). Labels
+    # are AND-matched, so only labels both runners carry are listed here;
+    # pinning `Linux`/`ryzen` left the job queued whenever Fedora was off.
+    # GPU jobs (gpu-tests.yml, docker-build.yml) keep their gpu/cuda labels.
+    runs-on: [self-hosted, X64]
     timeout-minutes: 60
     # SECURITY: Explicit minimal permissions for self-hosted runner job.
     permissions:
       contents: read
+    defaults:
+      run:
+        # Same scripts on both OSes; Windows uses Git for Windows' bash.
+        shell: bash
     steps:
+      - name: Windows prep (Git Bash on PATH, no CRLF conversion)
+        if: runner.os == 'Windows'
+        # cmd, not powershell: the runner host's execution policy blocks the
+        # temp .ps1 scripts Actions generates.
+        shell: cmd
+        run: |
+          rem The runner service runs as NETWORK SERVICE and may have been started
+          rem before Git for Windows was installed, so put Git (and its bash) on
+          rem PATH explicitly for the bash steps and actions that follow.
+          >>"%GITHUB_PATH%" echo C:\Program Files\Git\cmd
+          >>"%GITHUB_PATH%" echo C:\Program Files\Git\bin
+          rem Git for Windows defaults to core.autocrlf=true; check out byte-exact
+          rem LF sources so source-hash / fixture tests match Linux.
+          >>"%GITHUB_ENV%" echo GIT_CONFIG_COUNT=1
+          >>"%GITHUB_ENV%" echo GIT_CONFIG_KEY_0=core.autocrlf
+          >>"%GITHUB_ENV%" echo GIT_CONFIG_VALUE_0=false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
         with:
           persist-credentials: false
