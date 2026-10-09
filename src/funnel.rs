@@ -246,6 +246,10 @@ impl TelemetryFunnel {
 }
 
 #[cfg(test)]
+#[path = "funnel_neuromod_parity.rs"]
+mod neuromod_parity;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
