@@ -32,6 +32,7 @@ fi
 download() {
   local url="$1" dest="$2"
   curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+    --connect-timeout 15 --max-time 120 \
     --retry 5 --retry-all-errors -o "$dest" "$url"
 }
 
@@ -85,12 +86,12 @@ link_tool() {
     # uv's installer also drops env/env.fish (sourced, not run) in ~/.local/bin.
     # Some base images ship gh at /usr/local/bin/gh plus a ~/.local/bin/gh wrapper
     # that execs it. Linking the wrapper over the real binary would recurse.
-    python* | pip* | activate* | deactivate | Activate.ps1 | env | env.fish | gh) return 0 ;;
+    python | python3 | pip* | activate* | deactivate | Activate.ps1 | env | env.fish | gh) return 0 ;;
   esac
   if [ -f "$tool" ] && [ -x "$tool" ]; then
     if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-      echo "Not replacing existing $dest" >&2
-      return 0
+      echo "Refusing to replace existing $dest" >&2
+      exit 1
     fi
     $SUDO ln -sfn "$tool" "$dest"
   fi
@@ -129,7 +130,17 @@ fi
 # Install ruff as a uv tool so later shells
 # see it without a virtualenv.
 uv python install 3.11
-uv tool install --python 3.11 'ruff==0.15.14'
+# --force keeps repeated Cursor Builds idempotent when ruff is already installed.
+uv tool install --force --python 3.11 'ruff==0.15.14'
+
+# CI runs benchmarks with python3 (justfile). If the base image is older than 3.11,
+# point python3 at uv's managed interpreter and expose it outside login shells.
+expose_python3=false
+uv_python="$(uv python find 3.11)"
+if ! python3 -c 'import sys; exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+  ln -sfn "$uv_python" "$HOME/.local/bin/python3"
+  expose_python3=true
+fi
 
 # --- just (CLAUDE.md / README: `just setup`) ---
 # Pinned release plus the publisher's SHA256SUMS. The distro just package isn't pinned.
@@ -146,6 +157,11 @@ if ! command -v just >/dev/null 2>&1; then
   [ -s "$just_tmp/just.sha256" ]
   (cd "$just_tmp" && sha256sum -c just.sha256)
   tar -xzf "$just_tmp/$just_asset" -C "$just_tmp" just
+  if [ ! -x "$just_tmp/just" ]; then
+    echo "Error: just extraction failed or binary not executable" >&2
+    rm -rf "$just_tmp"
+    exit 1
+  fi
   install -m 0755 "$just_tmp/just" "$HOME/.local/bin/just"
   rm -rf "$just_tmp"
 fi
@@ -161,7 +177,11 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
   download "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${llc_version}/${llc_asset}" \
     "$llc_tmp/$llc_asset"
   tar -xzf "$llc_tmp/$llc_asset" -C "$llc_tmp"
-  [ -x "$llc_tmp/cargo-llvm-cov" ]
+  if [ ! -x "$llc_tmp/cargo-llvm-cov" ]; then
+    echo "Error: cargo-llvm-cov extraction failed or binary not executable" >&2
+    rm -rf "$llc_tmp"
+    exit 1
+  fi
   install -m 0755 "$llc_tmp/cargo-llvm-cov" "$HOME/.cargo/bin/cargo-llvm-cov"
   rm -rf "$llc_tmp"
 fi
@@ -174,7 +194,7 @@ cargo fetch --locked
 # The PATH exports above last only for this script; Cursor starts the agent's shells
 # separately. Login shells get these directories from /etc/profile.d, and every other
 # shell finds the entry points through symlinks in /usr/local/bin (on the default PATH).
-# The links skip python and pip so the system python3 stays the default.
+# The links skip unversioned python names and pip so a new-enough system python3 stays default.
 tool_dirs=("$HOME/.cargo/bin" "$HOME/.local/bin")
 # shellcheck disable=SC2016 # $PATH must expand when the profile is sourced, not now.
 printf 'export PATH=%q:$PATH\n' "$(IFS=:; echo "${tool_dirs[*]}")" |
@@ -186,5 +206,14 @@ for dir in "${tool_dirs[@]}"; do
     link_tool "$tool"
   done
 done
+
+if [ "$expose_python3" = true ]; then
+  dest="/usr/local/bin/python3"
+  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+    echo "Refusing to replace existing $dest" >&2
+    exit 1
+  fi
+  $SUDO ln -sfn "$HOME/.local/bin/python3" "$dest"
+fi
 
 echo "Cursor install for corinth-canal finished."
