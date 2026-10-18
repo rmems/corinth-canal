@@ -60,8 +60,9 @@ reviews:
         --no-default-features jobs.
     - path: benchmarks/**/*.py
       instructions: >-
-        Python 3.11 (CI). CI gate: ruff check benchmarks (ruff 0.15.14) and
-        python -m unittest discover -s benchmarks/tests. Keep code compatible
+        Python 3.11 (CI). CI gate: ruff check benchmarks and ruff format
+        --check benchmarks (ruff 0.15.14), then python -m unittest discover
+        -s benchmarks/tests -t . from the repo root. Keep code compatible
         with the declared Python floor.
     - path: Dockerfile
       instructions: >-
