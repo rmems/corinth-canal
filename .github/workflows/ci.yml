@@ -53,10 +53,12 @@ jobs:
         run: python -m pip install --disable-pip-version-check 'ruff==0.15.14'
 
       - name: Lint benchmarks (ruff)
-        run: ruff check benchmarks
+        run: |
+          ruff check benchmarks
+          ruff format --check benchmarks
 
       - name: Benchmark adapter unit tests
-        run: python -m unittest discover -s benchmarks/tests -v
+        run: python -m unittest discover -s benchmarks/tests -t . -v
 
       - name: Lint
         # --locked must be on this step: it is the first cargo command that
