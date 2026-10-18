@@ -591,16 +591,23 @@ def _normalized_field(manifest: Mapping[str, Any] | object, name: str) -> str:
 # actionable error instead of falling through to "cannot detect backend".
 _KNOWN_UNSUPPORTED_RUNTIMES = {"sglang"}
 
+# Keys of _EXPLICIT_RUNTIMES that name an artifact format rather than a runtime.
+# They resolve to the same backend either way, but are compared as artifact
+# formats so that `gguf` vs `safetensors` with no runtime named is a conflict.
+_FORMAT_NAMES_IN_RUNTIME_TABLE = {"gguf"}
+
 
 def detect_backend(manifest: Mapping[str, Any] | object) -> str:
     """Choose a backend from explicit runtime and artifact format metadata.
 
     Accepts the field vocabulary the Rust producers actually emit
     (`checkpoint_format`, `source_format`, `format`, `loader_hint`) rather than
-    a single key nothing writes. Every field that resolves must name the same
-    backend; conflicting metadata, or a runtime this package has no adapter
-    for, raises rather than letting one field silently override another.
-    `runtime_format` overrides all of them.
+    a single key nothing writes. A value naming a runtime (``vllm``,
+    ``transformers``, ...) beats one naming only an artifact format, whose
+    backend is just a default: ``transformers`` + ``safetensors`` is
+    ``huggingface``. Raises when explicit runtimes disagree, when no runtime is
+    named and the artifact formats disagree (``gguf`` vs ``safetensors``), or
+    when a runtime has no adapter here. `runtime_format` overrides all of them.
     """
     override = _normalized_field(manifest, _RUNTIME_OVERRIDE_FIELD)
     if override:
@@ -617,7 +624,8 @@ def detect_backend(manifest: Mapping[str, Any] | object) -> str:
     # An unsupported runtime is an explicit request, so it raises at once
     # instead of being silently replaced by whatever another field implies.
     seen: list[tuple[str, str]] = []
-    resolved: list[tuple[str, str, str]] = []
+    runtimes: list[tuple[str, str, str]] = []
+    artifacts: list[tuple[str, str, str]] = []
     deferred_error: str | None = None
     accepted = sorted(set(_EXPLICIT_RUNTIMES))
 
@@ -640,17 +648,25 @@ def detect_backend(manifest: Mapping[str, Any] | object) -> str:
                 f"{_RUNTIME_OVERRIDE_FIELD} to one of {accepted}"
             )
 
-        backend = _backend_from_runtime(value) or _backend_from_artifact(value, "")
+        runtime = None if value in _FORMAT_NAMES_IN_RUNTIME_TABLE else _backend_from_runtime(value)
+        if runtime is not None:
+            runtimes.append((field, value, runtime))
+            continue
+        backend = _backend_from_artifact(value, "")
         if backend is not None:
-            resolved.append((field, value, backend))
+            artifacts.append((field, value, backend))
 
-    if resolved:
+    # An explicit runtime decides on its own; artifact formats only supply a
+    # default, so they are compared with each other only when no runtime is named.
+    for kind, resolved in (("runtime", runtimes), ("artifact format", artifacts)):
+        if not resolved:
+            continue
         if len({backend for _, _, backend in resolved}) > 1:
             pairs = ", ".join(
                 f"{field}={value!r} -> {backend}" for field, value, backend in resolved
             )
             raise ValueError(
-                f"conflicting backend metadata ({pairs}); set "
+                f"conflicting {kind} metadata ({pairs}); set "
                 f"{_RUNTIME_OVERRIDE_FIELD} to one of {accepted} to choose explicitly"
             )
         return resolved[0][2]
