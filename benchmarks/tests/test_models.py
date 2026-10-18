@@ -304,20 +304,45 @@ class DetectBackendProducerShapesTest(unittest.TestCase):
         self.assertTrue(str(ctx.exception).startswith("loader_hint 'sglang' has no adapter"))
         self.assertEqual(detect_backend({**entry, "runtime_format": "vllm"}), "vllm")
 
-    def test_conflicting_fields_raise_and_name_both(self):
+    def test_conflicting_artifact_formats_without_a_runtime_raise(self):
         entry = {"loader_hint": "gguf", "format": "safetensors", "path": "/models/x"}
         with self.assertRaises(ValueError) as ctx:
             detect_backend(entry)
         message = str(ctx.exception)
-        self.assertIn("conflicting backend metadata", message)
+        self.assertIn("conflicting artifact format metadata", message)
         self.assertIn("loader_hint='gguf' -> llama.cpp", message)
         self.assertIn("format='safetensors' -> vllm", message)
         self.assertIn("runtime_format", message)
         self.assertEqual(detect_backend({**entry, "runtime_format": "llama.cpp"}), "llama.cpp")
 
+    def test_conflicting_explicit_runtimes_raise(self):
+        entry = {"loader_hint": "vllm", "source_format": "transformers", "path": "/models/x"}
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend(entry)
+        message = str(ctx.exception)
+        self.assertIn("conflicting runtime metadata", message)
+        self.assertIn("loader_hint='vllm' -> vllm", message)
+        self.assertIn("source_format='transformers' -> huggingface", message)
+
+    def test_explicit_runtime_beats_an_artifact_format_default(self):
+        # safetensors -> vllm is only a default; a named runtime that loads the
+        # same artifact is not a conflict (Blocks/Devin review on #246).
+        cases = [
+            ({"loader_hint": "transformers", "format": "safetensors"}, "huggingface"),
+            ({"loader_hint": "hf", "source_format": "safetensors"}, "huggingface"),
+            ({"loader_hint": "transformers", "checkpoint_format": "safetensors"}, "huggingface"),
+            ({"source_format": "hf", "checkpoint_format": "safetensors"}, "huggingface"),
+            ({"loader_hint": "vllm", "format": "gguf"}, "vllm"),
+        ]
+        for fields, backend in cases:
+            with self.subTest(**fields):
+                self.assertEqual(detect_backend({**fields, "path": "/models/x"}), backend)
+
     def test_agreeing_fields_still_resolve(self):
         entry = {"loader_hint": "vllm", "format": "safetensors", "path": "/models/x"}
         self.assertEqual(detect_backend(entry), "vllm")
+        entry = {"checkpoint_format": "gguf", "source_format": "q8_0", "path": "/models/x"}
+        self.assertEqual(detect_backend(entry), "llama.cpp")
 
     def test_unrecognised_values_are_echoed_in_the_error(self):
         with self.assertRaises(ValueError) as ctx:
