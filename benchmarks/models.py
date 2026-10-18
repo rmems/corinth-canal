@@ -555,7 +555,9 @@ def _backend_from_artifact(source: str, model_path_str: str) -> str | None:
 
 
 # Caller-supplied override. No producer in this repository writes it, but it
-# lets a runner force a backend without touching artifact metadata.
+# lets a runner force a backend without touching artifact metadata, it is the
+# only way to select the mock backend, and it is the fix the custom_artifact
+# error points at. Kept for those readers, not as a producer field.
 _RUNTIME_OVERRIDE_FIELD = "runtime_format"
 
 # Metadata fields that describe the artifact, most specific first:
@@ -622,7 +624,8 @@ def detect_backend(manifest: Mapping[str, Any] | object) -> str:
         if value == "custom_artifact":
             deferred_error = deferred_error or (
                 f"{field} 'custom_artifact' names no inference runtime; set "
-                f"{_RUNTIME_OVERRIDE_FIELD} explicitly for this model"
+                f"{_RUNTIME_OVERRIDE_FIELD} to one of {sorted(set(_EXPLICIT_RUNTIMES))} "
+                "for this model, or give it a .gguf / .safetensors model path"
             )
             continue
         if value in _KNOWN_UNSUPPORTED_RUNTIMES:

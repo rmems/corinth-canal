@@ -305,8 +305,18 @@ class DetectBackendProducerShapesTest(unittest.TestCase):
     def test_custom_artifact_gets_an_explanatory_error(self):
         with self.assertRaises(ValueError) as ctx:
             detect_backend({"source_format": "custom_artifact", "path": "/models/x"})
-        self.assertIn("custom_artifact", str(ctx.exception))
-        self.assertIn("runtime_format", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("custom_artifact", message)
+        self.assertIn("runtime_format", message)
+        # Actionable: names the values runtime_format accepts.
+        for runtime in ("llama.cpp", "vllm", "huggingface"):
+            self.assertIn(runtime, message)
+
+    def test_custom_artifact_runtime_override_is_the_documented_fix(self):
+        manifest = {"source_format": "custom_artifact", "path": "/models/x"}
+        with self.assertRaises(ValueError):
+            detect_backend(manifest)
+        self.assertEqual(detect_backend({**manifest, "runtime_format": "vllm"}), "vllm")
 
     def test_unknown_metadata_names_the_fields_it_looked_at(self):
         with self.assertRaises(ValueError) as ctx:
