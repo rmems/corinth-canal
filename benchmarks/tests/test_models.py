@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import ast
 import math
-import subprocess  # nosec B404
 import sys
 import tempfile
 import tomllib
@@ -295,6 +295,30 @@ class DetectBackendProducerShapesTest(unittest.TestCase):
         self.assertIn("sglang", str(ctx.exception))
         self.assertIn("no adapter", str(ctx.exception))
 
+    def test_unsupported_runtime_is_not_replaced_by_another_field(self):
+        # loader_hint asks for sglang; format alone would pick vLLM. Running
+        # vLLM silently would ignore the explicit request.
+        entry = {"loader_hint": "sglang", "format": "safetensors", "path": "/models/x"}
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend(entry)
+        self.assertTrue(str(ctx.exception).startswith("loader_hint 'sglang' has no adapter"))
+        self.assertEqual(detect_backend({**entry, "runtime_format": "vllm"}), "vllm")
+
+    def test_conflicting_fields_raise_and_name_both(self):
+        entry = {"loader_hint": "gguf", "format": "safetensors", "path": "/models/x"}
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend(entry)
+        message = str(ctx.exception)
+        self.assertIn("conflicting backend metadata", message)
+        self.assertIn("loader_hint='gguf' -> llama.cpp", message)
+        self.assertIn("format='safetensors' -> vllm", message)
+        self.assertIn("runtime_format", message)
+        self.assertEqual(detect_backend({**entry, "runtime_format": "llama.cpp"}), "llama.cpp")
+
+    def test_agreeing_fields_still_resolve(self):
+        entry = {"loader_hint": "vllm", "format": "safetensors", "path": "/models/x"}
+        self.assertEqual(detect_backend(entry), "vllm")
+
     def test_unrecognised_values_are_echoed_in_the_error(self):
         with self.assertRaises(ValueError) as ctx:
             detect_backend({"source_format": "mystery", "path": "model.bin"})
@@ -555,10 +579,13 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                     message = str(error)
                     self.assertNotIn("cannot detect inference backend", message)
                     offending = {entry.get("format"), entry.get("loader_hint")} - {None}
-                    self.assertTrue(
-                        any(value in message for value in offending),
-                        f"{family}: error does not name {offending}: {message}",
-                    )
+                    # With neither field set there is no value to name; the
+                    # not-generic and runtime_format checks still apply.
+                    if offending:
+                        self.assertTrue(
+                            any(value in message for value in offending),
+                            f"{family}: error does not name {offending}: {message}",
+                        )
                     self.assertIn("runtime_format", message)
                 else:
                     self.assertIn(backend, _KNOWN_BACKENDS)
@@ -566,10 +593,25 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
     def test_entries_resolve_to_the_runtime_their_format_implies(self):
         expected = {"gguf": "llama.cpp", "safetensors": "vllm"}
         for entry in self.entries:
-            if entry.get("format") not in expected or entry.get("loader_hint") != entry["format"]:
+            if entry.get("format") not in expected:
                 continue
             with self.subTest(model_family=entry.get("model_family")):
+                # No skip for loader_hint != format: a conflicting hint now
+                # raises, so it fails here instead of changing the runtime.
                 self.assertEqual(detect_backend(entry), expected[entry["format"]])
+
+    def test_no_field_of_an_entry_is_silently_overridden(self):
+        for entry in self.entries:
+            try:
+                backend = detect_backend(entry)
+            except ValueError:
+                continue  # the specific-message test above covers raising entries
+            for field in ("format", "loader_hint"):
+                if field not in entry:
+                    continue
+                with self.subTest(model_family=entry.get("model_family"), field=field):
+                    alone = {"model_id_or_local_path": "org/model", field: entry[field]}
+                    self.assertEqual(detect_backend(alone), backend)
 
     def test_documented_value_domain_resolves_or_fails_specifically(self):
         # The header of model_adapter_configs.toml documents these domains:
@@ -592,8 +634,12 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                 with self.assertRaises(ValueError) as ctx:
                     detect_backend(entry)
                 message = str(ctx.exception)
-                self.assertIn(f"{field} ", message)
-                self.assertIn(value, message)
+                # A prefix, not a substring: "format " also occurs inside the
+                # "runtime_format " remedy text every one of these errors has.
+                self.assertTrue(
+                    message.startswith(f"{field} {value!r}"),
+                    f"error does not attribute {value!r} to {field}: {message}",
+                )
                 self.assertIn("runtime_format", message)
 
 
@@ -622,37 +668,19 @@ class LlamaCppLoadedStateChecksTest(unittest.TestCase):
                 adapter.generate("prompt")
         run.assert_not_called()
 
-    def test_checks_survive_python_optimize(self):
-        script = "\n".join(
-            [
-                "import sys",
-                "from benchmarks.models import BackendUnavailableError, LlamaCppAdapter",
-                "assert False  # stripped under -O; reaching the next line proves it",
-                "failures = []",
-                "for mode, attr in (('python', '_model'), ('cli', '_executable')):",
-                "    adapter = LlamaCppAdapter({'path': 'tiny.gguf'})",
-                "    adapter._loaded, adapter._mode = True, mode",
-                "    setattr(adapter, attr, None)",
-                "    try:",
-                "        adapter.generate('prompt')",
-                "    except BackendUnavailableError:",
-                "        continue",
-                "    except Exception as error:",
-                "        failures.append(f'{mode}: {type(error).__name__}: {error}')",
-                "    else:",
-                "        failures.append(f'{mode}: no error')",
-                "sys.exit('\\n'.join(failures) or 0)",
-            ]
-        )
-        completed = subprocess.run(  # nosec B603
-            [sys.executable, "-O", "-c", script],
-            cwd=_REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+    def test_models_has_nothing_python_optimize_would_strip(self):
+        # `python -O` removes `assert` statements and `if __debug__:` blocks
+        # and changes nothing else. With neither present in models.py, the two
+        # tests above hold unchanged under -O.
+        source_path = _REPO_ROOT / "benchmarks" / "models.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        stripped = [
+            f"line {node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assert)
+            or (isinstance(node, ast.Name) and node.id == "__debug__")
+        ]
+        self.assertEqual(stripped, [], "models.py has code that python -O strips")
 
 
 if __name__ == "__main__":
