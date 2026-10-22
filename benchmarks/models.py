@@ -555,7 +555,9 @@ def _backend_from_artifact(source: str, model_path_str: str) -> str | None:
 
 
 # Caller-supplied override. No producer in this repository writes it, but it
-# lets a runner force a backend without touching artifact metadata.
+# lets a runner force a backend without touching artifact metadata, it is the
+# only way to select the mock backend, and it is the fix the custom_artifact
+# error points at. Kept for those readers, not as a producer field.
 _RUNTIME_OVERRIDE_FIELD = "runtime_format"
 
 # Metadata fields that describe the artifact, most specific first:
@@ -589,13 +591,23 @@ def _normalized_field(manifest: Mapping[str, Any] | object, name: str) -> str:
 # actionable error instead of falling through to "cannot detect backend".
 _KNOWN_UNSUPPORTED_RUNTIMES = {"sglang"}
 
+# Keys of _EXPLICIT_RUNTIMES that name an artifact format rather than a runtime.
+# They resolve to the same backend either way, but are compared as artifact
+# formats so that `gguf` vs `safetensors` with no runtime named is a conflict.
+_FORMAT_NAMES_IN_RUNTIME_TABLE = {"gguf"}
+
 
 def detect_backend(manifest: Mapping[str, Any] | object) -> str:
     """Choose a backend from explicit runtime and artifact format metadata.
 
     Accepts the field vocabulary the Rust producers actually emit
     (`checkpoint_format`, `source_format`, `format`, `loader_hint`) rather than
-    a single key nothing writes.
+    a single key nothing writes. A value naming a runtime (``vllm``,
+    ``transformers``, ...) beats one naming only an artifact format, whose
+    backend is just a default: ``transformers`` + ``safetensors`` is
+    ``huggingface``. Raises when explicit runtimes disagree, when no runtime is
+    named and the artifact formats disagree (``gguf`` vs ``safetensors``), or
+    when a runtime has no adapter here. `runtime_format` overrides all of them.
     """
     override = _normalized_field(manifest, _RUNTIME_OVERRIDE_FIELD)
     if override:
@@ -607,11 +619,15 @@ def detect_backend(manifest: Mapping[str, Any] | object) -> str:
             )
         return backend
 
-    # Collect rather than raise mid-scan: a later field or the path suffix may
-    # still resolve a backend, and failing early would reject manifests that
-    # previously worked.
+    # `custom_artifact` is deferred rather than raised: it says nothing about
+    # the runtime, so a later field or the path suffix may still resolve one.
+    # An unsupported runtime is an explicit request, so it raises at once
+    # instead of being silently replaced by whatever another field implies.
     seen: list[tuple[str, str]] = []
+    runtimes: list[tuple[str, str, str]] = []
+    artifacts: list[tuple[str, str, str]] = []
     deferred_error: str | None = None
+    accepted = sorted(set(_EXPLICIT_RUNTIMES))
 
     for field in _BACKEND_HINT_FIELDS:
         value = _normalized_field(manifest, field)
@@ -622,20 +638,38 @@ def detect_backend(manifest: Mapping[str, Any] | object) -> str:
         if value == "custom_artifact":
             deferred_error = deferred_error or (
                 f"{field} 'custom_artifact' names no inference runtime; set "
-                f"{_RUNTIME_OVERRIDE_FIELD} explicitly for this model"
+                f"{_RUNTIME_OVERRIDE_FIELD} to one of {accepted} "
+                "for this model, or give it a .gguf / .safetensors model path"
             )
             continue
         if value in _KNOWN_UNSUPPORTED_RUNTIMES:
-            deferred_error = deferred_error or (
+            raise ValueError(
                 f"{field} {value!r} has no adapter in this package; set "
-                f"{_RUNTIME_OVERRIDE_FIELD} to one of "
-                f"{sorted(set(_EXPLICIT_RUNTIMES))}"
+                f"{_RUNTIME_OVERRIDE_FIELD} to one of {accepted}"
             )
-            continue
 
-        backend = _backend_from_runtime(value) or _backend_from_artifact(value, "")
+        runtime = None if value in _FORMAT_NAMES_IN_RUNTIME_TABLE else _backend_from_runtime(value)
+        if runtime is not None:
+            runtimes.append((field, value, runtime))
+            continue
+        backend = _backend_from_artifact(value, "")
         if backend is not None:
-            return backend
+            artifacts.append((field, value, backend))
+
+    # An explicit runtime decides on its own; artifact formats only supply a
+    # default, so they are compared with each other only when no runtime is named.
+    for kind, resolved in (("runtime", runtimes), ("artifact format", artifacts)):
+        if not resolved:
+            continue
+        if len({backend for _, _, backend in resolved}) > 1:
+            pairs = ", ".join(
+                f"{field}={value!r} -> {backend}" for field, value, backend in resolved
+            )
+            raise ValueError(
+                f"conflicting {kind} metadata ({pairs}); set "
+                f"{_RUNTIME_OVERRIDE_FIELD} to one of {accepted} to choose explicitly"
+            )
+        return resolved[0][2]
 
     backend = _backend_from_artifact("", _resolved_model_path_lower(manifest))
     if backend is not None:
