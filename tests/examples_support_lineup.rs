@@ -154,7 +154,7 @@ fn safetensors_lineup_parses_valid_toml() {
 [[model]]
 slug = "test_st_model"
 family = "olmoe"
-path = "{}"
+path = '{}'
 target = "local"
 "#,
             existing_file.display()
@@ -375,7 +375,7 @@ fn gguf_lineup_skips_missing_checkpoints_without_strict() {
 [[model]]
 slug = "present_model"
 family = "olmoe"
-path = "{PRESENT}"
+path = '{PRESENT}'
 
 [[model]]
 slug = "missing_model"
@@ -406,7 +406,7 @@ fn gguf_lineup_strict_names_unresolved_slugs() {
 [[model]]
 slug = "present_model"
 family = "olmoe"
-path = "{PRESENT}"
+path = '{PRESENT}'
 
 [[model]]
 slug = "missing_alpha"
@@ -448,7 +448,7 @@ fn gguf_lineup_strict_succeeds_when_every_entry_resolves() {
 [[model]]
 slug = "only_model"
 family = "olmoe"
-path = "{PRESENT}"
+path = '{PRESENT}'
 "#,
     );
 

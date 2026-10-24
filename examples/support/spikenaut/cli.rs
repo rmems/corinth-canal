@@ -322,10 +322,15 @@ mod tests {
         assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
         let cli = parse_argv([input_arg, input_arg]).unwrap();
         assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
-        let hardlink = root.join("hardlink.csv");
-        std::fs::hard_link(&input, &hardlink).unwrap();
-        let cli = parse_argv([input_arg, hardlink.to_str().unwrap()]).unwrap();
-        assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        // Hard-link aliasing is detected via (dev, ino), which only exists on
+        // Unix (see `same_existing_file`); Windows only catches path aliases.
+        #[cfg(unix)]
+        {
+            let hardlink = root.join("hardlink.csv");
+            std::fs::hard_link(&input, &hardlink).unwrap();
+            let cli = parse_argv([input_arg, hardlink.to_str().unwrap()]).unwrap();
+            assert!(cli.validate_output_paths(SpikenautDomain::Gpu).is_err());
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
