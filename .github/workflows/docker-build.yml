@@ -55,6 +55,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # build-push-action refuses to start when the daemon has no buildx
+      # plugin. One self-hosted GPU runner (WSL, /usr/bin/docker) hits that
+      # before any image step; setup-buildx installs the plugin.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # Use the engine's BuildKit. The default docker-container driver
+          # pulls moby/buildkit; these runners already build with the daemon
+          # and only lack the buildx CLI plugin.
+          driver: docker
+
       - name: Build Docker Image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
