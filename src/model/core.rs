@@ -12,8 +12,7 @@ use crate::types::{
 
 pub(super) const N_NEURONS: usize = 2048;
 pub(super) const IZ_NEURONS: usize = 5;
-pub(super) const GPU_ROUTING_TELEMETRY_HEADER: &str =
-    "token_idx,best_score,best_walker,spike_count,mean_adaptation,active_fraction";
+pub(super) use crate::experiment::routing_csv::GPU_ROUTING_TELEMETRY_HEADER;
 pub(super) const GPU_ROUTING_TELEMETRY_PATH: &str = "snn_gpu_routing_telemetry.csv";
 
 /// Resolve the effective routing-telemetry CSV path for a model.
@@ -444,8 +443,13 @@ mod tests {
 
     #[test]
     fn test_gpu_routing_telemetry_writer_adds_header_once() {
-        let path = std::env::temp_dir().join(format!(
-            "corinth_canal_gpu_routing_{}.csv",
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("routing-csv-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!(
+            "corinth_canal_gpu_routing_{}_{}.csv",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

@@ -5,6 +5,7 @@
 //! tools (e.g. `Surrogate_Viz.jl`) and any shared experiment logic that is
 //! not tied to a specific example binary.
 
+pub mod routing_csv;
 pub mod schema;
 
 pub use schema::{
