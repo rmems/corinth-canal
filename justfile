@@ -101,7 +101,7 @@ saaq-campaign:
         cargo run --release --example saaq_latent_calibration
     @echo ">>> phase 2/2: csv replay baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=csv \
-        RUN_TAG=campaign_csv LINEUP_STRICT=1 \
+        RUN_TAG=campaign_csv LINEUP_STRICT=1 STRICT_WRAPAROUND=1 \
         cargo run --release --example saaq_latent_calibration
     @echo "ok: campaign finished; see artifacts/index.csv"
 
