@@ -257,10 +257,24 @@ impl RunMatrix {
     /// Runs with a `skip_reason` bypass all of the above.
     pub fn validate(&self) -> Result<()> {
         let grok_ready = std::env::var("GROK1_ARTIFACT_READY").is_ok_and(|v| v == "1");
+        self.validate_with(grok_ready)
+    }
 
+    /// [`RunMatrix::validate`] with the Grok-1 readiness flag supplied by
+    /// the caller instead of read from the environment. Tests use this so
+    /// both branches of the gate run regardless of the real env.
+    pub fn validate_with(&self, grok_ready: bool) -> Result<()> {
         for run in &self.runs {
-            // Skip validation for explicitly skipped runs.
-            if run.skip_reason.is_some() {
+            // Skip validation for explicitly skipped runs. A blank
+            // `skip_reason` is not a documented skip: reject it rather than
+            // letting `Some("")` bypass every check below.
+            if let Some(reason) = &run.skip_reason {
+                if reason.trim().is_empty() {
+                    return Err(HybridError::InvalidConfig(format!(
+                        "run '{}' has a blank skip_reason; it must be non-empty when set",
+                        run.run_id
+                    )));
+                }
                 continue;
             }
 
@@ -292,9 +306,9 @@ impl RunMatrix {
                 )));
             }
 
-            // Grok-1 gate: only block runs that specifically reference grok-1.
-            if run.model_family == "grok" && run.model_id_or_path.contains("grok-1") && !grok_ready
-            {
+            // Grok-1 gate: only block runs that specifically reference grok-1
+            // (not grok-10 / grok-11).
+            if run.model_family == "grok" && names_grok_1(&run.model_id_or_path) && !grok_ready {
                 return Err(HybridError::InvalidConfig(format!(
                     "run '{}' selects grok-1 but GROK1_ARTIFACT_READY is not set to 1 (set the flag, or give the run a skip_reason)",
                     run.run_id
@@ -332,6 +346,22 @@ impl RunMatrix {
         }
 
         Ok(())
+    }
+}
+
+/// `true` when the last path segment of `model_id_or_path` is `grok-1`
+/// itself or `grok-1` followed by a non-digit (`grok-1-int8`, `grok-1.gguf`),
+/// so `grok-10` / `grok-11` are not gated.
+fn names_grok_1(model_id_or_path: &str) -> bool {
+    let segment = model_id_or_path
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match segment.strip_prefix("grok-1") {
+        Some(rest) => rest.chars().next().is_none_or(|c| !c.is_ascii_digit()),
+        None => false,
     }
 }
 
@@ -413,22 +443,70 @@ mod tests {
 
     #[test]
     fn run_matrix_gates_grok_1_but_not_other_grok_runs() {
-        // The gate is a process-wide env var; this test only asserts the
-        // branch taken when it is *not* "1", which is the clean-checkout
-        // state. It must not set the variable (other tests may run in
-        // parallel in the same process).
-        if std::env::var("GROK1_ARTIFACT_READY").is_ok_and(|v| v == "1") {
-            eprintln!("GROK1_ARTIFACT_READY=1 in this environment; skipping gate assertion");
-            return;
-        }
-        let message =
-            error_text(matrix(vec![sample_run("grok_1", "grok", "xai-org/grok-1")]).validate());
+        // Flag injected via `validate_with` so both branches run regardless
+        // of the real GROK1_ARTIFACT_READY in this process.
+        let grok_1 = matrix(vec![sample_run("grok_1", "grok", "xai-org/grok-1")]);
+        let message = error_text(grok_1.validate_with(false));
         assert!(message.contains("GROK1_ARTIFACT_READY"), "{message}");
+        grok_1
+            .validate_with(true)
+            .expect("grok-1 passes once the flag is set");
 
-        // grok-2 is the same family but not gated.
-        matrix(vec![sample_run("grok_2", "grok", "TevunahAi/grok-2-FP8")])
-            .validate()
-            .expect("grok-2 is not gated");
+        // Same family, different model: never gated.
+        for id in [
+            "TevunahAi/grok-2-FP8",
+            "xai-org/grok-10",
+            "xai-org/grok-11-int8",
+        ] {
+            matrix(vec![sample_run("other", "grok", id)])
+                .validate_with(false)
+                .unwrap_or_else(|e| panic!("{id} must not be gated: {e}"));
+        }
+        // Gate also matches grok-1 with a non-digit suffix or a trailing slash.
+        for id in [
+            "xai-org/grok-1-int8",
+            "xai-org/grok-1/",
+            "/models/Grok-1.gguf",
+        ] {
+            let message =
+                error_text(matrix(vec![sample_run("g1", "grok", id)]).validate_with(false));
+            assert!(message.contains("GROK1_ARTIFACT_READY"), "{id}: {message}");
+        }
+        // The family check still applies: a non-grok family naming grok-1 is
+        // not gated by this rule.
+        matrix(vec![sample_run("mislabelled", "olmoe", "xai-org/grok-1")])
+            .validate_with(false)
+            .expect("gate is family-scoped");
+    }
+
+    #[test]
+    fn names_grok_1_matches_only_grok_1() {
+        for id in [
+            "xai-org/grok-1",
+            "grok-1",
+            "xai-org/grok-1-int8",
+            "xai-org/GROK-1",
+        ] {
+            assert!(super::names_grok_1(id), "{id}");
+        }
+        for id in [
+            "xai-org/grok-10",
+            "xai-org/grok-11",
+            "xai-org/grok-2",
+            "grok-1/sub",
+        ] {
+            assert!(!super::names_grok_1(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn run_matrix_rejects_blank_skip_reason() {
+        for blank in ["", "   "] {
+            let mut run = sample_run("r", "olmoe", "allenai/OLMoE");
+            run.skip_reason = Some(blank.into());
+            let message = error_text(matrix(vec![run]).validate_with(false));
+            assert!(message.contains("blank skip_reason"), "{message}");
+        }
     }
 
     #[test]
@@ -448,7 +526,7 @@ mod tests {
         let text = include_str!("../../experiments/vultr-2026-05-28/matrix.toml");
         let matrix: RunMatrix = toml::from_str(text).expect("matrix parses");
         matrix
-            .validate()
+            .validate_with(false)
             .expect("shipped matrix validates without GROK1_ARTIFACT_READY");
         let grok_1 = matrix
             .runs
