@@ -66,14 +66,13 @@ fn write_bytes_atomic_with(
     sync_parent: fn(&Path) -> io::Result<()>,
 ) -> io::Result<AtomicWriteOutcome> {
     let parent = parent_dir(path);
-    let temp_path = sibling_temp_path(path)?;
 
     // Stage 1: everything before the rename. Failure here means nothing was
-    // published, so the stranded temp file is removed.
-    if let Err(error) = stage_temp_file(&temp_path, bytes) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(error);
-    }
+    // published, so the stranded temp file is removed. A stale temp file
+    // from a crashed earlier process (pid reuse) can collide on the
+    // `create_new`; pick a fresh nonce and retry rather than failing the
+    // write, and propagate every other error.
+    let temp_path = stage_fresh_temp_file(path, bytes)?;
     if let Err(error) = fs::rename(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
         return Err(error);
@@ -108,6 +107,29 @@ fn sibling_temp_path(path: &Path) -> io::Result<std::path::PathBuf> {
         .into_owned();
     let nonce = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     Ok(parent_dir(path).join(format!(".{file_name}.tmp-{}-{nonce}", std::process::id())))
+}
+
+const MAX_TEMP_NAME_ATTEMPTS: u32 = 16;
+
+/// Stage `bytes` into a fresh sibling temp file, retrying with a new nonce
+/// only on `AlreadyExists`. Returns the staged path.
+fn stage_fresh_temp_file(path: &Path, bytes: &[u8]) -> io::Result<std::path::PathBuf> {
+    let mut last_error = None;
+    for _ in 0..MAX_TEMP_NAME_ATTEMPTS {
+        let temp_path = sibling_temp_path(path)?;
+        match stage_temp_file(&temp_path, bytes) {
+            Ok(()) => return Ok(temp_path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                // Not ours: leave the colliding file alone and try again.
+                last_error = Some(error);
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temp_path);
+                return Err(error);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| io::Error::other("could not pick a fresh temp file name")))
 }
 
 /// Create (exclusively), fill and fsync the staging file.
@@ -319,6 +341,21 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["summary.json".to_owned()]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stale_temp_file_collision_picks_a_fresh_name() {
+        let dir = temp_dir("collide");
+        let path = dir.join("summary.json");
+        // Plant the exact name the next nonce would produce.
+        let next = TEMP_COUNTER.load(Ordering::Relaxed);
+        let planted = dir.join(format!(".summary.json.tmp-{}-{next}", std::process::id()));
+        fs::write(&planted, b"stale").unwrap();
+        let _ = write_bytes_atomic(&path, b"fresh").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"fresh");
+        // The planted file is not ours; it must be left untouched.
+        assert_eq!(fs::read(&planted).unwrap(), b"stale");
         fs::remove_dir_all(&dir).unwrap();
     }
 
