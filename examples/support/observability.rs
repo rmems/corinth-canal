@@ -116,12 +116,6 @@ impl OwnedDiagnosticData {
         }
     }
 
-    fn with_status(mut self, validation_status: &str, error_category: &str) -> Self {
-        self.validation_status = Some(validation_status.to_owned());
-        self.error_category = Some(error_category.to_owned());
-        self
-    }
-
     fn as_safe(&self) -> SafeDiagnosticData<'_> {
         SafeDiagnosticData {
             model_slug: self.model_slug.as_deref(),
@@ -630,11 +624,23 @@ impl CommandObserver {
         E: ErrorReport + ToString,
     {
         let error_message = result.as_ref().err().map(|error| error.to_string());
-        let resolved_status = data.validation_status.unwrap_or(if result.is_ok() {
-            "completed"
-        } else {
-            "failed"
-        });
+        // A status already annotated during the run (e.g.
+        // `projection_mode_unsupported` from `emit_validation_finish`) is
+        // more specific than the generic "failed"; keep it when the final
+        // call passes no explicit status and the result is Err. Explicit
+        // statuses stay authoritative. RM-1447.
+        let previous_status = self
+            .safe_data
+            .borrow()
+            .validation_status
+            .clone()
+            .filter(|status| result.is_err() && status != "completed");
+        let resolved_status: &str = match (data.validation_status, previous_status.as_deref()) {
+            (Some(explicit), _) => explicit,
+            (None, Some(previous)) => previous,
+            (None, None) if result.is_ok() => "completed",
+            (None, None) => "failed",
+        };
         let resolved_category = data.error_category.unwrap_or(error_category(
             Some(resolved_status),
             error_message.as_deref(),
@@ -642,9 +648,9 @@ impl CommandObserver {
         let enriched = {
             let mut safe_data = self.safe_data.borrow_mut();
             safe_data.merge(data);
-            safe_data
-                .clone()
-                .with_status(resolved_status, resolved_category)
+            safe_data.validation_status = Some(resolved_status.to_owned());
+            safe_data.error_category = Some(resolved_category.to_owned());
+            safe_data.clone()
         };
 
         annotate_scope(
@@ -938,6 +944,67 @@ mod tests {
         assert_eq!(
             run_probe("git_sha", &[("AGENTOS_GIT_SHA", "deadbee")]),
             "deadbee"
+        );
+    }
+
+    fn test_observer() -> CommandObserver {
+        CommandObserver {
+            command: "test",
+            run_id: "run".to_owned(),
+            git_sha: "sha".to_owned(),
+            started: Instant::now(),
+            safe_data: RefCell::new(OwnedDiagnosticData::default()),
+            span: RefCell::new(None),
+        }
+    }
+
+    #[test]
+    fn finish_preserves_specific_status_annotated_during_the_run() {
+        let observer = test_observer();
+        observer.annotate(
+            SafeDiagnosticData::default().with_validation_status("projection_mode_unsupported"),
+        );
+        let result: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(&result, SafeDiagnosticData::default());
+        let data = observer.safe_data.borrow();
+        assert_eq!(
+            data.validation_status.as_deref(),
+            Some("projection_mode_unsupported")
+        );
+        assert_eq!(data.error_category.as_deref(), Some("config_error"));
+    }
+
+    #[test]
+    fn finish_explicit_status_is_authoritative() {
+        let observer = test_observer();
+        observer.annotate(SafeDiagnosticData::default().with_validation_status("tick_failed"));
+        let result: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(
+            &result,
+            SafeDiagnosticData::default().with_validation_status("gpu_setup_failed"),
+        );
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("gpu_setup_failed")
+        );
+    }
+
+    #[test]
+    fn finish_ok_result_is_completed_and_err_without_status_is_failed() {
+        let observer = test_observer();
+        let ok: Result<(), Box<dyn std::error::Error>> = Ok(());
+        observer.finish(&ok, SafeDiagnosticData::default());
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("completed")
+        );
+
+        let observer = test_observer();
+        let err: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(&err, SafeDiagnosticData::default());
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("failed")
         );
     }
 

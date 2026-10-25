@@ -133,11 +133,19 @@ fn stage_fresh_temp_file(path: &Path, bytes: &[u8]) -> io::Result<std::path::Pat
 }
 
 /// Create (exclusively), fill and fsync the staging file.
+///
+/// On Unix the file is created `0600` regardless of umask, so staged bytes
+/// are never briefly world-readable; the published artifact therefore lands
+/// owner-only too, which is the right default for per-run manifests.
 fn stage_temp_file(temp_path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(temp_path)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(temp_path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -356,6 +364,18 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"fresh");
         // The planted file is not ours; it must be left untouched.
         assert_eq!(fs::read(&planted).unwrap(), b"stale");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn published_artifact_is_owner_only_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("mode");
+        let path = dir.join("summary.json");
+        let _ = write_bytes_atomic(&path, b"{}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "got {mode:o}");
         fs::remove_dir_all(&dir).unwrap();
     }
 
