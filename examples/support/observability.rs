@@ -562,8 +562,12 @@ pub fn git_sha() -> String {
     {
         return value;
     }
+    // Anchor to this crate's checkout: the examples are always built from
+    // it, and resolving against the process cwd would stamp whatever repo
+    // the operator happened to launch from (RM-1447).
     if let Ok(output) = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         && output.status.success()
     {
