@@ -265,6 +265,14 @@ Implications:
   `Model::tick_gpu_temporal`, which does not append routing CSV rows on its own.
 - Other call sites may still rely on the legacy fallback when they do not set
   the path explicitly.
+- The header is written exactly once per file: the writer
+  (`src/experiment/routing_csv.rs`, CPU-tested) takes an exclusive
+  `create_new` open and writes header + first row together, so concurrent
+  writers racing on a fresh file cannot duplicate the header; a zero-length
+  file left by a crash is detected on the open handle, not by a second
+  `exists()` check. Write errors propagate out of `forward_gpu_temporal`
+  (they used to be dropped with `let _ =`), and `mean_adaptation` is the mean
+  of the resident adaptation buffer rather than a constant (RM-1450).
 
 ### Env-resolved paths
 
