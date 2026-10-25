@@ -3,7 +3,8 @@ mod support;
 
 use corinth_canal::{
     ExperimentManifest, ExperimentMetrics, ExperimentSummary, FunnelActivity, SaaqUpdateRule,
-    SnnDualLatentCalibrator, SnnLatentCsvExporter, gpu::GpuAccelerator, model::Model,
+    SnnDualLatentCalibrator, SnnLatentCsvExporter, experiment::artifact_io, gpu::GpuAccelerator,
+    model::Model,
 };
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -373,15 +374,23 @@ fn run_validation(
     // GH#162 exists to remove. Refuse the combination until the loop can feed
     // a real multi-tick window.
     if config.projection_mode == corinth_canal::projector::ProjectionMode::TemporalHistogram {
-        eprintln!(
-            "PROJECTION_MODE=TemporalHistogram is not supported by saaq_latent_calibration: \
+        // Return an error rather than `process::exit` so `main` still runs
+        // `observer.finish` (Sentry/OTel flush) and the index CSV is
+        // materialised for the runs that did complete (RM-1447).
+        let message = "PROJECTION_MODE=TemporalHistogram is not supported by saaq_latent_calibration: \
              the tick loop feeds a single-tick spike train, so histogram bins 1-3 are \
              structurally zero and the mode collapses to a rescaled RateSum. Refusing to \
              stamp projection_mode=temporal_histogram on a run that did not perform it. \
              Use RateSum, MembraneSnapshot or SpikingTernary; TemporalHistogram needs a \
-             multi-tick window (tracked follow-up to GH#162)."
+             multi-tick window (tracked follow-up to GH#162).";
+        emit_validation_finish(
+            observer,
+            ctx,
+            validation_started,
+            "projection_mode_unsupported",
+            Some(message),
         );
-        std::process::exit(1);
+        return Err(Error::other(message).into());
     }
     let saaq_rule = ctx.saaq_rule;
 
@@ -633,9 +642,11 @@ fn build_manifest(
     ExperimentManifest {
         run_id: ctx.run_id.clone(),
         run_tag: ctx.run_tag.map(|s| s.to_owned()),
-        created_at: format!("{:?}", std::time::SystemTime::now()),
+        created_at: artifact_io::now_rfc3339_utc(),
         repo: "corinth-canal".to_owned(),
-        commit_sha: None,
+        // Same source Sentry/OTel use for `git_sha`; `None` only when it
+        // resolved to the "unknown" sentinel (RM-1447).
+        commit_sha: Some(observability::git_sha()).filter(|sha| sha != "unknown"),
         model_slug: ctx.spec.slug.clone(),
         model_family: format!("{:?}", model.router_family()),
         architecture: model.router_architecture().to_owned(),
@@ -687,7 +698,9 @@ fn write_manifest(
     manifest_path: &PathBuf,
     manifest: ExperimentManifest,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    // temp-file + fsync + rename: a crash mid-write never leaves a
+    // truncated manifest for summarize_local_saaq to trip over (RM-1447).
+    artifact_io::write_json_atomic(manifest_path, &manifest)?;
     Ok(())
 }
 
@@ -695,7 +708,7 @@ fn write_summary(
     summary_path: &std::path::Path,
     summary: &ExperimentSummary,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(summary_path, serde_json::to_string_pretty(summary)?)?;
+    artifact_io::write_json_atomic(summary_path, summary)?;
     Ok(())
 }
 
@@ -1062,7 +1075,7 @@ fn rewrite_summary_determinism(
             serde_json::Value::String(verdict.to_owned()),
         );
     }
-    fs::write(summary_path, serde_json::to_string_pretty(&value)?)?;
+    artifact_io::write_json_atomic(summary_path, &value)?;
     Ok(())
 }
 
@@ -1112,10 +1125,9 @@ fn build_run_dir(ctx: &RunContext<'_>) -> Result<PathBuf, Box<dyn std::error::Er
         .join(&ctx.run_id))
 }
 
-/// Return a local-time-ish compact timestamp `YYYYMMDDTHHMMSS` suitable for
-/// sortable directory naming. We derive it from seconds since UNIX_EPOCH with
-/// the local TZ offset pulled from `std::time` via a manual conversion — no
-/// external crate needed and no chrono dependency.
+/// Return a compact UTC timestamp `YYYYMMDDTHHMMSS` suitable for sortable
+/// directory naming. Shares the civil-date breakdown with
+/// `artifact_io::now_rfc3339_utc`, which stamps `created_at`.
 fn format_local_timestamp_compact() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1124,32 +1136,6 @@ fn format_local_timestamp_compact() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Pure-Rust gregorian breakdown (UTC). Using UTC keeps timestamps unique
-    // and sortable without depending on the machine's TZ configuration; the
-    // full ISO-ish form is still human-readable in the path.
-    let (year, month, day, hour, minute, second) = civil_from_unix_secs(secs as i64);
+    let (year, month, day, hour, minute, second) = artifact_io::civil_from_unix_secs(secs as i64);
     format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}")
-}
-
-/// Civil (Y, M, D, h, m, s) in UTC from a unix timestamp.
-/// Based on Howard Hinnant's public-domain date algorithm.
-fn civil_from_unix_secs(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400) as u32;
-    let hour = rem / 3_600;
-    let minute = (rem % 3_600) / 60;
-    let second = rem % 60;
-
-    // Hinnant's civil_from_days
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097) as u64;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y };
-    (year as i32, m as u32, d as u32, hour, minute, second)
 }
