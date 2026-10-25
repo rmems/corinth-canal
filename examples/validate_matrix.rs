@@ -4,6 +4,10 @@
 //! Usage:
 //!   cargo run --example validate_matrix --no-default-features -- <path/to/matrix.toml>
 //!
+//! Validates the matrix as a plan (declared budgets, explicit policies,
+//! known families, Grok-1 readiness gate). `max_runtime_minutes` and
+//! `max_disk_gib` are declared budgets only; no runner enforces them.
+//!
 //! Exits with code 0 on success, 1 on validation failure.
 
 use corinth_canal::RunMatrix;
