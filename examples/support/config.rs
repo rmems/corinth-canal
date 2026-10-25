@@ -68,6 +68,11 @@ pub struct RunConfig {
     /// byte-equality of `latent_telemetry.csv` across repeats per
     /// `(model_slug, telemetry_source, saaq_rule)` group.
     pub strict_repeat_check: bool,
+    /// When `true`, a CSV-replay run whose effective tick count exceeds the
+    /// CSV row count aborts before any model loads instead of warning. A
+    /// looped regression corpus is only acceptable for smoke runs; campaigns
+    /// set this so they never silently train on looped endings (RM-1449).
+    pub strict_wraparound: bool,
     /// Declared `[[model]]` count from `LINEUP_CONFIG`. `None` when the
     /// run did not come from a GGUF lineup file.
     pub lineup_declared_count: Option<usize>,
@@ -118,6 +123,7 @@ impl RunConfig {
             projection_mode_override: projection_mode_override_from_env(),
             run_tag: run_tag_from_env(),
             strict_repeat_check: strict_repeat_check_from_env(),
+            strict_wraparound: strict_wraparound_from_env(),
             lineup_declared_count: resolved_models.lineup_declared_count,
             lineup_resolved_count: resolved_models.lineup_resolved_count,
             synapse_diag_strict: super::synapse_diag::synapse_diag_strict_from_env(),
@@ -157,6 +163,7 @@ impl RunConfig {
             let _ = &run_config.projection_mode_override;
             let _ = &run_config.run_tag;
             let _ = run_config.strict_repeat_check;
+            let _ = run_config.strict_wraparound;
             let _ = run_config.lineup_declared_count;
             let _ = run_config.lineup_resolved_count;
             let _ = parse_routing_mode("");
@@ -373,6 +380,13 @@ pub fn run_tag_from_env() -> Option<String> {
 /// their current behavior when the env var is unset.
 pub fn strict_repeat_check_from_env() -> bool {
     env_flag("STRICT_REPEAT_CHECK", false)
+}
+
+/// Parse `STRICT_WRAPAROUND`. Default `false` so exploratory runs keep the
+/// warning-only behaviour; `just saaq-campaign` sets it so a campaign never
+/// trains on a looped CSV without failing loudly (RM-1449).
+pub fn strict_wraparound_from_env() -> bool {
+    env_flag("STRICT_WRAPAROUND", false)
 }
 
 /// Parse `LINEUP_STRICT`. Default `false` so partial-coverage lineups keep
