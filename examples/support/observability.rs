@@ -116,6 +116,12 @@ impl OwnedDiagnosticData {
         }
     }
 
+    fn with_status(mut self, validation_status: &str, error_category: &str) -> Self {
+        self.validation_status = Some(validation_status.to_owned());
+        self.error_category = Some(error_category.to_owned());
+        self
+    }
+
     fn as_safe(&self) -> SafeDiagnosticData<'_> {
         SafeDiagnosticData {
             model_slug: self.model_slug.as_deref(),
@@ -648,8 +654,11 @@ impl CommandObserver {
         let enriched = {
             let mut safe_data = self.safe_data.borrow_mut();
             safe_data.merge(data);
-            safe_data.validation_status = Some(resolved_status.to_owned());
-            safe_data.error_category = Some(resolved_category.to_owned());
+            // Store the resolved status back so later readers (and tests)
+            // see what was actually reported.
+            *safe_data = safe_data
+                .clone()
+                .with_status(resolved_status, resolved_category);
             safe_data.clone()
         };
 
