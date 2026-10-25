@@ -24,7 +24,7 @@ Status legend: `reference` · `stabilizing` · `proven` · `frozen`
 | `src/gpu/*` | reference | `rmems-gpu` | Kernel sources and cust wrappers remain coupled to the reference repo build/runtime assumptions. Promotion is still blocked on portability and validation breadth. |
 | `src/types.rs` | stabilizing | `rmems-types` | The externally-visible vocabulary: `TelemetrySnapshot`, `ModelFamily` (21 variants), `RoutingMode`, `ProjectionMode`, `CloudModelSpec`, `EMBEDDING_DIM`. Serde aliases are load-bearing for existing matrices, so any rename is a breaking change. |
 | `src/error.rs` | stabilizing | `rmems-types` | `HybridError` is the crate-wide error type. Two `ProjectionMode` helpers in `types.rs` still return `Result<_, String>`, and `src/gpu` has an unbridged `GpuError`; unifying those is the graduation gate. |
-| `src/experiment/` | reference | `rmems-experiment` | `RunMatrix` / `ExperimentManifest` / `ExperimentSummary` — the TOML matrix and `run_manifest.json` schemas. `ExperimentBundle` and `ExperimentWarning` are declared but never constructed. |
+| `src/experiment/` | reference | `rmems-experiment` | `RunMatrix` / `ExperimentManifest` / `ExperimentSummary` — the TOML matrix and `run_manifest.json` schemas. `RunMatrix` validates the matrix as a plan: `max_runtime_minutes` / `max_disk_gib` are declared budgets, not enforced caps (no runner loads a matrix). `ExperimentBundle` and `ExperimentWarning` are declared but never constructed. |
 | `src/metric.rs` | reference | n/a | `pub(crate)` MSE helper. Its only caller is cuda-gated, and `examples/csv_replay.rs` carries a second copy. |
 | `examples/support/config.rs` | reference | n/a | Intentionally stays here — it is the env-truth surface for the reference repo only. |
 

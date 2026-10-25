@@ -9,6 +9,16 @@
 //! - Policy and source format value checks (strict, not just warnings)
 //! - Path existence (when --check-paths is given, with env var resolution)
 //!
+//! `--check-paths` also fails when `<output_root>/<run_id>` already exists.
+//! That is an **anti-clobber** check for a fresh sweep, not a resume check:
+//! matrix `run_id`s are stable names, whereas `saaq_latent_calibration`
+//! writes timestamped `run_id`s under `<output_root>/<slug>/<source>/`, so
+//! the two never collide and this validator cannot detect a resumable run.
+//! Clear or rename the directory before re-running a matrix entry.
+//!
+//! `RunMatrix::validate` checks the matrix as a *plan*: runtime / disk
+//! budgets must be declared but are not enforced by any runner here.
+//!
 //! Exits 0 on success, 1 on validation failure.
 
 use corinth_canal::RunMatrix;
@@ -121,7 +131,7 @@ fn main() {
                     let run_dir = output_root.join(&run.run_id);
                     if run_dir.exists() {
                         errors.push(format!(
-                            "run '{}': output directory already exists: {}",
+                            "run '{}': output directory already exists (anti-clobber; this validator does not resume runs — clear or rename it): {}",
                             run.run_id,
                             run_dir.display()
                         ));
