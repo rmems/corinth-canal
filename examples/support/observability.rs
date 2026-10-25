@@ -810,6 +810,8 @@ pub fn error_category(status: Option<&str>, error: Option<&str>) -> &'static str
         // the substring heuristic below.
         "model_setup_failed" => "config_error",
         "router_load_failed" => "config_error",
+        // Operator asked for a projection mode the runner refuses (RM-1447).
+        "projection_mode_unsupported" => "config_error",
         "gpu_setup_failed" => "gpu_error",
         "tick_failed" => "experiment_error",
         _ => {
@@ -938,6 +940,10 @@ mod tests {
     #[test]
     fn error_category_maps_known_statuses() {
         assert_eq!(error_category(Some("completed"), None), "none");
+        assert_eq!(
+            error_category(Some("projection_mode_unsupported"), Some("x")),
+            "config_error"
+        );
         assert_eq!(
             error_category(Some("model_setup_failed"), Some("boom")),
             "config_error"
