@@ -321,6 +321,29 @@ mod tests {
     }
 
     #[test]
+    fn load_csv_rejects_f32_overflow_rows_that_look_numeric() {
+        // `1e39` passes a regex-style "looks like a number" test but
+        // overflows f32 to inf, so the loader drops it. The
+        // `just saaq-campaign` TICKS preflight must count with this loader,
+        // not a shell numeric test (RM-1449).
+        let csv = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+                   1000,60.5,250.0,70.0,120.0\n\
+                   2000,1e39,250.0,70.0,120.0\n\
+                   3000,61.0,-1e39,70.5,121.5\n\
+                   4000,61.0,252.5,70.5,121.5\n";
+        let path = write_temp_csv("f32_overflow", csv);
+        let rows = load_csv_telemetry_rows(&path).unwrap();
+        assert_eq!(
+            rows.len(),
+            2,
+            "overflowing rows must not be counted as usable"
+        );
+        assert_eq!(rows[0].timestamp_ms, 1000);
+        assert_eq!(rows[1].timestamp_ms, 4000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn telemetry_snapshot_for_tick_wraps_around_csv_rows() {
         let rows = vec![
             corinth_canal::TelemetrySnapshot {
