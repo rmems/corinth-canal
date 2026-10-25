@@ -16,7 +16,9 @@
 //! open handle and writing the header through that same handle, so no second
 //! `exists()`/`open()` window remains. In-process concurrency is additionally
 //! serialised through a per-path lock so two threads of one process never
-//! both see the empty-file case.
+//! both see the empty-file case. Cross-process exclusion on that
+//! empty-file recovery path is out of scope: one runner process owns a
+//! run directory's CSV, and anything stronger would need `flock`.
 //!
 //! This module reads no environment variables and resolves no paths.
 
@@ -24,23 +26,23 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Column header of the routing telemetry CSV. Do not change (schema rule).
 pub const GPU_ROUTING_TELEMETRY_HEADER: &str =
     "token_idx,best_score,best_walker,spike_count,mean_adaptation,active_fraction";
 
 /// Per-process, per-path serialisation of appends so two threads writing the
-/// same CSV cannot both observe the zero-length state.
-fn path_lock(path: &Path) -> &'static Mutex<()> {
-    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
+/// same CSV cannot both observe the zero-length state. The map holds one
+/// `Arc<Mutex<()>>` per distinct path for the process lifetime (no leak:
+/// the `Arc` is cloned out under the map lock).
+fn path_lock(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = locks
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard
-        .entry(path.to_path_buf())
-        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+    Arc::clone(guard.entry(path.to_path_buf()).or_default())
 }
 
 /// Append `row` (without trailing newline) to the CSV at `path`, writing
@@ -49,9 +51,8 @@ fn path_lock(path: &Path) -> &'static Mutex<()> {
 /// Errors are returned, never swallowed; the caller decides whether a
 /// telemetry write failure is fatal for its run.
 pub fn append_row_with_header(path: &Path, header: &str, row: &str) -> io::Result<()> {
-    let _serialised = path_lock(path)
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let lock = path_lock(path);
+    let _serialised = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
     match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(mut file) => {
