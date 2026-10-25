@@ -421,10 +421,18 @@ mod tests {
             GpuAccelerator::new_stub_for_tests()
         };
         let input = vec![0.0f32; neuron_count];
-        // Outcome (Ok on a ready GPU, NoGpu otherwise) is irrelevant here;
-        // the assertion is about the file system side effect.
-        let _ = model.tick_gpu_temporal(&mut accelerator, &input);
-        let _ = model.tick_gpu_temporal(&mut accelerator, &input);
+        // On a ready GPU both ticks must succeed so the no-CSV assertion
+        // covers a real tick; on the stub they fail with NoGpu before the
+        // telemetry path, and the file must still be absent.
+        let ready = accelerator.is_ready();
+        let first = model.tick_gpu_temporal(&mut accelerator, &input);
+        let second = model.tick_gpu_temporal(&mut accelerator, &input);
+        if ready {
+            first.expect("first tick should succeed on a ready GPU");
+            second.expect("second tick should succeed on a ready GPU");
+        } else {
+            assert!(first.is_err() && second.is_err());
+        }
         assert!(
             !csv.exists(),
             "tick_gpu_temporal must not create the routing telemetry CSV"
