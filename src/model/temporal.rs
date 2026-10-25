@@ -81,11 +81,14 @@ impl Model {
         accelerator.project_snapshot_current(snap, neuron_count)?;
 
         let mut spike_train: Vec<Vec<usize>> = Vec::with_capacity(self.config.snn_steps);
-        let mut best_walker = 0u32;
+        // `gif_step_weighted_tick` returns the on-device best-walker *index*
+        // for that step; it is not a score, so there is nothing to `max`
+        // across steps. The CSV `best_walker` column records the final
+        // step's reduction (unchanged behaviour; see RM-1450 review).
+        let mut last_step_best_walker = 0u32;
 
         for _ in 0..self.config.snn_steps {
-            let walker = accelerator.gif_step_weighted_tick(neuron_count)?;
-            best_walker = walker;
+            last_step_best_walker = accelerator.gif_step_weighted_tick(neuron_count)?;
 
             let spikes = accelerator.temporal_spikes_to_vec(neuron_count)?;
             let active_neurons = active_neuron_indices(&spikes);
@@ -117,7 +120,7 @@ impl Model {
             &target,
             self.global_step as usize,
             0,
-            best_walker as i32,
+            last_step_best_walker as i32,
             total_spikes,
             mean_adaptation,
             active_fraction,
