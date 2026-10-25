@@ -640,7 +640,7 @@ impl CommandObserver {
             .borrow()
             .validation_status
             .clone()
-            .filter(|status| result.is_err() && status != "completed");
+            .filter(|status| result.is_err() && is_terminal_failure_status(status));
         let resolved_status: &str = match (data.validation_status, previous_status.as_deref()) {
             (Some(explicit), _) => explicit,
             (None, Some(previous)) => previous,
@@ -818,6 +818,14 @@ pub fn new_relic_verification_summary() -> String {
     lines.join("\n")
 }
 
+/// Statuses that name a terminal failure and may therefore be carried into
+/// `CommandObserver::finish` when the final call passes none. Progress
+/// markers such as `synapse_diagnostic`'s "probing" are not terminal and
+/// fall back to "failed". RM-1447.
+fn is_terminal_failure_status(status: &str) -> bool {
+    status.ends_with("_failed") || status == "projection_mode_unsupported"
+}
+
 pub fn error_category(status: Option<&str>, error: Option<&str>) -> &'static str {
     match status.unwrap_or_default() {
         "completed" => "none",
@@ -981,6 +989,25 @@ mod tests {
             Some("projection_mode_unsupported")
         );
         assert_eq!(data.error_category.as_deref(), Some("config_error"));
+    }
+
+    #[test]
+    fn finish_does_not_carry_forward_progress_markers() {
+        // synapse_diagnostic annotates "probing" at the start of a run; a
+        // failed probe must still report "failed", not the marker.
+        let observer = test_observer();
+        observer.annotate(SafeDiagnosticData::default().with_validation_status("probing"));
+        let result: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(&result, SafeDiagnosticData::default());
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("failed")
+        );
+        assert!(is_terminal_failure_status("tick_failed"));
+        assert!(is_terminal_failure_status("projection_mode_unsupported"));
+        assert!(!is_terminal_failure_status("probing"));
+        assert!(!is_terminal_failure_status("preflight"));
+        assert!(!is_terminal_failure_status("completed"));
     }
 
     #[test]
