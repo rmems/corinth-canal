@@ -22,46 +22,102 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Outcome of a successful atomic write.
+///
+/// Once `rename` has succeeded the artifact is published and readable; a
+/// failure to fsync the parent directory afterwards only weakens durability
+/// across a power loss, so it is reported here rather than as an `Err` that
+/// would wrongly tell the caller the write did not happen.
+#[derive(Debug, Default, PartialEq, Eq)]
+#[must_use]
+pub struct AtomicWriteOutcome {
+    /// `Some(message)` when the parent-directory fsync failed after the
+    /// rename succeeded. Callers should log it as a warning.
+    pub dir_sync_warning: Option<String>,
+}
+
 /// Serialize `value` as pretty JSON and durably replace `path` with it.
 ///
 /// Serialization happens before any file is touched, so a serialization
 /// error leaves an existing artifact intact. The payload goes to a uniquely
-/// named sibling temp file in the same directory, is `sync_all`ed, then
-/// renamed over `path`; on Unix the parent directory is fsynced as well so
-/// the rename itself is durable. If any step fails the temp file is removed
-/// and the previous `path` contents (if any) are untouched.
-pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+/// named sibling temp file in the same directory (so `rename` never crosses
+/// a filesystem), created with `create_new` so it can never clobber, is
+/// `sync_all`ed, then renamed over `path`; on Unix the parent directory is
+/// fsynced as well so the rename itself is durable. If any step before the
+/// rename fails the temp file is removed and the previous `path` contents
+/// (if any) are untouched. A directory-fsync failure after the rename is
+/// returned in [`AtomicWriteOutcome::dir_sync_warning`], not as `Err`.
+pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> io::Result<AtomicWriteOutcome> {
     let payload = serde_json::to_string_pretty(value).map_err(io::Error::other)?;
     write_bytes_atomic(path, payload.as_bytes())
 }
 
 /// Durably replace `path` with `bytes` (see [`write_json_atomic`]).
-pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = match path.parent() {
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> io::Result<AtomicWriteOutcome> {
+    write_bytes_atomic_with(path, bytes, sync_dir)
+}
+
+/// [`write_bytes_atomic`] with the directory-fsync step injectable, so the
+/// "rename succeeded, directory fsync failed" branch is testable without
+/// faulting the filesystem.
+fn write_bytes_atomic_with(
+    path: &Path,
+    bytes: &[u8],
+    sync_parent: fn(&Path) -> io::Result<()>,
+) -> io::Result<AtomicWriteOutcome> {
+    let parent = parent_dir(path);
+    let temp_path = sibling_temp_path(path)?;
+
+    // Stage 1: everything before the rename. Failure here means nothing was
+    // published, so the stranded temp file is removed.
+    if let Err(error) = stage_temp_file(&temp_path, bytes) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    // Stage 2: the artifact is published. Do not touch `temp_path` again
+    // (it no longer exists) and do not report the write as failed.
+    Ok(AtomicWriteOutcome {
+        dir_sync_warning: sync_parent(parent).err().map(|error| {
+            format!(
+                "{}: parent directory fsync failed after rename; artifact is written but its directory entry may not survive a power loss: {error}",
+                path.display()
+            )
+        }),
+    })
+}
+
+fn parent_dir(path: &Path) -> &Path {
+    match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
-    };
+    }
+}
+
+/// `<dir>/.<name>.tmp-<pid>-<counter>`: same directory as the destination so
+/// the final `rename` is atomic and never fails with `EXDEV`.
+fn sibling_temp_path(path: &Path) -> io::Result<std::path::PathBuf> {
     let file_name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
         .to_string_lossy()
         .into_owned();
     let nonce = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let temp_path = parent.join(format!(".{file_name}.tmp-{}-{nonce}", std::process::id()));
+    Ok(parent_dir(path).join(format!(".{file_name}.tmp-{}-{nonce}", std::process::id())))
+}
 
-    let result = (|| {
-        let mut file = File::create(&temp_path)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temp_path, path)?;
-        sync_dir(parent)
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result
+/// Create (exclusively), fill and fsync the staging file.
+fn stage_temp_file(temp_path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp_path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 #[cfg(unix)]
@@ -140,12 +196,17 @@ mod tests {
         status: String,
     }
 
+    /// Per-test scratch directory under the build's target dir (never the
+    /// shared system temp dir).
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "corinth-artifact-io-{tag}-{}-{}",
-            std::process::id(),
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("artifact-io-tests")
+            .join(format!(
+                "{tag}-{}-{}",
+                std::process::id(),
+                TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -158,7 +219,8 @@ mod tests {
             run_id: "r0".into(),
             status: "completed".into(),
         };
-        write_json_atomic(&path, &doc).unwrap();
+        let outcome = write_json_atomic(&path, &doc).unwrap();
+        assert_eq!(outcome, AtomicWriteOutcome::default());
         let back: Doc = read_json(&path).unwrap();
         assert_eq!(back, doc);
         let leftovers: Vec<_> = fs::read_dir(&dir)
@@ -180,7 +242,7 @@ mod tests {
             run_id: "r0".into(),
             status: "preflight".into(),
         };
-        write_json_atomic(&path, &first).unwrap();
+        let _ = write_json_atomic(&path, &first).unwrap();
 
         // Simulate the half-written temp file a crash would strand.
         let stranded = dir.join(".summary.json.tmp-crash");
@@ -194,7 +256,7 @@ mod tests {
             run_id: "r0".into(),
             status: "completed".into(),
         };
-        write_json_atomic(&path, &second).unwrap();
+        let _ = write_json_atomic(&path, &second).unwrap();
         let back: Doc = read_json(&path).unwrap();
         assert_eq!(back, second);
         fs::remove_dir_all(&dir).unwrap();
@@ -229,12 +291,64 @@ mod tests {
             run_id: "r0".into(),
             status: "completed".into(),
         };
-        write_json_atomic(&path, &good).unwrap();
+        let _ = write_json_atomic(&path, &good).unwrap();
         let mut bad: BTreeMap<(u8, u8), u8> = BTreeMap::new();
         bad.insert((1, 2), 3);
         assert!(write_json_atomic(&path, &bad).is_err());
         let back: Doc = read_json(&path).unwrap();
         assert_eq!(back, good);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn dir_sync_failure_after_rename_is_a_warning_not_an_error() {
+        fn failing_sync(_dir: &Path) -> io::Result<()> {
+            Err(io::Error::other("injected fsync failure"))
+        }
+        let dir = temp_dir("dirsync");
+        let path = dir.join("summary.json");
+        let outcome = write_bytes_atomic_with(&path, b"{\"ok\":true}", failing_sync).unwrap();
+        let warning = outcome.dir_sync_warning.expect("warning surfaced");
+        assert!(warning.contains("injected fsync failure"));
+        assert!(warning.contains("summary.json"));
+        // The artifact is published and complete...
+        assert_eq!(fs::read(&path).unwrap(), b"{\"ok\":true}");
+        // ...and no temp file was left behind or wrongly "cleaned up".
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["summary.json".to_owned()]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn temp_file_is_a_sibling_of_the_destination() {
+        let path = Path::new("artifacts/run/run_manifest.json");
+        let temp = sibling_temp_path(path).unwrap();
+        assert_eq!(temp.parent(), path.parent());
+        let name = temp.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with(".run_manifest.json.tmp-"));
+        assert!(sibling_temp_path(Path::new("/")).is_err());
+    }
+
+    #[test]
+    fn pre_rename_failure_cleans_up_and_keeps_previous_artifact() {
+        let dir = temp_dir("prerename");
+        let path = dir.join("summary.json");
+        let _ = write_bytes_atomic(&path, b"old").unwrap();
+        // Make the destination a directory so `rename` fails after the temp
+        // file was staged; the stranded temp file must be removed.
+        let blocked = dir.join("blocked");
+        fs::create_dir_all(blocked.join("child")).unwrap();
+        assert!(write_bytes_atomic(&blocked, b"new").is_err());
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with('.'))
+            .collect();
+        assert!(names.is_empty(), "stranded temp files: {names:?}");
+        assert_eq!(fs::read(&path).unwrap(), b"old");
         fs::remove_dir_all(&dir).unwrap();
     }
 

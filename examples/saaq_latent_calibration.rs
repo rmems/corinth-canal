@@ -700,15 +700,23 @@ fn write_manifest(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // temp-file + fsync + rename: a crash mid-write never leaves a
     // truncated manifest for summarize_local_saaq to trip over (RM-1447).
-    artifact_io::write_json_atomic(manifest_path, &manifest)?;
+    warn_dir_sync(artifact_io::write_json_atomic(manifest_path, &manifest)?);
     Ok(())
+}
+
+/// A parent-directory fsync failure after a successful rename is a
+/// durability warning, not a failed write; log it and carry on.
+fn warn_dir_sync(outcome: artifact_io::AtomicWriteOutcome) {
+    if let Some(warning) = outcome.dir_sync_warning {
+        eprintln!("warning: {warning}");
+    }
 }
 
 fn write_summary(
     summary_path: &std::path::Path,
     summary: &ExperimentSummary,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    artifact_io::write_json_atomic(summary_path, summary)?;
+    warn_dir_sync(artifact_io::write_json_atomic(summary_path, summary)?);
     Ok(())
 }
 
@@ -1075,7 +1083,7 @@ fn rewrite_summary_determinism(
             serde_json::Value::String(verdict.to_owned()),
         );
     }
-    artifact_io::write_json_atomic(summary_path, &value)?;
+    warn_dir_sync(artifact_io::write_json_atomic(summary_path, &value)?);
     Ok(())
 }
 
