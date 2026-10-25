@@ -265,104 +265,105 @@ impl RunMatrix {
     /// both branches of the gate run regardless of the real env.
     pub fn validate_with(&self, grok_ready: bool) -> Result<()> {
         for run in &self.runs {
-            // Skip validation for explicitly skipped runs. A blank
-            // `skip_reason` is not a documented skip: reject it rather than
-            // letting `Some("")` bypass every check below.
-            if let Some(reason) = &run.skip_reason {
-                if reason.trim().is_empty() {
-                    return Err(HybridError::InvalidConfig(format!(
-                        "run '{}' has a blank skip_reason; it must be non-empty when set",
-                        run.run_id
-                    )));
-                }
+            if run.is_documented_skip()? {
                 continue;
             }
-
-            // Runtime and disk caps must be present (non-zero).
-            if run.max_runtime_minutes == 0 {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing max_runtime_minutes (declared budget; must be non-zero, not enforced by any runner)",
-                    run.run_id
-                )));
-            }
-            if run.max_disk_gib == 0 {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing max_disk_gib (declared budget; must be non-zero, not enforced by any runner)",
-                    run.run_id
-                )));
-            }
-
-            // Router and norm policies must be explicit.
-            if run.router_policy.trim().is_empty() {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing router_policy",
-                    run.run_id
-                )));
-            }
-            if run.norm_policy.trim().is_empty() {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing norm_policy",
-                    run.run_id
-                )));
-            }
-
-            // Grok-1 gate: only block runs that specifically reference grok-1
-            // (not grok-10 / grok-11).
-            if run.model_family == "grok" && names_grok_1(&run.model_id_or_path) && !grok_ready {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' selects grok-1 but GROK1_ARTIFACT_READY is not set to 1 (set the flag, or give the run a skip_reason)",
-                    run.run_id
-                )));
-            }
-
-            const KNOWN_FAMILIES: &[&str] = &[
-                "olmoe",
-                "qwen3_moe",
-                "gemma4",
-                "deepseek2",
-                "llama_moe",
-                "moonlight_16b_a3b",
-                "granite_3_1_a800m",
-                "nemotron",
-                "lfm2_moe",
-                "slim_moe",
-                "zaya",
-                "glm4",
-                "gpt_oss",
-                "step",
-                "minimax",
-                "cohere",
-                "grin",
-                "skyworks",
-                "trinity",
-                "grok",
-            ];
-            if !KNOWN_FAMILIES.contains(&run.model_family.as_str()) {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' uses unknown model_family '{}'",
-                    run.run_id, run.model_family
-                )));
-            }
+            run.validate_budgets()?;
+            run.validate_policies()?;
+            run.validate_family(grok_ready)?;
         }
-
         Ok(())
     }
 }
 
-/// `true` when the last path segment of `model_id_or_path` is `grok-1`
-/// itself or `grok-1` followed by a non-digit (`grok-1-int8`, `grok-1.gguf`),
-/// so `grok-10` / `grok-11` are not gated.
-fn names_grok_1(model_id_or_path: &str) -> bool {
-    let segment = model_id_or_path
-        .trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match segment.strip_prefix("grok-1") {
-        Some(rest) => rest.chars().next().is_none_or(|c| !c.is_ascii_digit()),
-        None => false,
+const KNOWN_FAMILIES: &[&str] = &[
+    "olmoe",
+    "qwen3_moe",
+    "gemma4",
+    "deepseek2",
+    "llama_moe",
+    "moonlight_16b_a3b",
+    "granite_3_1_a800m",
+    "nemotron",
+    "lfm2_moe",
+    "slim_moe",
+    "zaya",
+    "glm4",
+    "gpt_oss",
+    "step",
+    "minimax",
+    "cohere",
+    "grin",
+    "skyworks",
+    "trinity",
+    "grok",
+];
+
+impl RunEntry {
+    fn invalid(&self, message: impl std::fmt::Display) -> HybridError {
+        HybridError::InvalidConfig(format!("run '{}' {message}", self.run_id))
     }
+
+    /// `Ok(true)` when the run carries a non-blank `skip_reason` and so
+    /// bypasses every other check. A `Some` but blank/whitespace reason is
+    /// not a documented skip and is rejected rather than silently bypassing.
+    fn is_documented_skip(&self) -> Result<bool> {
+        match self.skip_reason.as_deref().map(str::trim) {
+            None => Ok(false),
+            Some("") => Err(self.invalid("has a blank skip_reason; it must be non-empty when set")),
+            Some(_) => Ok(true),
+        }
+    }
+
+    /// Declared budgets must be stated (non-zero). Nothing enforces them.
+    fn validate_budgets(&self) -> Result<()> {
+        const NOTE: &str = "(declared budget; must be non-zero, not enforced by any runner)";
+        if self.max_runtime_minutes == 0 {
+            return Err(self.invalid(format!("missing max_runtime_minutes {NOTE}")));
+        }
+        if self.max_disk_gib == 0 {
+            return Err(self.invalid(format!("missing max_disk_gib {NOTE}")));
+        }
+        Ok(())
+    }
+
+    /// Router and norm policies must be explicit.
+    fn validate_policies(&self) -> Result<()> {
+        if self.router_policy.trim().is_empty() {
+            return Err(self.invalid("missing router_policy"));
+        }
+        if self.norm_policy.trim().is_empty() {
+            return Err(self.invalid("missing norm_policy"));
+        }
+        Ok(())
+    }
+
+    /// Grok-1 readiness gate (grok-1 only, not grok-10 / grok-11) and the
+    /// known-family check.
+    fn validate_family(&self, grok_ready: bool) -> Result<()> {
+        if self.model_family == "grok" && names_grok_1(&self.model_id_or_path) && !grok_ready {
+            return Err(self.invalid(
+                "selects grok-1 but GROK1_ARTIFACT_READY is not set to 1 (set the flag, or give the run a skip_reason)",
+            ));
+        }
+        if !KNOWN_FAMILIES.contains(&self.model_family.as_str()) {
+            return Err(self.invalid(format!("uses unknown model_family '{}'", self.model_family)));
+        }
+        Ok(())
+    }
+}
+
+/// `true` when any path segment of `model_id_or_path` is `grok-1` itself or
+/// `grok-1` followed by a non-digit (`grok-1-int8`, `grok-1.gguf`), so
+/// `grok-10` / `grok-11` are not gated while `xai-org/grok-1/ckpt-0` (the
+/// real checkpoint layout) still is. Case-insensitive.
+fn names_grok_1(model_id_or_path: &str) -> bool {
+    model_id_or_path.split(['/', '\\']).any(|segment| {
+        match segment.to_ascii_lowercase().strip_prefix("grok-1") {
+            Some(rest) => rest.chars().next().is_none_or(|c| !c.is_ascii_digit()),
+            None => false,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -462,11 +463,15 @@ mod tests {
                 .validate_with(false)
                 .unwrap_or_else(|e| panic!("{id} must not be gated: {e}"));
         }
-        // Gate also matches grok-1 with a non-digit suffix or a trailing slash.
+        // Gate also matches grok-1 with a non-digit suffix, a trailing slash,
+        // or as an intermediate directory (the real xai-org/grok-1 layout
+        // keeps weights under ckpt-0/).
         for id in [
             "xai-org/grok-1-int8",
             "xai-org/grok-1/",
             "/models/Grok-1.gguf",
+            "/mnt/models/grok-1/ckpt-0",
+            "xai-org/grok-1/ckpt-0",
         ] {
             let message =
                 error_text(matrix(vec![sample_run("g1", "grok", id)]).validate_with(false));
@@ -486,6 +491,9 @@ mod tests {
             "grok-1",
             "xai-org/grok-1-int8",
             "xai-org/GROK-1",
+            "grok-1/sub",
+            "xai-org/grok-1/ckpt-0",
+            "C:\\models\\grok-1\\ckpt-0",
         ] {
             assert!(super::names_grok_1(id), "{id}");
         }
@@ -493,7 +501,8 @@ mod tests {
             "xai-org/grok-10",
             "xai-org/grok-11",
             "xai-org/grok-2",
-            "grok-1/sub",
+            "xai-org/grok-10/ckpt-0",
+            "grok-12/grok-13",
         ] {
             assert!(!super::names_grok_1(id), "{id}");
         }
