@@ -277,6 +277,19 @@ impl GpuAccelerator {
         state.membrane.to_vec()
     }
 
+    /// Read back the resident per-neuron adaptation state (RM-1450).
+    pub fn temporal_adaptation_to_vec(&self, neuron_count: usize) -> GpuResult<Vec<f32>> {
+        if !self.has_context() {
+            return Err(GpuError::NoGpu);
+        }
+        let state = self
+            .temporal_state
+            .as_ref()
+            .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
+        Self::expect_len("temporal adaptation", state.adaptation.len(), neuron_count)?;
+        state.adaptation.to_vec()
+    }
+
     /// Upload a per-neuron temporal input vector into the resident `input_spikes` buffer.
     pub(crate) fn upload_temporal_input_spikes(&mut self, input_spikes: &[f32]) -> GpuResult<()> {
         if !self.has_context() {

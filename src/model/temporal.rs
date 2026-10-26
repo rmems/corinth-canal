@@ -41,6 +41,14 @@ impl Model {
 
     /// Execute exactly one GPU temporal tick using an explicit per-neuron input vector.
     /// Leaves all temporal state resident so repeated calls form a stateful temporal loop.
+    ///
+    /// This path does **not** append to the routing telemetry CSV
+    /// (`ModelConfig::gpu_routing_telemetry_path`): a tick returns only the
+    /// best walker and has no routing decision to log. Only
+    /// [`Self::forward_gpu_temporal`] and the GPU `forward` path write that
+    /// file, so a run driven purely by `tick_gpu_temporal` (the SAAQ runner's
+    /// standard loop) never produces `snn_gpu_routing_telemetry.csv`. The
+    /// runner lists that file as optional for exactly this reason. RM-1450.
     pub fn tick_gpu_temporal(
         &mut self,
         accelerator: &mut GpuAccelerator,
@@ -73,11 +81,14 @@ impl Model {
         accelerator.project_snapshot_current(snap, neuron_count)?;
 
         let mut spike_train: Vec<Vec<usize>> = Vec::with_capacity(self.config.snn_steps);
-        let mut best_walker = 0u32;
+        // `gif_step_weighted_tick` returns the on-device best-walker *index*
+        // for that step; it is not a score, so there is nothing to `max`
+        // across steps. The CSV `best_walker` column records the final
+        // step's reduction (unchanged behaviour; see RM-1450 review).
+        let mut last_step_best_walker = 0u32;
 
         for _ in 0..self.config.snn_steps {
-            let walker = accelerator.gif_step_weighted_tick(neuron_count)?;
-            best_walker = walker;
+            last_step_best_walker = accelerator.gif_step_weighted_tick(neuron_count)?;
 
             let spikes = accelerator.temporal_spikes_to_vec(neuron_count)?;
             let active_neurons = active_neuron_indices(&spikes);
@@ -98,17 +109,22 @@ impl Model {
         } else {
             0.0
         };
-        let mean_adaptation = 0.25f32;
+        // Mean of the resident per-neuron adaptation buffer after the last
+        // step (previously a hardcoded 0.25). RM-1450.
+        let adaptation = accelerator.temporal_adaptation_to_vec(neuron_count)?;
+        let mean_adaptation = crate::experiment::routing_csv::mean_adaptation(&adaptation);
         let target = resolve_gpu_routing_telemetry_path(&self.config);
-        let _ = append_gpu_routing_telemetry_row(
+        // A telemetry write failure is a run failure, not a silent drop: the
+        // SAAQ runner stamps `tick_failed` with the error. RM-1450.
+        append_gpu_routing_telemetry_row(
             &target,
             self.global_step as usize,
             0,
-            best_walker as i32,
+            last_step_best_walker as i32,
             total_spikes,
             mean_adaptation,
             active_fraction,
-        );
+        )?;
 
         Ok(output)
     }
@@ -372,6 +388,56 @@ mod tests {
     use crate::gpu::{GpuAccelerator, GpuContext};
     use crate::moe::write_test_q8_0_olmoe_checkpoint;
     use crate::types::ModelConfig;
+
+    #[test]
+    fn tick_gpu_temporal_never_touches_the_routing_csv() {
+        // Documented contract: the tick path has no routing row to log, so
+        // the configured CSV must not even be created by it — on a stub
+        // accelerator (no GPU) or a real one. RM-1450.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("routing-csv-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let csv = dir.join(format!(
+            "tick-no-routing-{}-{}.csv",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let neuron_count = 32;
+        let mut model = Model::new_with_projector_neurons(
+            ModelConfig {
+                gpu_routing_telemetry_path: Some(csv.clone()),
+                ..ModelConfig::default()
+            },
+            neuron_count,
+        )
+        .expect("synthetic model should construct");
+        let mut accelerator = if GpuContext::is_available() {
+            GpuAccelerator::new()
+        } else {
+            GpuAccelerator::new_stub_for_tests()
+        };
+        let input = vec![0.0f32; neuron_count];
+        // On a ready GPU both ticks must succeed so the no-CSV assertion
+        // covers a real tick; on the stub they fail with NoGpu before the
+        // telemetry path, and the file must still be absent.
+        let ready = accelerator.is_ready();
+        let first = model.tick_gpu_temporal(&mut accelerator, &input);
+        let second = model.tick_gpu_temporal(&mut accelerator, &input);
+        if ready {
+            first.expect("first tick should succeed on a ready GPU");
+            second.expect("second tick should succeed on a ready GPU");
+        } else {
+            assert!(first.is_err() && second.is_err());
+        }
+        assert!(
+            !csv.exists(),
+            "tick_gpu_temporal must not create the routing telemetry CSV"
+        );
+    }
 
     #[test]
     fn resample_weights_to_square_preserves_square_grid() {
