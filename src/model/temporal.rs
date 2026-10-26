@@ -3,7 +3,10 @@
 
 use super::Model;
 use super::{
-    core::{IZ_NEURONS, N_NEURONS, resolve_gpu_routing_telemetry_path},
+    core::{
+        GPU_ROUTING_MEAN_ADAPTATION_UNUSED, IZ_NEURONS, N_NEURONS,
+        resolve_gpu_routing_telemetry_path,
+    },
     telemetry_io::append_gpu_routing_telemetry_row,
 };
 use crate::funnel::active_neuron_indices;
@@ -60,6 +63,10 @@ impl Model {
         accelerator.gif_step_weighted_tick(neuron_count)
     }
 
+    /// Reset, project `snap`, run `snn_steps` ticks, and append one routing row.
+    ///
+    /// Routing-CSV write failures are returned as errors (not swallowed).
+    /// Unlike this method, [`Self::tick_gpu_temporal`] never writes the routing CSV.
     pub fn forward_gpu_temporal(
         &mut self,
         accelerator: &mut GpuAccelerator,
@@ -98,17 +105,16 @@ impl Model {
         } else {
             0.0
         };
-        let mean_adaptation = 0.25f32;
         let target = resolve_gpu_routing_telemetry_path(&self.config);
-        let _ = append_gpu_routing_telemetry_row(
+        append_gpu_routing_telemetry_row(
             &target,
             self.global_step as usize,
             0,
             best_walker as i32,
             total_spikes,
-            mean_adaptation,
+            GPU_ROUTING_MEAN_ADAPTATION_UNUSED,
             active_fraction,
-        );
+        )?;
 
         Ok(output)
     }
