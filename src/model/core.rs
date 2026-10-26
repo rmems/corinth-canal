@@ -14,6 +14,9 @@ pub(super) const N_NEURONS: usize = 2048;
 pub(super) const IZ_NEURONS: usize = 5;
 pub(super) const GPU_ROUTING_TELEMETRY_HEADER: &str =
     "token_idx,best_score,best_walker,spike_count,mean_adaptation,active_fraction";
+/// Value written to the `mean_adaptation` column. The GPU path does not read
+/// adaptation state back, so the column is reserved/unused and always `0.0`.
+pub(super) const GPU_ROUTING_MEAN_ADAPTATION_UNUSED: f32 = 0.0;
 pub(super) const GPU_ROUTING_TELEMETRY_PATH: &str = "snn_gpu_routing_telemetry.csv";
 
 /// Resolve the effective routing-telemetry CSV path for a model.
@@ -213,7 +216,15 @@ impl Model {
             })?;
 
         let target = resolve_gpu_routing_telemetry_path(&self.config);
-        append_gpu_routing_telemetry_row(&target, token_idx, final_score, final_walker, 0, 0.0, 0.0)
+        append_gpu_routing_telemetry_row(
+            &target,
+            token_idx,
+            final_score,
+            final_walker,
+            0,
+            GPU_ROUTING_MEAN_ADAPTATION_UNUSED,
+            0.0,
+        )
     }
 
     pub fn reset(&mut self) {
@@ -463,5 +474,71 @@ mod tests {
         assert!(lines.next().is_none());
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_gpu_routing_telemetry_header_once_under_concurrency() {
+        let path = std::env::temp_dir().join(format!(
+            "corinth_canal_gpu_routing_conc_{}.csv",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let p = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..25 {
+                        append_gpu_routing_telemetry_row(&p, t * 100 + i, 1, 1, 1, 0.0, 0.0)
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let headers = contents
+            .lines()
+            .filter(|l| *l == GPU_ROUTING_TELEMETRY_HEADER)
+            .count();
+        assert_eq!(headers, 1);
+        assert_eq!(
+            contents.lines().next().unwrap(),
+            GPU_ROUTING_TELEMETRY_HEADER
+        );
+        assert_eq!(contents.lines().count(), 1 + 8 * 25);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_gpu_routing_telemetry_write_error_propagates() {
+        let dir = std::env::temp_dir().join("corinth_canal_no_such_dir_rm1450/x.csv");
+        let err = append_gpu_routing_telemetry_row(&dir, 0, 0, 0, 0, 0.0, 0.0).unwrap_err();
+        assert!(err.to_string().contains("CSV Write Failed"));
+    }
+
+    #[test]
+    fn test_tick_gpu_temporal_does_not_write_routing_csv() {
+        let path = std::env::temp_dir().join(format!(
+            "corinth_canal_tick_norouting_{}.csv",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut model = Model::new(ModelConfig {
+            gpu_routing_telemetry_path: Some(path.clone()),
+            ..ModelConfig::default()
+        })
+        .unwrap();
+        let mut accelerator = GpuAccelerator::new_stub_for_tests();
+        let input = vec![0.0f32; model.projector.input_neurons()];
+        // Stub accelerator -> NoGpu; the tick path never reaches a CSV write.
+        let _ = model.tick_gpu_temporal(&mut accelerator, &input);
+        assert!(
+            !path.exists(),
+            "tick_gpu_temporal must not emit routing CSV"
+        );
     }
 }
