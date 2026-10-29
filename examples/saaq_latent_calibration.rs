@@ -3,7 +3,8 @@ mod support;
 
 use corinth_canal::{
     ExperimentManifest, ExperimentMetrics, ExperimentSummary, FunnelActivity, SaaqUpdateRule,
-    SnnDualLatentCalibrator, SnnLatentCsvExporter, gpu::GpuAccelerator, model::Model,
+    SnnDualLatentCalibrator, SnnLatentCsvExporter, experiment::WraparoundStats,
+    gpu::GpuAccelerator, model::Model,
 };
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -235,9 +236,15 @@ fn run_main(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>
     if let Some(rows) = cfg.telemetry.row_count()
         && effective_ticks > rows
     {
-        eprintln!(
+        let message = format!(
             "wraparound: ticks={effective_ticks} > rows={rows}; regression corpus may be contaminated by looped endings. Prefer TICKS=0 or TICKS<={rows}.",
         );
+        if cfg.strict_wraparound {
+            // Fail closed before any model loads so a campaign never trains
+            // on a looped corpus and then reports it as a baseline (RM-1449).
+            return Err(Error::other(format!("STRICT_WRAPAROUND=1: {message}")).into());
+        }
+        eprintln!("{message}");
     }
 
     println!(
@@ -618,17 +625,15 @@ fn build_manifest(
     generated_files: Vec<String>,
 ) -> ExperimentManifest {
     let telemetry_row_count = ctx.resolved.row_count();
-    let wraparound_enabled = telemetry_row_count
-        .map(|rows| rows > 0 && ctx.ticks > rows)
-        .unwrap_or(false);
-    // Count only *extra* passes beyond the first. `ticks == rows` is exactly
-    // one pass with zero wraparound (SR.jl corpus sweet spot); `ticks =
-    // 2*rows` is one wraparound; and so on. This makes the field a clean
-    // predicate for "did this run teach the regressor on looped data?".
-    let wraparound_loops = telemetry_row_count
-        .filter(|rows| *rows > 0 && ctx.ticks > *rows)
-        .map(|rows| ((ctx.ticks - rows) as u64) / (rows as u64) + 1)
-        .unwrap_or(0);
+    // `enabled` is the "did any tick read a looped row" predicate; `loops`
+    // counts only *complete* extra passes beyond the first (`ticks == rows`
+    // is one pass with zero wraparound, `ticks == 2*rows` is one wraparound,
+    // a partial second pass is `enabled` with `loops == 0`). The math lives
+    // in `WraparoundStats::compute` so hosted `--lib` CI covers it (RM-1449).
+    let WraparoundStats {
+        enabled: wraparound_enabled,
+        loops: wraparound_loops,
+    } = WraparoundStats::compute(ctx.ticks, telemetry_row_count);
 
     ExperimentManifest {
         run_id: ctx.run_id.clone(),
