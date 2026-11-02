@@ -306,14 +306,7 @@ mod tests {
 
     #[test]
     fn output_cannot_alias_input_file() {
-        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
-            "spikenaut_input_alias_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = super::super::test_scratch::scratch_path("spikenaut_input_alias");
         std::fs::create_dir_all(&root).unwrap();
         let input = root.join("input.csv");
         std::fs::write(&input, b"source JSONL").unwrap();
@@ -337,14 +330,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn smoke_output_symlink_cannot_alias_existing_artifact() {
-        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
-            "spikenaut_artifact_alias_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = super::super::test_scratch::scratch_path("spikenaut_artifact_alias");
         let run_dir = root.join("spikenaut_gpu/dual_saaq_smoke");
         std::fs::create_dir_all(&run_dir).unwrap();
         let latent = run_dir.join("latent_telemetry.csv");
@@ -366,14 +352,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn smoke_output_symlinked_parent_cannot_alias_new_artifact() {
-        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
-            "spikenaut_parent_alias_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = super::super::test_scratch::scratch_path("spikenaut_parent_alias");
         let run_dir = root.join("spikenaut_gpu/dual_saaq_smoke");
         std::fs::create_dir_all(&run_dir).unwrap();
         let alias = root.join("alias");
@@ -395,14 +374,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dangling_csv_output_symlink_is_rejected() {
-        let root = std::path::PathBuf::from("target/tmp-tests").join(format!(
-            "spikenaut_dangling_output_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = super::super::test_scratch::scratch_path("spikenaut_dangling_output");
         std::fs::create_dir_all(&root).unwrap();
         let output = root.join("output.csv");
         std::os::unix::fs::symlink(root.join("missing.csv"), &output).unwrap();

@@ -23,6 +23,9 @@ mod smoke;
 mod smoke_artifacts;
 mod timestamp;
 
+#[cfg(test)]
+mod test_scratch;
+
 // Re-exports are consumed by the #[path] integration test and by callers that
 // only need a subset of the facade. The ingest example uses a narrower set.
 #[allow(unused_imports)]

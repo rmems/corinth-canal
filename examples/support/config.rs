@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use corinth_canal::{ModelFamily, SaaqUpdateRule, moe::RoutingMode, projector::ProjectionMode};
 
-use super::lineup::{SafetensorsModelEntry, load_gguf_lineup};
+use super::lineup::{load_gguf_lineup, validate_safetensors_lineup_entries};
 use super::{
     ResolvedTelemetry, TelemetrySource, ValidationModelSpec, cloud_execution_guard,
     cloud_lineup_path_from_env, default_spiking_model_config, discover_validation_models, env_flag,
@@ -216,44 +216,6 @@ fn validate_optional_lineups_from_env() {
     }
 }
 
-fn validate_safetensors_lineup_entries(path: &Path, entries: &[SafetensorsModelEntry]) {
-    if entries.is_empty() {
-        panic!(
-            "SAFETENSORS_LINEUP_CONFIG={} produced no usable entries. \
-             Placeholder-only or missing-path lineups are not valid runtime config.",
-            path.display()
-        );
-    }
-    for entry in entries {
-        if entry.slug.trim().is_empty() {
-            panic!(
-                "SAFETENSORS_LINEUP_CONFIG={} contains an empty slug for path={}",
-                path.display(),
-                entry.path.display()
-            );
-        }
-        if !entry.target.eq_ignore_ascii_case("local") {
-            panic!(
-                "SAFETENSORS_LINEUP_CONFIG={} has invalid target={} for slug={}",
-                path.display(),
-                entry.target,
-                entry.slug
-            );
-        }
-        if !entry.path.exists() {
-            panic!(
-                "SAFETENSORS_LINEUP_CONFIG={} resolved missing path={} for slug={}",
-                path.display(),
-                entry.path.display(),
-                entry.slug
-            );
-        }
-        if let Some(family) = entry.family {
-            let _ = family.slug();
-        }
-    }
-}
-
 /// Result of model-list resolution, including optional GGUF-lineup coverage
 /// counts for `run_manifest.json`.
 struct ValidationModelResolution {
@@ -392,42 +354,4 @@ pub fn output_root_from_env() -> PathBuf {
         }
     }
     PathBuf::from(DEFAULT_OUTPUT_ROOT)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::lineup::SafetensorsModelEntry;
-    use super::validate_safetensors_lineup_entries;
-    use corinth_canal::ModelFamily;
-    use std::path::Path;
-
-    #[test]
-    #[should_panic(expected = "produced no usable entries")]
-    fn safetensors_validation_rejects_empty_lineup() {
-        let entries: Vec<SafetensorsModelEntry> = Vec::new();
-        validate_safetensors_lineup_entries(Path::new("configs/template.toml"), entries.as_slice());
-    }
-
-    #[test]
-    fn safetensors_validation_accepts_existing_entry() {
-        let existing_file = std::env::temp_dir().join(format!(
-            "st_validation_{}.safetensors",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(&existing_file, b"test").unwrap();
-
-        let entries = vec![SafetensorsModelEntry {
-            slug: "test_st_model".into(),
-            family: Some(ModelFamily::Olmoe),
-            path: existing_file.clone(),
-            target: "local".into(),
-        }];
-
-        validate_safetensors_lineup_entries(Path::new("configs/runtime.toml"), &entries);
-
-        let _ = std::fs::remove_file(existing_file);
-    }
 }

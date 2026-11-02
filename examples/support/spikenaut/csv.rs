@@ -112,14 +112,7 @@ mod tests {
 
     #[test]
     fn failed_replacement_preserves_existing_csv() {
-        let root = Path::new("target/tmp-tests").join(format!(
-            "spikenaut_atomic_csv_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = super::super::test_scratch::scratch_path("spikenaut_atomic_csv");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("replay.csv");
         std::fs::write(&path, b"last valid replay").unwrap();
@@ -135,14 +128,7 @@ mod tests {
 
     #[test]
     fn completed_replacement_updates_existing_csv() {
-        let root = Path::new("target/tmp-tests").join(format!(
-            "spikenaut_replace_csv_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let root = super::super::test_scratch::scratch_path("spikenaut_replace_csv");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("replay.csv");
         std::fs::write(&path, b"old replay").unwrap();

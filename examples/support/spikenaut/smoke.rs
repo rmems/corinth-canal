@@ -258,17 +258,7 @@ mod tests {
     use super::*;
 
     fn scratch_run_dir(label: &str) -> std::path::PathBuf {
-        let scratch = std::env::var_os("CARGO_TARGET_TMPDIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
-        scratch.join(format!(
-            "spikenaut_{label}_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+        super::super::test_scratch::scratch_path(&format!("spikenaut_{label}"))
     }
 
     #[test]

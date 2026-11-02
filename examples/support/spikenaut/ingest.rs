@@ -135,17 +135,8 @@ mod tests {
     #[test]
     fn ingest_advances_ordinal_past_blank_and_malformed_lines() {
         let path = {
-            let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
-            let _ = std::fs::create_dir_all(&dir);
-            let path = dir.join(format!(
-                "spikenaut_ordinal_{}.jsonl",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+            let path = super::super::test_scratch::scratch_path("spikenaut_ordinal")
+                .with_extension("jsonl");
             std::fs::write(
                 &path,
                 concat!(
@@ -169,17 +160,8 @@ mod tests {
 
     #[test]
     fn ingest_skips_invalid_utf8_record_and_keeps_later_rows() {
-        let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("target").join("tmp-tests"));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!(
-            "spikenaut_invalid_utf8_{}.jsonl",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let path = super::super::test_scratch::scratch_path("spikenaut_invalid_utf8")
+            .with_extension("jsonl");
         let mut data = b"{\"bad\":\xff}\n".to_vec();
         data.extend_from_slice(
             b"{\"hashrate_mh\":0.85,\"power_w\":375.8,\"gpu_temp_c\":80.0,\"reward_hint\":0.94}\n",

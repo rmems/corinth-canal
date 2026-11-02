@@ -257,12 +257,10 @@ pub fn synthetic_base_snapshot(tick: usize) -> corinth_canal::TelemetrySnapshot 
 mod tests {
     use super::*;
 
-    /// Cargo sets `CARGO_TARGET_TMPDIR` for test sandboxes; avoid shared
-    /// `std::env::temp_dir()` (Semgrep: multi-user temp dir).
+    /// Crate-local rather than `std::env::temp_dir()` (Semgrep: multi-user temp
+    /// dir); `CARGO_TARGET_TMPDIR` is compile-time only, so it is not readable
+    /// at runtime.
     fn test_scratch_dir() -> PathBuf {
-        if let Some(dir) = std::env::var_os("CARGO_TARGET_TMPDIR") {
-            return PathBuf::from(dir);
-        }
         let dir = PathBuf::from("target").join("tmp-tests");
         std::fs::create_dir_all(&dir).unwrap();
         dir

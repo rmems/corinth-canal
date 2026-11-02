@@ -26,9 +26,6 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn scratch_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("CARGO_TARGET_TMPDIR") {
-        return PathBuf::from(dir);
-    }
     let dir = PathBuf::from("target").join("tmp-tests");
     std::fs::create_dir_all(&dir).unwrap();
     dir

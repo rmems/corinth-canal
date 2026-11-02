@@ -4,21 +4,16 @@ mod lineup;
 
 use corinth_canal::{ModelArchitectureClass, ModelFamily, ModelTarget};
 use lineup::{
-    UnresolvedLineupEntry, cloud_execution_guard, cloud_lineup_path_from_env,
-    format_unresolved_lineup_error, load_cloud_lineup, load_gguf_lineup, load_safetensors_lineup,
-    safetensors_lineup_path_from_env,
+    SafetensorsModelEntry, UnresolvedLineupEntry, cloud_execution_guard,
+    cloud_lineup_path_from_env, format_unresolved_lineup_error, load_cloud_lineup,
+    load_gguf_lineup, load_safetensors_lineup, safetensors_lineup_path_from_env,
+    validate_safetensors_lineup_entries,
 };
 use std::path::PathBuf;
 
 #[test]
 fn cloud_lineup_parses_valid_toml() {
-    let tmp = std::env::temp_dir().join(format!(
-        "cloud_test_{}.toml",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let tmp = unique_temp("cloud_test", "lineup.toml");
     std::fs::write(
         &tmp,
         r#"
@@ -92,13 +87,7 @@ fn cloud_execution_guard_passes_when_provider_available() {
 
 #[test]
 fn cloud_lineup_unknown_family_reported_on_stderr() {
-    let tmp = std::env::temp_dir().join(format!(
-        "cloud_unknown_{}.toml",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let tmp = unique_temp("cloud_unknown", "lineup.toml");
     std::fs::write(
         &tmp,
         r#"
@@ -131,20 +120,8 @@ fn lineup_env_path_helpers_are_reachable() {
 
 #[test]
 fn safetensors_lineup_parses_valid_toml() {
-    let tmp = std::env::temp_dir().join(format!(
-        "safetensors_test_{}.toml",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let existing_file = std::env::temp_dir().join(format!(
-        "st_dummy_{}.safetensors",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let tmp = unique_temp("safetensors_test", "lineup.toml");
+    let existing_file = unique_temp("st_dummy", "dummy.safetensors");
     std::fs::write(&existing_file, b"test").unwrap();
 
     std::fs::write(
@@ -177,13 +154,7 @@ target = "local"
 
 #[test]
 fn safetensors_lineup_skips_missing_paths() {
-    let tmp = std::env::temp_dir().join(format!(
-        "st_missing_{}.toml",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let tmp = unique_temp("st_missing", "lineup.toml");
     std::fs::write(
         &tmp,
         r#"
@@ -341,6 +312,33 @@ fn cloud_lineup_shipped_inventory_parses() {
             RECOGNIZED_PROVIDER_FORMATS
         );
     }
+}
+
+#[test]
+#[should_panic(expected = "produced no usable entries")]
+fn safetensors_validation_rejects_empty_lineup() {
+    let entries: Vec<SafetensorsModelEntry> = Vec::new();
+    validate_safetensors_lineup_entries(
+        std::path::Path::new("configs/template.toml"),
+        entries.as_slice(),
+    );
+}
+
+#[test]
+fn safetensors_validation_accepts_existing_entry() {
+    let existing_file = unique_temp("st_validation", "model.safetensors");
+    std::fs::write(&existing_file, b"test").unwrap();
+
+    let entries = vec![SafetensorsModelEntry {
+        slug: "test_st_model".into(),
+        family: Some(ModelFamily::Olmoe),
+        path: existing_file.clone(),
+        target: "local".into(),
+    }];
+
+    validate_safetensors_lineup_entries(std::path::Path::new("configs/runtime.toml"), &entries);
+
+    let _ = std::fs::remove_file(existing_file);
 }
 
 fn unique_temp(prefix: &str, suffix: &str) -> PathBuf {

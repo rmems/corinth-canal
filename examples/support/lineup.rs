@@ -224,6 +224,44 @@ pub fn load_safetensors_lineup(
     Ok(out)
 }
 
+pub fn validate_safetensors_lineup_entries(path: &Path, entries: &[SafetensorsModelEntry]) {
+    if entries.is_empty() {
+        panic!(
+            "SAFETENSORS_LINEUP_CONFIG={} produced no usable entries. \
+             Placeholder-only or missing-path lineups are not valid runtime config.",
+            path.display()
+        );
+    }
+    for entry in entries {
+        if entry.slug.trim().is_empty() {
+            panic!(
+                "SAFETENSORS_LINEUP_CONFIG={} contains an empty slug for path={}",
+                path.display(),
+                entry.path.display()
+            );
+        }
+        if !entry.target.eq_ignore_ascii_case("local") {
+            panic!(
+                "SAFETENSORS_LINEUP_CONFIG={} has invalid target={} for slug={}",
+                path.display(),
+                entry.target,
+                entry.slug
+            );
+        }
+        if !entry.path.exists() {
+            panic!(
+                "SAFETENSORS_LINEUP_CONFIG={} resolved missing path={} for slug={}",
+                path.display(),
+                entry.path.display(),
+                entry.slug
+            );
+        }
+        if let Some(family) = entry.family {
+            let _ = family.slug();
+        }
+    }
+}
+
 /// Load the safetensors lineup path from the `SAFETENSORS_LINEUP_CONFIG`
 /// env var.
 pub fn safetensors_lineup_path_from_env() -> Option<PathBuf> {
