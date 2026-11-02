@@ -139,7 +139,7 @@ fn run_smoke_ticks(
     let mut engine = SmokeEngine::new()?;
     let mut exporter = SnnLatentCsvExporter::create(&paths.latent)?;
     let mut tick_writer = open_tick_writer(&paths.tick)?;
-    let mut metrics = empty_smoke_metrics();
+    let mut metrics = ExperimentMetrics::default();
     write_smoke_tick_rows(
         rows,
         &mut engine,
@@ -158,14 +158,6 @@ fn open_tick_writer(path: &Path) -> Result<BufWriter<File>, Box<dyn std::error::
         "tick,timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w,ternary"
     )?;
     Ok(tick_writer)
-}
-
-fn empty_smoke_metrics() -> ExperimentMetrics {
-    ExperimentMetrics {
-        ticks_completed: 0,
-        latent_rows: 0,
-        ..ExperimentMetrics::default()
-    }
 }
 
 fn write_smoke_tick_rows<W: Write>(

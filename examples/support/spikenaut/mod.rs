@@ -28,11 +28,9 @@ mod timestamp;
 #[allow(unused_imports)]
 pub use csv::{SPIKENAUT_CSV_HEADER, write_canonical_csv};
 #[allow(unused_imports)]
-pub use domain::{SpikenautDomain, detect_domain};
+pub use domain::SpikenautDomain;
 #[allow(unused_imports)]
 pub use ingest::{IngestResult, ingest_jsonl};
-#[allow(unused_imports)]
-pub use map::map_record;
 #[allow(unused_imports)]
 pub use smoke::run_dual_saaq_cpu_smoke;
 #[allow(unused_imports)]

@@ -9,7 +9,7 @@ use cust::device::Device;
 
 /// Owns a CUDA primary context for device 0.
 pub struct GpuContext {
-    pub(crate) _ctx: Context,
+    _ctx: Context,
 }
 
 impl GpuContext {

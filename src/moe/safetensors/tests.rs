@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+use super::config::HfConfig;
+use super::discovery::{classify_tensor, discover_candidates};
+use super::manifest::{
+    INDEX_UNREFERENCED_SHARDS_KEY, build_manifest, merge_shard_metadata,
+    shard_metadata_namespaced_key,
+};
+use super::paths::{canonical_existing_or_parent, parent_or_current};
 use super::*;
+use std::collections::BTreeMap;
+use std::fs::{self, File};
 use std::io::Write;
 use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TestDir(PathBuf);
@@ -1018,7 +1028,7 @@ fn windows_same_file_detects_hardlinks_via_file_id() {
     std::fs::hard_link(&original, &hardlink).unwrap();
 
     // Verify paths_refer_to_same_file returns true for hardlinks (uses Win32 FFI file-id comparison)
-    assert!(super::paths_refer_to_same_file(&original, &hardlink).unwrap());
+    assert!(super::paths::paths_refer_to_same_file(&original, &hardlink).unwrap());
 
     // Verify different files return false
     let different = dir.join("different.safetensors");
@@ -1027,5 +1037,5 @@ fn windows_same_file_detects_hardlinks_via_file_id() {
         r#"{"b.weight": {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]}}"#,
         2,
     );
-    assert!(!super::paths_refer_to_same_file(&original, &different).unwrap());
+    assert!(!super::paths::paths_refer_to_same_file(&original, &different).unwrap());
 }

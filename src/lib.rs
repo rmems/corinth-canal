@@ -88,6 +88,9 @@ pub mod funnel;
 #[cfg(feature = "cuda")]
 pub mod gpu;
 pub mod latent;
+/// MSE loss helper used by the GPU model.
+#[cfg(feature = "cuda")]
+pub(crate) mod metric;
 #[cfg(feature = "cuda")]
 pub mod model;
 pub mod moe;
@@ -115,6 +118,3 @@ pub use experiment::schema::{
     ExperimentBundle, ExperimentManifest, ExperimentMetrics, ExperimentSummary, ExperimentWarning,
     ModelAdapterConfig, RunEntry, RunMatrix,
 };
-
-// New folder name metric, came out of triple code duplication
-pub(crate) mod metric;

@@ -34,7 +34,6 @@ pub(super) fn paths_refer_to_same_file(left: &Path, right: &Path) -> std::io::Re
 /// Windows file-identity comparison using direct Win32 FFI.
 /// Avoids the unstable `windows_by_handle` feature (E0658 on stable Rust).
 #[cfg(windows)]
-#[allow(unsafe_code)]
 pub(super) fn windows_same_file_via_ffi(left: &Path, right: &Path) -> std::io::Result<bool> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
@@ -47,7 +46,6 @@ pub(super) fn windows_same_file_via_ffi(left: &Path, right: &Path) -> std::io::R
     }
 
     #[repr(C)]
-    #[allow(clippy::upper_case_acronyms)]
     struct BY_HANDLE_FILE_INFORMATION {
         dw_file_attributes: u32,
         ft_creation_time: FILETIME,

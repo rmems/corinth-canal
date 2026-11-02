@@ -13,7 +13,6 @@
 //! CPU `--no-default-features` set without compiling the Sentry/OpenSSL
 //! observability stack (the other `mod support` examples are cuda-gated).
 
-#[allow(dead_code)]
 #[path = "support/spikenaut/mod.rs"]
 mod spikenaut;
 #[allow(dead_code)]

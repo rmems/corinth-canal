@@ -107,8 +107,6 @@ fn main() {
     // "Could not find a cuda installation". Skipping `nvcc` is not a no-CUDA build.
     let stub_enabled = env::var_os("CARGO_FEATURE_GPU_STUB").is_some();
 
-    println!("cargo:rustc-cfg=CUDA_ENABLED");
-
     if stub_enabled {
         println!("cargo:rustc-cfg=gpu_stub");
         let warning = if find_nvcc().is_some() {

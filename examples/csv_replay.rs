@@ -26,6 +26,7 @@ fn parse_f32(v: &str) -> Option<f32> {
     if n.is_finite() { Some(n) } else { None }
 }
 
+// Local copy: `crate::metric` is `pub(crate)` on purpose, so examples cannot reach it.
 fn mean_squared_error(output: &[f32], target: &[f32]) -> f32 {
     let len = output.len().min(target.len());
     if len == 0 {

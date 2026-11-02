@@ -16,12 +16,8 @@ pub use lineup::{
     cloud_execution_guard, cloud_lineup_path_from_env, load_cloud_lineup, load_safetensors_lineup,
     safetensors_lineup_path_from_env,
 };
-// Re-exports for example binaries; each binary only uses a subset, so the
-// unused_imports lint would fire without this allow.
-#[allow(unused_imports)]
 pub use telemetry_csv::{
-    ResolvedTelemetry, TELEMETRY_CSV_HEADER, TelemetrySource, load_csv_telemetry_rows,
-    resolve_telemetry_from, synthetic_base_snapshot, telemetry_snapshot_for_tick,
+    ResolvedTelemetry, TelemetrySource, resolve_telemetry_from, telemetry_snapshot_for_tick,
 };
 
 #[cfg(feature = "cuda")]

@@ -2,11 +2,11 @@
 //! Model-family adapter resolution for the GGUF and Safetensors router host.
 
 use super::checkpoint::{GgufMetadata, GgufTensorInfo, MappedGgufCheckpoint};
-use super::safetensors::{MappedSafetensorsCheckpoint, SafetensorsMetadata};
-use super::{
+use super::ggml::{
     GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
     GGML_TYPE_Q8_0,
 };
+use super::safetensors::{MappedSafetensorsCheckpoint, SafetensorsMetadata};
 use crate::error::{HybridError, Result};
 use crate::types::ModelFamily;
 use std::path::Path;
@@ -47,9 +47,8 @@ pub(super) struct ModelAdapter {
 
 /// The `synapse_source` string used when no checkpoint synapse tensor is in
 /// play. Defined once here because it is a value `run_manifest.json` persists
-/// and CLAUDE.md pins; it was previously spelled out separately in
-/// `RouterMetadata::synthetic` and again in the temporal fallback.
-pub(crate) const SYNTHETIC_FALLBACK_SOURCE: &str = "synthetic-fallback";
+/// and CLAUDE.md pins.
+pub(super) const SYNTHETIC_FALLBACK_SOURCE: &str = "synthetic-fallback";
 
 impl ModelAdapter {
     pub(super) fn synapse_source_label(&self) -> &'static str {

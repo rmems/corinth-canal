@@ -555,7 +555,6 @@ impl GpuAccelerator {
     ///
     /// This wrapper matches the updated CUDA signature and blocks until the
     /// extract kernel has completed.
-    #[allow(clippy::too_many_arguments)]
     pub fn satsolver_extract(
         &self,
         assignment: &GpuBuffer<u8>,

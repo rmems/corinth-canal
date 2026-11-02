@@ -10,28 +10,18 @@
 //! - `moe/ggml.rs` for GGUF/GGML wire-type constants and labels
 
 mod adapter;
-pub(crate) use adapter::SYNTHETIC_FALLBACK_SOURCE;
 mod checkpoint;
 mod ggml;
 mod gguf;
 mod routing;
 pub mod safetensors;
 
-use self::adapter::{ModelAdapter, SynapseSource, resolve_adapter, resolve_safetensors_adapter};
+use self::adapter::{
+    ModelAdapter, SYNTHETIC_FALLBACK_SOURCE, SynapseSource, resolve_adapter,
+    resolve_safetensors_adapter,
+};
 use self::checkpoint::{
     MappedGgufCheckpoint, extract_named_token_embedding_from_checkpoint, probe_and_map_checkpoint,
-};
-// Constants used by adapter/routing helpers in this module tree.
-use self::ggml::{
-    GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
-    GGML_TYPE_Q8_0,
-};
-// GGUF test fixture helpers (`moe/tests.rs`) pull these via `use super::*`.
-// GGUF fixture builders in `tests.rs` pull these via `use super::*`.
-#[cfg(test)]
-use self::ggml::{
-    GGML_TYPE_IQ3_S, GGML_TYPE_Q4_0_4_4, GGUF_MAGIC, GGUF_VALUE_TYPE_STRING,
-    GGUF_VALUE_TYPE_UINT32, GGUF_VERSION,
 };
 pub use self::ggml::{ggml_type_label, synapse_dequant_path_supported};
 use self::routing::{

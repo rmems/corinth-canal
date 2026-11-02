@@ -1,0 +1,14 @@
+# Keeps local secrets and build output out of the Dockerfile's `COPY . .` layer.
+target/
+.git/
+.github/
+.claude/
+.agents/
+.beads/
+.env
+.env.*
+artifacts/
+benchmarks/
+docs/
+experiments/
+manifests/

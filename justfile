@@ -5,7 +5,7 @@ set dotenv-filename := ".env.local"
 default:
     @just --list
 
-# One-time setup sanity check: verify every doc + manifest exists.
+# Scaffolding sanity check: warn if .env.local is missing, create artifacts/.
 setup:
     @test -f .env.local || echo "warn: .env.local missing (copy from .env.example)"
     @test -d artifacts  || mkdir -p artifacts
@@ -113,10 +113,6 @@ saaq-campaign:
 # A missing or unusable file degrades to synthetic_fallback.
 saaq-csv:
     TELEMETRY_SOURCE=csv cargo run --release --example saaq_latent_calibration
-
-# Matrix sweep over configured models/telemetry with dual SAAQ emission.
-saaq-sweep:
-    cargo run --release --example saaq_latent_calibration
 
 # Telemetry bridge demo (routing_mode switchable via ROUTING_MODE env).
 bridge:

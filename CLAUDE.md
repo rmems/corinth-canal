@@ -132,6 +132,6 @@ Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `
 
 ## CI
 
-GitHub Actions is primary: `ci.yml` (CPU — fmt, ruff + Python unit tests on `benchmarks/`, clippy `--locked`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --no-default-features --locked`, ring-only TLS assert, llvm-cov → Codecov; then a fork-guarded self-hosted "CPU Heavy" job on any online X64 runner), `gpu-tests.yml` (CUDA ≥ 13.2 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
+GitHub Actions is primary: `ci.yml` (CPU — fmt, ruff + Python unit tests on `benchmarks/`, clippy `--locked`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --no-default-features --locked`, ring-only TLS assert, llvm-cov → Codecov; then a fork-guarded self-hosted "CPU Heavy" job on any online X64 runner), `gpu-tests.yml` (CUDA ≥ 13.2 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `rustsec-audit.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
 
 Note the split in test scope: the hosted job runs only `--lib`, so `tests/` and example-target tests are exercised solely by the self-hosted CPU Heavy job (`cargo test --all-targets --no-default-features --locked`), which is skipped for fork PRs. Run `--all-targets` locally before pushing rather than trusting the hosted job.

@@ -38,7 +38,7 @@ pub fn ingest_jsonl(
             break;
         }
         match std::str::from_utf8(&raw) {
-            Ok(line) => acc.consume_line(line)?,
+            Ok(line) => acc.consume_line(line),
             Err(_) => acc.consume_malformed_line(),
         }
     }
@@ -68,16 +68,15 @@ impl IngestAccumulator {
         limit.is_some_and(|n| self.rows.len() >= n)
     }
 
-    fn consume_line(&mut self, line: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn consume_line(&mut self, line: &str) {
         if line.trim().is_empty() {
             self.ordinal += 1;
-            return Ok(());
+            return;
         }
         match parse_object_line(line) {
             LineParse::Object(object) => self.consume_object(&object),
             LineParse::Malformed => self.consume_malformed_line(),
         }
-        Ok(())
     }
 
     fn consume_malformed_line(&mut self) {

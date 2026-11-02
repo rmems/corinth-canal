@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+// Included by five cuda examples and tests/examples_support_observability.rs; each target uses only a subset.
 #![allow(dead_code)]
 
 use std::borrow::Cow;
@@ -465,13 +466,6 @@ fn redact_event(mut event: sentry::protocol::Event<'static>) -> sentry::protocol
     event
 }
 
-pub fn capture_top_level_error(_command: &'static str, error: &(dyn std::error::Error + 'static)) {
-    // Redaction happens in the `before_send` hook installed by `init_sentry`,
-    // so every capture site — including panics and src/gpu's capture_message —
-    // is covered without each one remembering to call a helper.
-    sentry::capture_error(error);
-}
-
 pub fn annotate_scope(
     command: &'static str,
     run_id: &str,
@@ -595,14 +589,6 @@ fn resolve_sentry_release(git_sha: &str) -> String {
 }
 
 impl CommandObserver {
-    pub fn run_id(&self) -> &str {
-        &self.run_id
-    }
-
-    pub fn git_sha(&self) -> &str {
-        &self.git_sha
-    }
-
     pub fn annotate(&self, data: SafeDiagnosticData<'_>) {
         let snapshot = {
             let mut safe_data = self.safe_data.borrow_mut();

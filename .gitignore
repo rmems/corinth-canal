@@ -1,6 +1,5 @@
 # Rust
 /target/
-actions-runner/
 **/*.rs.bk
 
 # IDE
@@ -26,9 +25,6 @@ coverage/
 # Agent notes (scratch only — the tracked docs/ tree must stay visible)
 docs/agent-notes/
 
-# Local Kilo planning scratch
-.kilo/plans/
-
 # Local env overrides (contributors create their own, never tracked)
 .env.local
 
@@ -37,7 +33,7 @@ docs/agent-notes/
 !/artifacts/.gitkeep
 
 # GitHub Actions runner
-/actions-runner/
+actions-runner/
 
 # Scripts
 /scripts/*
@@ -45,9 +41,9 @@ configs/local_lineup.toml
 configs/local_gguf_lineup.toml
 configs/local_safetensors_lineup.toml
 configs/safetensors_lineup.toml
-.beads/
 
 # Beads / Dolt files (added by bd init)
+.beads/
 .dolt/
 *.db
 .beads-credential-key
@@ -85,3 +81,4 @@ codacy-results.sarif
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/

@@ -33,7 +33,6 @@ impl ResolvedTelemetry {
     /// Used by GPU examples and by the CPU `#[path]` telemetry tests.
     /// Keep this off the `cuda` feature: hosted clippy compiles
     /// `examples_support_telemetry` under `--no-default-features`.
-    #[allow(dead_code)]
     pub fn row_count(&self) -> Option<usize> {
         self.rows.as_ref().map(|rows| rows.len())
     }
