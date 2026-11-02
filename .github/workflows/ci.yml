@@ -72,6 +72,15 @@ jobs:
       - name: Check examples (CPU-only)
         run: cargo check --examples --no-default-features --locked
 
+      - name: Type-check cuda feature graph (stub, no CUDA install)
+        # find_cuda_helper::include_cuda() skips its library probe when DOCS_RS is
+        # set, so gpu-stub compiles here without a toolkit. This is the only check
+        # of src/gpu, src/model and the cuda examples that fork PRs get. It does
+        # not link, run tests or compile kernels; gpu-tests.yml still does that.
+        env:
+          DOCS_RS: "1"
+        run: cargo clippy --all-targets --no-default-features --features gpu-stub --locked -- -D warnings -A dead_code
+
       - name: Assert ring-only TLS (no aws-lc-rs)
         run: |
           set +e -u
