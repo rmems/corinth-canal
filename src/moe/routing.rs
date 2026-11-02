@@ -204,4 +204,72 @@ mod tests {
         let out = normalize_to_internal_embedding_dim(&input);
         assert_eq!(out.len(), EMBEDDING_DIM);
     }
+
+    fn assert_close(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len(), "{actual:?} vs {expected:?}");
+        for (a, e) in actual.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-6, "{actual:?} vs {expected:?}");
+        }
+    }
+
+    #[test]
+    fn softmax_sums_to_one_and_is_shift_invariant() {
+        let base = softmax(&[1.0, 2.0, 3.0]);
+        let shifted = softmax(&[11.0, 12.0, 13.0]);
+        assert!((base.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(base[0] < base[1] && base[1] < base[2]);
+        assert_close(&base, &shifted);
+    }
+
+    #[test]
+    fn softmax_of_empty_is_empty() {
+        assert!(softmax(&[]).is_empty());
+    }
+
+    // Characterizes corinth's current behaviour, not an endorsement of it:
+    // hybrid-fusion's softmax differs here on purpose.
+    #[test]
+    fn softmax_uniform_fallback_on_non_finite_input() {
+        assert_close(&softmax(&[f32::NAN, 1.0]), &[0.5, 0.5]);
+        assert_close(&softmax(&[f32::INFINITY; 3]), &[1.0 / 3.0; 3]);
+    }
+
+    #[test]
+    fn top_k_indices_returns_descending_indices_and_clamps_k() {
+        let weights = [0.1, 0.7, 0.2];
+        assert_eq!(top_k_indices(&weights, 2), vec![1, 2]);
+        assert_eq!(top_k_indices(&weights, 5), vec![1, 2, 0]);
+        assert!(top_k_indices(&weights, 0).is_empty());
+        // Ties resolve to the lower index.
+        assert_eq!(top_k_indices(&[0.5, 0.9, 0.5, 0.9], 4), vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn synthetic_gate_scores_sums_disjoint_chunks() {
+        assert_eq!(synthetic_gate_scores(4, &[1.0; 8]), vec![2.0; 4]);
+
+        // Characterization, not intent: with 8 values and 3 experts the chunk
+        // width is 2, so indices 6 and 7 are currently dropped.
+        let embedding: Vec<f32> = (0..8).map(|value| value as f32).collect();
+        assert_eq!(synthetic_gate_scores(3, &embedding), vec![1.0, 5.0, 9.0]);
+    }
+
+    #[test]
+    fn normalize_l2_scales_to_unit_norm_and_leaves_near_zero_untouched() {
+        let mut values = [3.0, 4.0];
+        normalize_l2(&mut values);
+        assert_close(&values, &[0.6, 0.8]);
+
+        let mut near_zero = [1e-9, 0.0];
+        normalize_l2(&mut near_zero);
+        assert_eq!(near_zero, [1e-9, 0.0]);
+    }
+
+    #[test]
+    fn resample_embedding_edge_cases() {
+        assert_eq!(resample_embedding(&[], 3), vec![0.0; 3]);
+        assert!(resample_embedding(&[1.0, 2.0], 0).is_empty());
+        assert_eq!(resample_embedding(&[1.0, 2.0, 6.0], 1), vec![3.0]);
+        assert_eq!(resample_embedding(&[1.0, 2.0], 2), vec![1.0, 2.0]);
+    }
 }

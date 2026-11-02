@@ -87,3 +87,77 @@ pub fn synapse_dequant_path_supported(ggml_type: u32) -> bool {
         // Internal block-format id only (not wire type 31 / Q4_0_4_4).
         || ggml_type == GGML_TYPE_IQ3_M_BLOCK
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The GGUF wire ids, the internal IQ3_M block id, and ids that must fall
+    /// through to "unknown" (4 and 5 are retired wire ids).
+    const LABELS: [(u32, &str); 34] = [
+        (0, "F32"),
+        (1, "F16"),
+        (2, "Q4_0"),
+        (3, "Q4_1"),
+        (6, "Q5_0"),
+        (7, "Q5_1"),
+        (8, "Q8_0"),
+        (9, "Q8_1"),
+        (10, "Q2_K"),
+        (11, "Q3_K"),
+        (12, "Q4_K"),
+        (13, "Q5_K"),
+        (14, "Q6_K"),
+        (15, "Q8_K"),
+        (16, "IQ2_XXS"),
+        (17, "IQ2_XS"),
+        (18, "IQ3_XXS"),
+        (19, "IQ1_S"),
+        (20, "IQ4_NL"),
+        (21, "IQ3_S"),
+        (22, "IQ2_S"),
+        (23, "IQ4_XS"),
+        (24, "I8"),
+        (25, "I16"),
+        (26, "I32"),
+        (27, "I64"),
+        (28, "F64"),
+        (29, "IQ1_M"),
+        (30, "BF16"),
+        (31, "Q4_0_4_4"),
+        (GGML_TYPE_IQ3_M_BLOCK, "IQ3_M_BLOCK"),
+        (4, "unknown"),
+        (5, "unknown"),
+        (9999, "unknown"),
+    ];
+
+    #[test]
+    fn ggml_type_label_table() {
+        for (id, expected) in LABELS {
+            assert_eq!(ggml_type_label(id), expected, "ggml_type={id}");
+        }
+    }
+
+    #[test]
+    fn synapse_dequant_path_supported_is_exactly_the_five_dequant_ids() {
+        for (id, _) in LABELS {
+            let expected = matches!(
+                id,
+                GGML_TYPE_F16
+                    | GGML_TYPE_Q8_0
+                    | GGML_TYPE_Q5_K
+                    | GGML_TYPE_Q6_K
+                    | GGML_TYPE_IQ3_M_BLOCK
+            );
+            assert_eq!(
+                synapse_dequant_path_supported(id),
+                expected,
+                "ggml_type={id}"
+            );
+        }
+
+        // Wire type 31 is Q4_0_4_4, not IQ3_M (Codex / GGUF enum).
+        assert_eq!(GGML_TYPE_Q4_0_4_4, 31);
+        assert!(!synapse_dequant_path_supported(31));
+    }
+}

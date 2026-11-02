@@ -4,9 +4,32 @@ use super::ggml::*;
 use super::safetensors::dtype_size_bytes;
 use super::*;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-pub(super) fn write_temp_file(bytes: &[u8], label: &str) -> PathBuf {
+/// Temp GGUF fixture removed on drop, so a failing assertion does not leak it.
+/// Declare it before anything that maps the file: locals drop in reverse order,
+/// and Windows refuses to delete a file that is still mapped.
+pub(super) struct TempGguf(PathBuf);
+
+impl std::ops::Deref for TempGguf {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempGguf {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+pub(super) fn write_temp_file(bytes: &[u8], label: &str) -> TempGguf {
+    TempGguf(write_temp_path(bytes, label))
+}
+
+pub(super) fn write_temp_path(bytes: &[u8], label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "corinth_canal_{label}_{}.gguf",
         std::time::SystemTime::now()
@@ -222,7 +245,7 @@ fn build_q5_k_payload(width: usize, n_rows: usize) -> Vec<u8> {
             out[blk_start + 3] = 0x00;
 
             // scales: 6 pairs of (sc, m) for 32-element chunks
-            // We want sc=1, m=0 for all chunks to get output = 1.0 * 1 - 0.0 = 1.0
+            // We want sc=1 for all chunks; dmin=0 makes m irrelevant, so output = 1.0 * 1 - 0.0 = 1.0
             // scale_min_k4 encoding: lower 6 bits for scale, upper 2 bits contribute to min
             for i in 0..12 {
                 out[blk_start + 4 + i] = 0x01;
@@ -376,8 +399,6 @@ fn test_dense_sim_uses_real_gate_weights() {
     assert_eq!(out.selected_experts[0], 0);
     assert_eq!(model.family(), ModelFamily::Olmoe);
     assert_eq!(model.routing_tensor_name(), "blk.0.ffn_gate_inp.weight");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -395,8 +416,6 @@ fn test_quantized_synapse_probe_uses_routing_f32_fallback() {
     );
     assert_eq!(metadata.real_gpu_synapse_tensor_name, None);
     assert_eq!(metadata.synapse_source, "routing-f32");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -437,8 +456,6 @@ fn test_quantized_attn_q_does_not_advertise_real_gpu_synapse_tensor() {
     );
     assert_eq!(metadata.real_gpu_synapse_tensor_name, None);
     assert_eq!(metadata.synapse_source, "routing-f32");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -462,8 +479,6 @@ fn test_preferred_synapse_descriptor_iq3s_uses_routing_f32_fallback() {
     assert!(!descriptor.has_dequant_path);
     assert_eq!(model.real_gpu_synapse_tensor_name(), None);
     assert_eq!(model.synapse_source(), "routing-f32");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -487,8 +502,6 @@ fn test_preferred_synapse_descriptor_f16_has_dequant_path() {
         Some("blk.0.attn_q.weight")
     );
     assert_eq!(model.synapse_source(), "real");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -516,8 +529,6 @@ fn test_preferred_synapse_descriptor_q8_0_has_dequant_path() {
         Some("blk.0.attn_q.weight")
     );
     assert_eq!(model.synapse_source(), "dequantized-q8_0");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -532,8 +543,6 @@ fn test_q8_0_synapse_probe_uses_dequantized_source() {
     );
     assert_eq!(metadata.real_gpu_synapse_tensor_name, None);
     assert_eq!(metadata.synapse_source, "dequantized-q8_0");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -548,8 +557,6 @@ fn test_synapse_tensor_row_major_shape_reports_q8_0_dims() {
         .synapse_tensor_row_major_shape("blk.0.attn_q.weight")
         .expect("Q8_0 synapse tensor shape must be readable");
     assert_eq!(shape, (EMBEDDING_DIM, EMBEDDING_DIM));
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -588,8 +595,6 @@ fn test_synapse_tensor_row_major_shape_uses_one_row_for_rank_one_tensor() {
         .synapse_tensor_row_major_shape("rank1.tensor")
         .expect("rank-1 tensor shape must be readable");
     assert_eq!(shape, (1, 7));
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -628,8 +633,6 @@ fn test_synapse_tensor_row_major_shape_rejects_zero_dim_tensor() {
         .synapse_tensor_row_major_shape("zero-dim.tensor")
         .expect_err("zero-dim tensor must be rejected");
     assert!(matches!(err, HybridError::UnsupportedFormat(_)));
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -657,8 +660,6 @@ fn test_preferred_synapse_descriptor_q5_k_has_dequant_path() {
         Some("blk.0.attn_q.weight")
     );
     assert_eq!(model.synapse_source(), "dequantized-q5_k");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -673,8 +674,6 @@ fn test_q5_k_synapse_probe_uses_dequantized_source() {
     );
     assert_eq!(metadata.real_gpu_synapse_tensor_name, None);
     assert_eq!(metadata.synapse_source, "dequantized-q5_k");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -689,8 +688,6 @@ fn test_q6_k_synapse_probe_uses_dequantized_source() {
     );
     assert_eq!(metadata.real_gpu_synapse_tensor_name, None);
     assert_eq!(metadata.synapse_source, "dequantized-q6_k");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -708,41 +705,19 @@ fn test_q5_k_dequantize_full_tensor_succeeds() {
     // Verify we get the expected number of elements
     assert_eq!(weights.len(), EMBEDDING_DIM * EMBEDDING_DIM);
 
-    // Verify a few deterministic sample values from the synthetic
-    // checkpoint payload so this test catches dequantization bugs such as
-    // incorrect scale/min handling or nibble interpretation.
-    let expected_samples = [
-        (0usize, 1.0f32),
-        (1usize, 1.0f32),
-        (2usize, 1.0f32),
-        (3usize, 1.0f32),
-    ];
-    for (idx, expected) in expected_samples {
-        let actual = weights[idx];
-        assert!(
-            (actual - expected).abs() <= 1e-6,
-            "unexpected dequantized value at index {idx}: expected {expected}, got {actual}"
-        );
-    }
-    /*
-    Also keep the broad sanity check that every produced value is finite.
-    */
+    // Broad sanity check: every produced value is finite.
     for &v in &weights {
         assert!(v.is_finite(), "expected finite value, got {v}");
     }
 
-    // Verify deterministic values from the known payload:
-    // - The payload sets d=1.0, dmin=0.0, ql=0x11 (both nibbles = 1), qh=0x00.
-    // - scale_min_k4 indices 0-3 have sc=1, so ql_chunks 0-1 (elements 0-127)
-    //   produce d * 1 - 0 = 1.0.
-    // - scale_min_k4 indices 4-7 have sc=0, so ql_chunks 2-3 (elements 128-255)
-    //   produce 0.0 * 1 - 0 = 0.0.
+    // build_q5_k_payload sets d=1.0, dmin=0.0, every quant nibble to 1 and all
+    // 12 scale bytes to 0x01. scale_min_k4 then yields sc=1 for all 8 sub-blocks
+    // (m is 1 or 0, but dmin=0 cancels it), so every element is
+    // 1.0 * 1 * 1 - 0.0 = 1.0.
     assert_eq!(weights[0], 1.0_f32, "element 0 should be 1.0");
     assert_eq!(weights[127], 1.0_f32, "element 127 should be 1.0");
     assert_eq!(weights[128], 1.0_f32, "element 128 should be 1.0");
     assert_eq!(weights[255], 1.0_f32, "element 255 should be 1.0");
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -779,8 +754,6 @@ fn test_q6_k_dequantize_full_tensor_succeeds() {
         "element 255 should be -32.0, got {}",
         weights[255]
     );
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -790,33 +763,6 @@ fn test_synapse_tensor_row_major_shape_requires_checkpoint() {
         .synapse_tensor_row_major_shape("blk.0.attn_q.weight")
         .expect_err("stub router must not expose checkpoint-backed tensor shapes");
     assert!(matches!(err, HybridError::ModelLoad { .. }));
-}
-
-#[test]
-fn test_ggml_type_label_covers_lineup_quants() {
-    // Sanity: the labels we surface in synapse_diagnostic.json should
-    // never read "unknown" for the SAAQ 1.5 lineup's known quant types.
-    for &(ty, expected) in &[
-        (0u32, "F32"),
-        (1u32, "F16"),
-        (8u32, "Q8_0"),
-        (12u32, "Q4_K"),
-        (13u32, "Q5_K"),
-        (14u32, "Q6_K"),
-        (20u32, "IQ4_NL"),
-        (21u32, "IQ3_S"),
-    ] {
-        assert_eq!(ggml_type_label(ty), expected, "ggml_type={ty}");
-    }
-    assert_eq!(ggml_type_label(9999), "unknown");
-    assert!(synapse_dequant_path_supported(GGML_TYPE_F16));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q8_0));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q5_K));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q6_K));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_IQ3_M_BLOCK));
-    for &ty in &[0u32, 12, 20, 21] {
-        assert!(!synapse_dequant_path_supported(ty), "ggml_type={ty}");
-    }
 }
 
 #[test]
@@ -839,97 +785,6 @@ fn test_real_checkpoint_probe_via_env() {
     assert!(metadata.hidden_size > 0);
     assert!(metadata.num_experts > 0);
     assert!(!metadata.routing_tensor_name.is_empty());
-}
-
-#[test]
-fn test_ggml_type_label_covers_all_constants() {
-    // Exercise every named constant through ggml_type_label
-    let cases = [
-        (GGML_TYPE_F32, "F32"),
-        (GGML_TYPE_F16, "F16"),
-        (GGML_TYPE_Q8_0, "Q8_0"),
-        (GGML_TYPE_Q5_K, "Q5_K"),
-        (GGML_TYPE_Q6_K, "Q6_K"),
-        (GGML_TYPE_IQ3_S, "IQ3_S"),
-        (GGML_TYPE_IQ3_M_BLOCK, "IQ3_M_BLOCK"),
-    ];
-    for (ty, expected) in cases {
-        assert_eq!(ggml_type_label(ty), expected, "ggml_type={ty}");
-    }
-    // Unknown type
-    assert_eq!(ggml_type_label(9999), "unknown");
-}
-
-#[test]
-fn test_synapse_dequant_path_supported_exercises_all_named_types() {
-    assert!(synapse_dequant_path_supported(GGML_TYPE_F16));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q8_0));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q5_K));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q6_K));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_IQ3_M_BLOCK));
-    assert!(!synapse_dequant_path_supported(GGML_TYPE_F32));
-    assert!(!synapse_dequant_path_supported(GGML_TYPE_IQ3_S));
-}
-
-#[test]
-fn test_ggml_type_label_exercises_all_match_arms() {
-    // Exercise every branch in ggml_type_label for coverage
-    let all_cases = [
-        (0u32, "F32"),
-        (1, "F16"),
-        (2, "Q4_0"),
-        (3, "Q4_1"),
-        (6, "Q5_0"),
-        (7, "Q5_1"),
-        (8, "Q8_0"),
-        (9, "Q8_1"),
-        (10, "Q2_K"),
-        (11, "Q3_K"),
-        (12, "Q4_K"),
-        (13, "Q5_K"),
-        (14, "Q6_K"),
-        (15, "Q8_K"),
-        (16, "IQ2_XXS"),
-        (17, "IQ2_XS"),
-        (18, "IQ3_XXS"),
-        (19, "IQ1_S"),
-        (20, "IQ4_NL"),
-        (21, "IQ3_S"),
-        (22, "IQ2_S"),
-        (23, "IQ4_XS"),
-        (24, "I8"),
-        (25, "I16"),
-        (26, "I32"),
-        (27, "I64"),
-        (28, "F64"),
-        (29, "IQ1_M"),
-        (30, "BF16"),
-        (31, "Q4_0_4_4"),
-    ];
-    for (ty, expected) in all_cases {
-        assert_eq!(ggml_type_label(ty), expected, "ggml_type={ty}");
-    }
-    assert_eq!(ggml_type_label(9999), "unknown");
-}
-
-#[test]
-fn test_synapse_dequant_path_supported_comprehensive() {
-    // All supported types
-    assert!(synapse_dequant_path_supported(GGML_TYPE_F16));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q8_0));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q5_K));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_Q6_K));
-    assert!(synapse_dequant_path_supported(GGML_TYPE_IQ3_M_BLOCK));
-    // Unsupported types
-    assert!(!synapse_dequant_path_supported(GGML_TYPE_F32));
-    assert!(!synapse_dequant_path_supported(GGML_TYPE_IQ3_S));
-    assert!(!synapse_dequant_path_supported(2)); // Q4_0
-    assert!(!synapse_dequant_path_supported(15)); // Q8_K
-    // Wire type 31 is Q4_0_4_4, not IQ3_M (Codex / GGUF enum).
-    assert_eq!(ggml_type_label(GGML_TYPE_Q4_0_4_4), "Q4_0_4_4");
-    assert_eq!(ggml_type_label(31), "Q4_0_4_4");
-    assert!(!synapse_dequant_path_supported(31));
-    assert!(!synapse_dequant_path_supported(GGML_TYPE_Q4_0_4_4));
 }
 
 #[test]
@@ -1145,18 +1000,6 @@ fn test_int4_odd_length_handling() {
 
     assert_eq!(out.len(), 1, "should only produce 1 element for odd-length");
     assert_eq!(out[0], 2.0);
-}
-
-#[test]
-fn test_ggml_type_label_iq3_m() {
-    assert_eq!(ggml_type_label(GGML_TYPE_IQ3_M_BLOCK), "IQ3_M_BLOCK");
-}
-
-#[test]
-fn test_synapse_dequant_path_supported_iq3_m() {
-    assert!(synapse_dequant_path_supported(GGML_TYPE_IQ3_M_BLOCK));
-    assert!(!synapse_dequant_path_supported(GGML_TYPE_IQ3_S));
-    assert!(!synapse_dequant_path_supported(9999));
 }
 
 #[test]
@@ -1529,7 +1372,6 @@ fn test_router_crate_private_dequant_helpers_reachable() {
     assert!(model.routing_f32_synapse_tensor_name().is_none());
     assert!(model.routing_f32_synapse_weights("nope").is_err());
     let _ = model.dequantized_q8_0_synapse_weights("blk.0.attn_q.weight");
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1629,7 +1471,6 @@ fn test_adapter_resolve_tok_embeddings_fallback() {
         super::adapter::SynapseSource::RoutingF32
     );
     assert!(adapter.dequant_iq3_m_synapse_tensor.is_none());
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1672,7 +1513,6 @@ fn test_adapter_resolve_tok_embeddings_unsupported_type() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("tok_embeddings.weight")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1713,7 +1553,6 @@ fn test_adapter_resolve_token_embedding_invalid_rank() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("token_embd.weight")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1754,7 +1593,6 @@ fn test_adapter_resolve_token_embedding_mismatched_width() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("token_embd.weight")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1795,7 +1633,6 @@ fn test_adapter_resolve_token_embedding_zero_vocab() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("token_embd.weight")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1841,7 +1678,6 @@ fn test_adapter_resolve_token_embedding_q8_0_misaligned_width() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("token_embd.weight")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1885,7 +1721,6 @@ fn test_adapter_does_not_treat_wire_type_31_as_iq3_m() {
         adapter.synapse_source,
         super::adapter::SynapseSource::RoutingF32
     );
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1920,7 +1755,6 @@ fn test_adapter_resolve_token_embedding_missing() {
         result,
         Err(HybridError::MissingTensor { name, .. }) if name == "token_embd.weight"
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1954,7 +1788,6 @@ fn test_adapter_resolve_routing_missing() {
         result,
         Err(HybridError::MissingTensor { name, .. }) if name == "ffn_gate_inp.weight"
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -1995,7 +1828,6 @@ fn test_adapter_resolve_routing_wrong_type() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("must be rank-2 F32")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -2036,7 +1868,6 @@ fn test_adapter_resolve_routing_insufficient_experts() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("only exposes 1 experts")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -2078,7 +1909,6 @@ fn test_adapter_resolve_routing_invalid_orientation() {
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains("unsupported orientation")
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -2125,7 +1955,6 @@ fn test_adapter_resolve_quantized_synapse_rank_not_two() {
         adapter.routing_f32_synapse_tensor.as_deref(),
         Some("blk.0.ffn_gate_inp.weight")
     );
-    let _ = std::fs::remove_file(&path);
 }
 
 fn build_standard_adapter_gguf() -> Vec<u8> {
@@ -2167,7 +1996,6 @@ fn assert_topology_key_required(key: &str, fixture_name: &str, expected_fragment
         result,
         Err(HybridError::UnsupportedFormat(msg)) if msg.contains(expected_fragment)
     ));
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

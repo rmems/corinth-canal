@@ -754,5 +754,5 @@ mod tests;
 #[cfg(all(test, feature = "cuda"))]
 pub(crate) fn write_test_q8_0_olmoe_checkpoint(label: &str) -> std::path::PathBuf {
     let gate_payload = vec![0u8; EMBEDDING_DIM * 64 * std::mem::size_of::<f32>()];
-    tests::write_temp_file(&tests::build_q8_0_synapse_checkpoint(gate_payload), label)
+    tests::write_temp_path(&tests::build_q8_0_synapse_checkpoint(gate_payload), label)
 }
