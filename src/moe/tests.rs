@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-use super::checkpoint::{dequantize_row_iq3_m, tensor_row_size};
+use super::checkpoint::{
+    dequantize_row_iq3_m, dequantize_row_q5_k, dequantize_row_q6_k, tensor_row_size,
+};
 use super::safetensors::dtype_size_bytes;
 use super::*;
 use std::io::Write;
@@ -249,7 +251,7 @@ fn build_q6_k_payload(width: usize, n_rows: usize) -> Vec<u8> {
         "Q6_K width must be divisible by 256"
     );
     let blocks_per_row = width / 256;
-    // Q6_K block: d(2) + scales(16) + ql(128) + qh(64) = 210 bytes
+    // ggml block_q6_K: ql(128) + qh(64) + scales(16) + d(2) = 210 bytes.
     let row_bytes = blocks_per_row * 210;
     let mut out = vec![0u8; row_bytes * n_rows];
 
@@ -258,27 +260,18 @@ fn build_q6_k_payload(width: usize, n_rows: usize) -> Vec<u8> {
         for blk in 0..blocks_per_row {
             let blk_start = row_start + blk * 210;
 
-            // d = 1.0 (f16 bits = 0x3c00)
-            out[blk_start] = 0x00;
-            out[blk_start + 1] = 0x3c;
+            // ql[0..128] and qh[128..192] stay 0x00, so every quant combines
+            // to 0 and decodes as 0 - 32 = -32.
 
-            // scales: 16 bytes, all set to 1
+            // scales[192..208]: all set to 1.
             for i in 0..16 {
-                out[blk_start + 2 + i] = 0x01;
+                out[blk_start + 192 + i] = 0x01;
             }
 
-            // ql: each byte packs two 4-bit quant values.
-            // 0x00 sets both nibbles to 0.
-            for i in 0..128 {
-                out[blk_start + 18 + i] = 0x00;
-            }
-
-            // qh: high 2 bits for each quant value (all zeros).
-            // With ql=0x00 and qh=0x00, combined = 0, value = 0 - 32 = -32.
-            // Output = d * scale * value = 1.0 * 1 * (-32) = -32.0 for every element.
-            for i in 0..64 {
-                out[blk_start + 146 + i] = 0x00;
-            }
+            // d = 1.0 (f16 bits = 0x3c00) at the end of the block.
+            // Output = d * scale * value = 1.0 * 1 * (-32) = -32.0 everywhere.
+            out[blk_start + 208] = 0x00;
+            out[blk_start + 209] = 0x3c;
         }
     }
     out
@@ -780,6 +773,54 @@ fn test_q6_k_dequantize_full_tensor_succeeds() {
     );
 
     let _ = std::fs::remove_file(path);
+}
+
+/// Golden fixtures decoded by gguf-py (llama.cpp's reference package), not by
+/// this crate, so a layout mistake in `dequant.rs` cannot also hide in the
+/// expected values. Regenerate with `tests/fixtures/dequant/generate_golden.py`.
+/// The uniform payload builders above cannot catch ordering or field-offset
+/// bugs because every element decodes to the same value.
+fn golden_f32(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect()
+}
+
+fn assert_bit_exact(label: &str, actual: &[f32], expected: &[f32]) {
+    assert_eq!(actual.len(), expected.len(), "{label}: length mismatch");
+    let mismatches: Vec<usize> = (0..expected.len())
+        .filter(|&i| actual[i].to_bits() != expected[i].to_bits())
+        .collect();
+    assert!(
+        mismatches.is_empty(),
+        "{label}: {} of {} values differ from gguf-py; first at index {} (got {}, expected {})",
+        mismatches.len(),
+        expected.len(),
+        mismatches[0],
+        actual[mismatches[0]],
+        expected[mismatches[0]],
+    );
+}
+
+#[test]
+fn test_q6_k_dequant_matches_gguf_py_golden() {
+    let blocks = include_bytes!("../../tests/fixtures/dequant/q6_k.blocks.bin");
+    let expected = golden_f32(include_bytes!(
+        "../../tests/fixtures/dequant/q6_k.expected.f32"
+    ));
+    let actual = dequantize_row_q6_k(blocks, expected.len()).expect("Q6_K golden row decodes");
+    assert_bit_exact("Q6_K", &actual, &expected);
+}
+
+#[test]
+fn test_q5_k_dequant_matches_gguf_py_golden() {
+    let blocks = include_bytes!("../../tests/fixtures/dequant/q5_k.blocks.bin");
+    let expected = golden_f32(include_bytes!(
+        "../../tests/fixtures/dequant/q5_k.expected.f32"
+    ));
+    let actual = dequantize_row_q5_k(blocks, expected.len()).expect("Q5_K golden row decodes");
+    assert_bit_exact("Q5_K", &actual, &expected);
 }
 
 #[test]
