@@ -105,14 +105,9 @@ pub fn write_safetensors_manifest(
     let output_path = output_path.as_ref();
     let manifest = inspect_safetensors_checkpoint(checkpoint_path)?;
     reject_output_checkpoint_conflict(checkpoint_path, output_path, &manifest)?;
-    let json = serde_json::to_string_pretty(&manifest).map_err(|e| HybridError::ModelLoad {
-        path: output_path.display().to_string(),
-        reason: format!("serialize Safetensors manifest: {e}"),
-    })?;
-    fs::write(output_path, json).map_err(|e| HybridError::ModelLoad {
-        path: output_path.display().to_string(),
-        reason: e.to_string(),
-    })?;
+    let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| model_load(output_path, format!("serialize Safetensors manifest: {e}")))?;
+    fs::write(output_path, json).map_err(|e| model_load(output_path, e.to_string()))?;
     Ok(manifest)
 }
 

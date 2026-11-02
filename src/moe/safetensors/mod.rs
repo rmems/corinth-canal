@@ -32,9 +32,10 @@ pub use manifest::{
     inspect_safetensors_checkpoint, write_safetensors_manifest,
 };
 pub use map::{MappedSafetensorsCheckpoint, SafetensorsMetadata, bf16_to_f32};
-// Only `moe/tests.rs` reaches this through the module path; `map.rs` imports it from `validate` directly.
+// Only `moe/tests.rs` needs this outside `validate`.
 #[cfg(test)]
 pub(crate) use validate::dtype_size_bytes;
+pub(crate) use validate::is_packed_int4;
 
 pub(super) fn relative_path(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)

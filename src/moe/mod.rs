@@ -31,6 +31,15 @@ use crate::error::{HybridError, Result};
 pub use crate::types::RoutingMode;
 use crate::types::{EMBEDDING_DIM, ModelFamily};
 
+/// Membrane threshold of the spiking routing simulation.
+const SPIKING_THRESHOLD: f32 = 0.75;
+/// Per-tick membrane decay of the spiking routing simulation.
+const SPIKING_DECAY: f32 = 0.91;
+/// Gain applied to a gate score when it drives an expert membrane.
+const GATE_DRIVE_GAIN: f32 = 0.18;
+/// Output magnitude of one hidden-layer spike.
+const HIDDEN_SPIKE_GAIN: f32 = 0.3;
+
 /// Diagnostic snapshot of the GGUF tensor that the adapter wants to use as
 /// the GPU synapse weight source for this router. Returned by
 /// [`Router::preferred_gpu_synapse_tensor_descriptor`]; only consumed
@@ -69,9 +78,6 @@ impl RouterMetadata {
     }
 
     fn from_adapter(adapter: &ModelAdapter) -> Self {
-        // Touch active dequant field map so none of the Option tensor names
-        // are dead storage (values still flow through the named accessors).
-        let _active = adapter.active_synapse_tensor_name();
         Self {
             family: adapter.family,
             architecture: adapter.architecture.clone(),
@@ -83,8 +89,15 @@ impl RouterMetadata {
             routing_tensor_name: adapter.routing_tensor.clone(),
             preferred_gpu_synapse_tensor_name: adapter.preferred_gpu_synapse_tensor.clone(),
             synapse_source: adapter.synapse_source_label().into(),
-            real_gpu_synapse_tensor_name: adapter.real_gpu_synapse_tensor.clone(),
+            real_gpu_synapse_tensor_name: adapter.real_gpu_synapse_tensor().map(str::to_owned),
         }
+    }
+}
+
+fn checkpoint_not_loaded(model_path: &str) -> HybridError {
+    HybridError::ModelLoad {
+        path: model_path.to_owned(),
+        reason: "checkpoint not loaded".into(),
     }
 }
 
@@ -174,8 +187,8 @@ impl Router {
                 routing_mode,
                 expert_membranes: vec![0.0; inferred_experts],
                 hidden_membranes: vec![0.0; EMBEDDING_DIM],
-                threshold: 0.75,
-                decay: 0.91,
+                threshold: SPIKING_THRESHOLD,
+                decay: SPIKING_DECAY,
                 checkpoint: None,
             });
         }
@@ -209,8 +222,8 @@ impl Router {
             routing_mode,
             expert_membranes: vec![0.0; effective_num_experts],
             hidden_membranes: vec![0.0; EMBEDDING_DIM],
-            threshold: 0.75,
-            decay: 0.91,
+            threshold: SPIKING_THRESHOLD,
+            decay: SPIKING_DECAY,
             checkpoint: Some(checkpoint),
         })
     }
@@ -239,17 +252,11 @@ impl Router {
         let adapter = self
             .adapter
             .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+            .ok_or_else(|| checkpoint_not_loaded(&self.model_path))?;
         let checkpoint = self
             .checkpoint
             .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+            .ok_or_else(|| checkpoint_not_loaded(&self.model_path))?;
         let embedding = match checkpoint {
             CheckpointBackend::Gguf(cp) => cp.extract_token_embedding(
                 &adapter.token_embedding_tensor,
@@ -270,10 +277,7 @@ impl Router {
         let checkpoint = self
             .checkpoint
             .as_mut()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+            .ok_or_else(|| checkpoint_not_loaded(&self.model_path))?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => cp.registered_f16_tensor(tensor_name, &self.model_path),
             CheckpointBackend::Safetensors(_) => Err(HybridError::UnsupportedFormat(
@@ -282,28 +286,34 @@ impl Router {
         }
     }
 
+    #[cfg(any(feature = "cuda", test))]
+    fn backend(&self) -> Result<&CheckpointBackend> {
+        self.checkpoint
+            .as_ref()
+            .ok_or_else(|| checkpoint_not_loaded(&self.model_path))
+    }
+
+    /// The active synapse tensor, if the adapter selected `source`.
+    fn synapse_tensor_name_for(&self, source: SynapseSource) -> Option<&str> {
+        self.adapter.as_ref().and_then(|a| {
+            (a.synapse_source == source)
+                .then(|| a.active_synapse_tensor_name())
+                .flatten()
+        })
+    }
+
     /// Returns the tensor name to use for Q8_0 dequantized synapse loading,
     /// or `None` if the checkpoint does not have a compatible Q8_0 synapse
     /// tensor (e.g. the adapter chose F16 or synthetic fallback instead).
     pub fn dequantized_q8_0_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter.as_ref().and_then(|a| {
-            (a.synapse_source == SynapseSource::DequantizedQ8_0)
-                .then(|| a.active_synapse_tensor_name())
-                .flatten()
-        })
+        self.synapse_tensor_name_for(SynapseSource::DequantizedQ8_0)
     }
 
     /// Dequantize the named Q8_0 tensor to a flat `Vec<f32>` that can be
     /// passed to [`GpuAccelerator::load_synapse_weights_named`].
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_q8_0_synapse_weights(&self, tensor_name: &str) -> Result<Vec<f32>> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => cp.dequantize_q8_0_tensor(tensor_name, &self.model_path),
             CheckpointBackend::Safetensors(_) => Err(HybridError::UnsupportedFormat(
@@ -316,24 +326,14 @@ impl Router {
     /// or `None` if the checkpoint does not have a compatible Q5_K synapse
     /// tensor (e.g. the adapter chose F16, Q8_0, or synthetic fallback instead).
     pub fn dequantized_q5_k_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter.as_ref().and_then(|a| {
-            (a.synapse_source == SynapseSource::DequantizedQ5K)
-                .then(|| a.active_synapse_tensor_name())
-                .flatten()
-        })
+        self.synapse_tensor_name_for(SynapseSource::DequantizedQ5K)
     }
 
     /// Dequantize the named Q5_K tensor to a flat `Vec<f32>` that can be
     /// passed to [`GpuAccelerator::load_synapse_weights_named`].
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_q5_k_synapse_weights(&self, tensor_name: &str) -> Result<Vec<f32>> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => cp.dequantize_q5_k_tensor(tensor_name, &self.model_path),
             CheckpointBackend::Safetensors(_) => Err(HybridError::UnsupportedFormat(
@@ -344,22 +344,12 @@ impl Router {
 
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_q6_k_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter.as_ref().and_then(|a| {
-            (a.synapse_source == SynapseSource::DequantizedQ6K)
-                .then(|| a.active_synapse_tensor_name())
-                .flatten()
-        })
+        self.synapse_tensor_name_for(SynapseSource::DequantizedQ6K)
     }
 
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_q6_k_synapse_weights(&self, tensor_name: &str) -> Result<Vec<f32>> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => cp.dequantize_q6_k_tensor(tensor_name, &self.model_path),
             CheckpointBackend::Safetensors(_) => Err(HybridError::UnsupportedFormat(
@@ -371,23 +361,13 @@ impl Router {
     /// Tensor name for IQ3_M dequantized synapse loading, if the adapter selected that path.
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_iq3_m_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter.as_ref().and_then(|a| {
-            (a.synapse_source == SynapseSource::DequantizedIQ3M)
-                .then(|| a.active_synapse_tensor_name())
-                .flatten()
-        })
+        self.synapse_tensor_name_for(SynapseSource::DequantizedIQ3M)
     }
 
     /// Dequantize the named IQ3_M tensor to a flat `Vec<f32>` for GPU synapse load.
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_iq3_m_synapse_weights(&self, tensor_name: &str) -> Result<Vec<f32>> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => {
                 cp.dequantize_iq3_m_tensor(tensor_name, &self.model_path)
@@ -401,23 +381,13 @@ impl Router {
     /// Tensor name for Int4 dequantized Safetensors routing/synapse, if selected.
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_int4_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter.as_ref().and_then(|a| {
-            (a.synapse_source == SynapseSource::DequantizedInt4)
-                .then(|| a.active_synapse_tensor_name())
-                .flatten()
-        })
+        self.synapse_tensor_name_for(SynapseSource::DequantizedInt4)
     }
 
     /// Unpack INT4/I4/U4 Safetensors routing/synapse weights to f32 for GPU load.
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn dequantized_int4_synapse_weights(&self, tensor_name: &str) -> Result<Vec<f32>> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Safetensors(cp) => {
                 cp.extract_tensor_f32(tensor_name, &self.model_path)
@@ -430,22 +400,12 @@ impl Router {
 
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn routing_f32_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter.as_ref().and_then(|a| {
-            (a.synapse_source == SynapseSource::RoutingF32)
-                .then(|| a.active_synapse_tensor_name())
-                .flatten()
-        })
+        self.synapse_tensor_name_for(SynapseSource::RoutingF32)
     }
 
     #[cfg(any(feature = "cuda", test))]
     pub(crate) fn routing_f32_synapse_weights(&self, tensor_name: &str) -> Result<Vec<f32>> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => {
                 Ok(cp.f32_tensor(tensor_name, &self.model_path)?.to_vec())
@@ -467,13 +427,7 @@ impl Router {
         &self,
         tensor_name: &str,
     ) -> Result<(usize, usize)> {
-        let checkpoint = self
-            .checkpoint
-            .as_ref()
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: self.model_path.clone(),
-                reason: "checkpoint not loaded".into(),
-            })?;
+        let checkpoint = self.backend()?;
         match checkpoint {
             CheckpointBackend::Gguf(cp) => {
                 let info = cp.tensor_info(tensor_name, &self.model_path)?;
@@ -563,8 +517,8 @@ impl Router {
         let mut expert_spikes = vec![0.0f32; n];
 
         for expert_id in 0..n {
-            self.expert_membranes[expert_id] =
-                self.expert_membranes[expert_id] * self.decay + gate_scores[expert_id] * 0.18;
+            self.expert_membranes[expert_id] = self.expert_membranes[expert_id] * self.decay
+                + gate_scores[expert_id] * GATE_DRIVE_GAIN;
 
             let spike = if self.expert_membranes[expert_id] > self.threshold {
                 self.expert_membranes[expert_id] -= self.threshold;
@@ -600,7 +554,7 @@ impl Router {
             } else {
                 0.0
             };
-            *value = spike * 0.3;
+            *value = spike * HIDDEN_SPIKE_GAIN;
         }
 
         Ok(RouterOutput {
@@ -694,9 +648,7 @@ impl Router {
     }
 
     pub fn real_gpu_synapse_tensor_name(&self) -> Option<&str> {
-        self.adapter
-            .as_ref()
-            .and_then(|adapter| adapter.real_gpu_synapse_tensor.as_deref())
+        self.metadata.real_gpu_synapse_tensor_name.as_deref()
     }
 
     pub fn synapse_source(&self) -> &str {

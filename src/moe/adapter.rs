@@ -6,7 +6,7 @@ use super::ggml::{
     GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
     GGML_TYPE_Q8_0,
 };
-use super::safetensors::{MappedSafetensorsCheckpoint, SafetensorsMetadata};
+use super::safetensors::{MappedSafetensorsCheckpoint, SafetensorsMetadata, is_packed_int4};
 use crate::error::{HybridError, Result};
 use crate::types::ModelFamily;
 use std::path::Path;
@@ -34,13 +34,8 @@ pub(super) struct ModelAdapter {
     pub(super) token_embedding_tensor: String,
     pub(super) routing_tensor: String,
     pub(super) preferred_gpu_synapse_tensor: Option<String>,
-    pub(super) real_gpu_synapse_tensor: Option<String>,
-    pub(super) dequant_q8_0_synapse_tensor: Option<String>,
-    pub(super) dequant_q5_k_synapse_tensor: Option<String>,
-    pub(super) dequant_q6_k_synapse_tensor: Option<String>,
-    pub(super) dequant_iq3_m_synapse_tensor: Option<String>,
-    pub(super) routing_f32_synapse_tensor: Option<String>,
-    pub(super) dequant_int4_synapse_tensor: Option<String>,
+    /// The tensor `synapse_source` refers to; `None` only for `SyntheticFallback`.
+    pub(super) synapse_tensor: Option<String>,
     pub(super) synapse_source: SynapseSource,
     pub(super) quantization: String,
 }
@@ -64,19 +59,16 @@ impl ModelAdapter {
         }
     }
 
-    /// Tensor name selected for the active synapse source (reads every dequant
-    /// field arm so none are dead storage).
+    /// Tensor name selected for the active synapse source.
     pub(super) fn active_synapse_tensor_name(&self) -> Option<&str> {
-        match self.synapse_source {
-            SynapseSource::Real => self.real_gpu_synapse_tensor.as_deref(),
-            SynapseSource::DequantizedQ8_0 => self.dequant_q8_0_synapse_tensor.as_deref(),
-            SynapseSource::DequantizedQ5K => self.dequant_q5_k_synapse_tensor.as_deref(),
-            SynapseSource::DequantizedQ6K => self.dequant_q6_k_synapse_tensor.as_deref(),
-            SynapseSource::DequantizedIQ3M => self.dequant_iq3_m_synapse_tensor.as_deref(),
-            SynapseSource::RoutingF32 => self.routing_f32_synapse_tensor.as_deref(),
-            SynapseSource::DequantizedInt4 => self.dequant_int4_synapse_tensor.as_deref(),
-            SynapseSource::SyntheticFallback => self.preferred_gpu_synapse_tensor.as_deref(),
-        }
+        self.synapse_tensor.as_deref()
+    }
+
+    /// The active synapse tensor when it is a direct-load F16 (`Real`) tensor.
+    pub(super) fn real_gpu_synapse_tensor(&self) -> Option<&str> {
+        (self.synapse_source == SynapseSource::Real)
+            .then(|| self.active_synapse_tensor_name())
+            .flatten()
     }
 }
 
@@ -249,13 +241,7 @@ pub(super) fn resolve_adapter(
         routing_tensor,
         preferred_gpu_synapse_tensor,
         synapse_source: selection.synapse_source,
-        real_gpu_synapse_tensor: selection.real_gpu_synapse_tensor,
-        dequant_q8_0_synapse_tensor: selection.dequant_q8_0_synapse_tensor,
-        dequant_q5_k_synapse_tensor: selection.dequant_q5_k_synapse_tensor,
-        dequant_q6_k_synapse_tensor: selection.dequant_q6_k_synapse_tensor,
-        dequant_iq3_m_synapse_tensor: selection.dequant_iq3_m_synapse_tensor,
-        routing_f32_synapse_tensor: selection.routing_f32_synapse_tensor,
-        dequant_int4_synapse_tensor: None,
+        synapse_tensor: Some(selection.synapse_tensor),
         quantization: metadata.quantization().to_owned(),
     })
 }
@@ -409,29 +395,10 @@ fn resolve_safetensors_token_embedding(
 
 /// Priority-ordered GGUF synapse source selection.
 ///
-/// First matching candidate wins; all lower-priority Option fields stay `None`.
+/// First matching candidate wins.
 struct SynapseSelection {
     synapse_source: SynapseSource,
-    real_gpu_synapse_tensor: Option<String>,
-    dequant_q8_0_synapse_tensor: Option<String>,
-    dequant_q5_k_synapse_tensor: Option<String>,
-    dequant_q6_k_synapse_tensor: Option<String>,
-    dequant_iq3_m_synapse_tensor: Option<String>,
-    routing_f32_synapse_tensor: Option<String>,
-}
-
-impl Default for SynapseSelection {
-    fn default() -> Self {
-        Self {
-            synapse_source: SynapseSource::RoutingF32,
-            real_gpu_synapse_tensor: None,
-            dequant_q8_0_synapse_tensor: None,
-            dequant_q5_k_synapse_tensor: None,
-            dequant_q6_k_synapse_tensor: None,
-            dequant_iq3_m_synapse_tensor: None,
-            routing_f32_synapse_tensor: None,
-        }
-    }
+    synapse_tensor: String,
 }
 
 fn select_real_synapse(
@@ -442,8 +409,7 @@ fn select_real_synapse(
     (info.ggml_type == GGML_TYPE_F16 && info.dims == [hidden_size, hidden_size]).then(|| {
         SynapseSelection {
             synapse_source: SynapseSource::Real,
-            real_gpu_synapse_tensor: Some(name.to_owned()),
-            ..Default::default()
+            synapse_tensor: name.to_owned(),
         }
     })
 }
@@ -456,26 +422,22 @@ fn select_quantized_synapse(name: &str, info: &GgufTensorInfo) -> Option<Synapse
     match info.ggml_type {
         GGML_TYPE_Q8_0 if d0.is_multiple_of(32) => Some(SynapseSelection {
             synapse_source: SynapseSource::DequantizedQ8_0,
-            dequant_q8_0_synapse_tensor: Some(name.to_owned()),
-            ..Default::default()
+            synapse_tensor: name.to_owned(),
         }),
         GGML_TYPE_Q5_K if d0.is_multiple_of(256) => Some(SynapseSelection {
             synapse_source: SynapseSource::DequantizedQ5K,
-            dequant_q5_k_synapse_tensor: Some(name.to_owned()),
-            ..Default::default()
+            synapse_tensor: name.to_owned(),
         }),
         GGML_TYPE_Q6_K if d0.is_multiple_of(256) => Some(SynapseSelection {
             synapse_source: SynapseSource::DequantizedQ6K,
-            dequant_q6_k_synapse_tensor: Some(name.to_owned()),
-            ..Default::default()
+            synapse_tensor: name.to_owned(),
         }),
         // IQ3_M *block* dequant is only for the internal GGML_TYPE_IQ3_M_BLOCK id
         // (synthetic fixtures). Wire type 31 is Q4_0_4_4 in the GGUF enum — never
         // select it here (Codex). HF “IQ3_M” GGUFs are mixed-type presets.
         GGML_TYPE_IQ3_M_BLOCK if d0.is_multiple_of(256) => Some(SynapseSelection {
             synapse_source: SynapseSource::DequantizedIQ3M,
-            dequant_iq3_m_synapse_tensor: Some(name.to_owned()),
-            ..Default::default()
+            synapse_tensor: name.to_owned(),
         }),
         _ => None,
     }
@@ -506,8 +468,7 @@ fn select_gguf_synapse(
     // RoutingF32 fallback: reached when no preferred tensor is present or none matched a dequant path.
     SynapseSelection {
         synapse_source: SynapseSource::RoutingF32,
-        routing_f32_synapse_tensor: Some(routing_tensor.to_owned()),
-        ..Default::default()
+        synapse_tensor: routing_tensor.to_owned(),
     }
 }
 
@@ -553,15 +514,10 @@ pub(super) fn resolve_safetensors_adapter(
     // remain synthetic fallback because the GPU synapse loader only
     // supports GGUF-registered tensors today.
     let preferred_gpu_synapse_tensor = Some(routing_tensor.clone());
-    let real_gpu_synapse_tensor = None;
-    let dequant_int4_synapse_tensor = preferred_gpu_synapse_tensor.as_ref().and_then(|name| {
-        let info = checkpoint.tensor_info(name)?;
-        matches!(info.0, "INT4" | "I4" | "U4").then(|| name.clone())
-    });
-    let synapse_source = if dequant_int4_synapse_tensor.is_some() {
-        SynapseSource::DequantizedInt4
+    let (synapse_source, synapse_tensor) = if is_packed_int4(routing_info.0) {
+        (SynapseSource::DequantizedInt4, Some(routing_tensor.clone()))
     } else {
-        SynapseSource::SyntheticFallback
+        (SynapseSource::SyntheticFallback, None)
     };
 
     Ok(ModelAdapter {
@@ -575,13 +531,7 @@ pub(super) fn resolve_safetensors_adapter(
         routing_tensor,
         preferred_gpu_synapse_tensor,
         synapse_source,
-        real_gpu_synapse_tensor,
-        dequant_q8_0_synapse_tensor: None,
-        dequant_q5_k_synapse_tensor: None,
-        dequant_q6_k_synapse_tensor: None,
-        dequant_iq3_m_synapse_tensor: None,
-        routing_f32_synapse_tensor: None,
-        dequant_int4_synapse_tensor,
+        synapse_tensor,
         quantization: "safetensors".into(),
     })
 }

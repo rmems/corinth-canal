@@ -86,7 +86,7 @@ pub(super) fn expected_tensor_byte_size(
 
     // Int4 is a packed format: 2 elements per byte.
     // `div_ceil(2)` cannot overflow a `usize` element count.
-    if dtype == "INT4" || dtype == "I4" || dtype == "U4" {
+    if is_packed_int4(dtype) {
         return Ok(elements.div_ceil(2));
     }
 
@@ -99,6 +99,11 @@ pub(super) fn expected_tensor_byte_size(
     elements
         .checked_mul(element_size)
         .ok_or_else(|| model_load(path, format!("tensor '{tensor_name}' byte size overflow")))
+}
+
+/// Packed Int4 dtypes: two 4-bit elements per byte.
+pub(crate) fn is_packed_int4(dtype: &str) -> bool {
+    matches!(dtype, "INT4" | "I4" | "U4")
 }
 
 pub(crate) fn dtype_size_bytes(dtype: &str) -> Option<usize> {

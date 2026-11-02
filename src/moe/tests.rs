@@ -810,13 +810,7 @@ fn test_synapse_source_label_new_variants() {
         token_embedding_tensor: "test".into(),
         routing_tensor: "test".into(),
         preferred_gpu_synapse_tensor: None,
-        real_gpu_synapse_tensor: None,
-        dequant_q8_0_synapse_tensor: None,
-        dequant_q5_k_synapse_tensor: None,
-        dequant_q6_k_synapse_tensor: None,
-        dequant_iq3_m_synapse_tensor: Some("blk.0.attn_q.weight".into()),
-        routing_f32_synapse_tensor: None,
-        dequant_int4_synapse_tensor: None,
+        synapse_tensor: Some("blk.0.attn_q.weight".into()),
         synapse_source: SynapseSource::DequantizedIQ3M,
         quantization: "IQ3_M".into(),
     };
@@ -824,8 +818,7 @@ fn test_synapse_source_label_new_variants() {
 
     let mut adapter2 = adapter.clone();
     adapter2.synapse_source = SynapseSource::DequantizedInt4;
-    adapter2.dequant_iq3_m_synapse_tensor = None;
-    adapter2.dequant_int4_synapse_tensor = Some("model.layers.0.mlp.gate.weight".into());
+    adapter2.synapse_tensor = Some("model.layers.0.mlp.gate.weight".into());
     adapter2.quantization = "INT4".into();
     assert_eq!(adapter2.synapse_source_label(), "dequantized-int4");
 }
@@ -1299,10 +1292,9 @@ fn test_adapter_resolve_iq3_m_block_gguf() {
         super::adapter::SynapseSource::DequantizedIQ3M
     );
     assert_eq!(
-        adapter.dequant_iq3_m_synapse_tensor.as_deref(),
+        adapter.synapse_tensor.as_deref(),
         Some("blk.0.attn_q.weight")
     );
-    assert!(adapter.routing_f32_synapse_tensor.is_none());
 }
 
 #[test]
@@ -1350,7 +1342,6 @@ fn test_adapter_resolve_tok_embeddings_fallback() {
         adapter.synapse_source,
         super::adapter::SynapseSource::RoutingF32
     );
-    assert!(adapter.dequant_iq3_m_synapse_tensor.is_none());
 }
 
 #[test]
@@ -1604,7 +1595,6 @@ fn test_adapter_does_not_treat_wire_type_31_as_iq3_m() {
         adapter.synapse_source,
         super::adapter::SynapseSource::DequantizedIQ3M
     );
-    assert!(adapter.dequant_iq3_m_synapse_tensor.is_none());
     assert_eq!(
         adapter.synapse_source,
         super::adapter::SynapseSource::RoutingF32
@@ -1840,7 +1830,7 @@ fn test_adapter_resolve_quantized_synapse_rank_not_two() {
         super::adapter::SynapseSource::RoutingF32
     );
     assert_eq!(
-        adapter.routing_f32_synapse_tensor.as_deref(),
+        adapter.synapse_tensor.as_deref(),
         Some("blk.0.ffn_gate_inp.weight")
     );
 }
@@ -1930,13 +1920,7 @@ fn test_synapse_source_label_synthetic_fallback() {
         token_embedding_tensor: "token_embd.weight".to_owned(),
         routing_tensor: "blk.0.ffn_gate_inp.weight".to_owned(),
         preferred_gpu_synapse_tensor: None,
-        real_gpu_synapse_tensor: None,
-        dequant_q8_0_synapse_tensor: None,
-        dequant_q5_k_synapse_tensor: None,
-        dequant_q6_k_synapse_tensor: None,
-        dequant_iq3_m_synapse_tensor: None,
-        routing_f32_synapse_tensor: None,
-        dequant_int4_synapse_tensor: None,
+        synapse_tensor: None,
         synapse_source: super::adapter::SynapseSource::SyntheticFallback,
         quantization: "Q8_0".to_owned(),
     };

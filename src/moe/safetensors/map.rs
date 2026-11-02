@@ -7,7 +7,7 @@ use super::json::parse_json_rejecting_duplicate_keys;
 use super::manifest::{MAX_HEADER_BYTES, find_index_file, list_safetensors_files, read_index};
 use super::model_load;
 use super::paths::index_shard_path;
-use super::validate::{dtype_size_bytes, expected_tensor_byte_size};
+use super::validate::{expected_tensor_byte_size, is_packed_int4};
 use crate::error::{HybridError, Result};
 use memmap2::Mmap;
 use serde_json::Value;
@@ -152,10 +152,7 @@ impl MappedSafetensorsCheckpoint {
     pub fn from_directory(path: &str) -> Result<Self> {
         let root = Path::new(path);
         if !root.is_dir() {
-            return Err(HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: "path is not a directory".into(),
-            });
+            return Err(model_load(root, "path is not a directory".into()));
         }
 
         let config = Self::read_config(root)?;
@@ -166,10 +163,7 @@ impl MappedSafetensorsCheckpoint {
         } else {
             let shards = list_safetensors_files(root)?;
             if shards.is_empty() {
-                return Err(HybridError::ModelLoad {
-                    path: path.to_owned(),
-                    reason: "no .safetensors files found".into(),
-                });
+                return Err(model_load(root, "no .safetensors files found".into()));
             }
             build_unsharded_shard_map(&shards)?
         };
@@ -363,68 +357,7 @@ impl MappedSafetensorsCheckpoint {
         let data_end = 8 + shard.header_len as usize + loc.data_offsets[1];
         let bytes = &shard.mmap[data_start..data_end];
 
-        match loc.dtype.as_str() {
-            "F32" => {
-                if !bytes.len().is_multiple_of(4) {
-                    return Err(HybridError::UnsupportedFormat(format!(
-                        "tensor '{name}' F32 data is not 4-byte aligned"
-                    )));
-                }
-                Ok(bytes
-                    .chunks_exact(4)
-                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                    .collect())
-            }
-            "F16" => {
-                if !bytes.len().is_multiple_of(2) {
-                    return Err(HybridError::UnsupportedFormat(format!(
-                        "tensor '{name}' F16 data is not 2-byte aligned"
-                    )));
-                }
-                Ok(bytes
-                    .chunks_exact(2)
-                    .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
-                    .collect())
-            }
-            "BF16" => {
-                if !bytes.len().is_multiple_of(2) {
-                    return Err(HybridError::UnsupportedFormat(format!(
-                        "tensor '{name}' BF16 data is not 2-byte aligned"
-                    )));
-                }
-                Ok(bytes
-                    .chunks_exact(2)
-                    .map(|b| bf16_to_f32(u16::from_le_bytes([b[0], b[1]])))
-                    .collect())
-            }
-            "INT4" | "I4" | "U4" => {
-                // Int4: packed format, 2 elements per byte.
-                // Compute exact expected element count from shape.
-                let expected_elements = loc.shape.iter().product::<usize>();
-                let mut out = Vec::with_capacity(expected_elements);
-                let is_signed = loc.dtype == "I4";
-                for &byte in bytes {
-                    let low = byte & 0x0F;
-                    let high = byte >> 4;
-                    if is_signed {
-                        // Sign-extend 4-bit to 8-bit, then convert to f32
-                        out.push(((low as i8) << 4 >> 4) as f32);
-                        if out.len() < expected_elements {
-                            out.push(((high as i8) << 4 >> 4) as f32);
-                        }
-                    } else {
-                        out.push(low as f32);
-                        if out.len() < expected_elements {
-                            out.push(high as f32);
-                        }
-                    }
-                }
-                Ok(out)
-            }
-            other => Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' has unsupported Safetensors dtype '{other}'"
-            ))),
-        }
+        decode_f32(&loc.dtype, bytes, loc.shape.iter().product(), name)
     }
 
     /// Extract a single row (token embedding) as `Vec<f32>`.
@@ -455,57 +388,14 @@ impl MappedSafetensorsCheckpoint {
                 got: token_id,
             });
         }
-        let row_elements = d1;
-        let row_bytes = if loc.dtype == "INT4" || loc.dtype == "I4" || loc.dtype == "U4" {
-            // Int4: packed format, 2 elements per byte
-            row_elements.div_ceil(2)
-        } else {
-            let element_size = dtype_size_bytes(&loc.dtype).unwrap_or(2);
-            row_elements * element_size
-        };
+        let row_bytes = expected_tensor_byte_size(&loc.dtype, &[d1], Path::new(path), name)?;
         let shard = &self.shards[loc.shard_idx];
         let data_start = 8 + shard.header_len as usize + loc.data_offsets[0];
         let row_start = data_start + token_id * row_bytes;
         let row_end = row_start + row_bytes;
         let bytes = &shard.mmap[row_start..row_end];
 
-        match loc.dtype.as_str() {
-            "F32" => Ok(bytes
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect()),
-            "F16" => Ok(bytes
-                .chunks_exact(2)
-                .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
-                .collect()),
-            "BF16" => Ok(bytes
-                .chunks_exact(2)
-                .map(|b| bf16_to_f32(u16::from_le_bytes([b[0], b[1]])))
-                .collect()),
-            "INT4" | "I4" | "U4" => {
-                let mut out = Vec::with_capacity(row_elements);
-                let is_signed = loc.dtype == "I4";
-                for &byte in bytes {
-                    let low = byte & 0x0F;
-                    let high = byte >> 4;
-                    if is_signed {
-                        out.push(((low as i8) << 4 >> 4) as f32);
-                        if out.len() < row_elements {
-                            out.push(((high as i8) << 4 >> 4) as f32);
-                        }
-                    } else {
-                        out.push(low as f32);
-                        if out.len() < row_elements {
-                            out.push(high as f32);
-                        }
-                    }
-                }
-                Ok(out)
-            }
-            other => Err(HybridError::UnsupportedFormat(format!(
-                "token embedding tensor '{name}' has unsupported dtype '{other}'"
-            ))),
-        }
+        decode_f32(&loc.dtype, bytes, d1, name)
     }
 
     pub fn tensor_info(&self, name: &str) -> Option<(&str, &[usize])> {
@@ -519,6 +409,73 @@ impl MappedSafetensorsCheckpoint {
         let bytes = fs::read(&config_path).map_err(|e| model_load(&config_path, e.to_string()))?;
         serde_json::from_slice(&bytes)
             .map_err(|e| model_load(&config_path, format!("parse config.json: {e}")))
+    }
+}
+
+/// Decode little-endian tensor bytes to `f32`.
+///
+/// `element_count` bounds the packed Int4 output; a final odd high nibble is
+/// padding and is dropped.
+fn decode_f32(dtype: &str, bytes: &[u8], element_count: usize, name: &str) -> Result<Vec<f32>> {
+    match dtype {
+        "F32" => {
+            if !bytes.len().is_multiple_of(4) {
+                return Err(HybridError::UnsupportedFormat(format!(
+                    "tensor '{name}' F32 data is not 4-byte aligned"
+                )));
+            }
+            Ok(bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect())
+        }
+        "F16" => {
+            if !bytes.len().is_multiple_of(2) {
+                return Err(HybridError::UnsupportedFormat(format!(
+                    "tensor '{name}' F16 data is not 2-byte aligned"
+                )));
+            }
+            Ok(bytes
+                .chunks_exact(2)
+                .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
+                .collect())
+        }
+        "BF16" => {
+            if !bytes.len().is_multiple_of(2) {
+                return Err(HybridError::UnsupportedFormat(format!(
+                    "tensor '{name}' BF16 data is not 2-byte aligned"
+                )));
+            }
+            Ok(bytes
+                .chunks_exact(2)
+                .map(|b| bf16_to_f32(u16::from_le_bytes([b[0], b[1]])))
+                .collect())
+        }
+        packed if is_packed_int4(packed) => {
+            // Int4: packed format, 2 elements per byte.
+            let mut out = Vec::with_capacity(element_count);
+            let is_signed = packed == "I4";
+            for &byte in bytes {
+                let low = byte & 0x0F;
+                let high = byte >> 4;
+                if is_signed {
+                    // Sign-extend 4-bit to 8-bit, then convert to f32
+                    out.push(((low as i8) << 4 >> 4) as f32);
+                    if out.len() < element_count {
+                        out.push(((high as i8) << 4 >> 4) as f32);
+                    }
+                } else {
+                    out.push(low as f32);
+                    if out.len() < element_count {
+                        out.push(high as f32);
+                    }
+                }
+            }
+            Ok(out)
+        }
+        other => Err(HybridError::UnsupportedFormat(format!(
+            "tensor '{name}' has unsupported Safetensors dtype '{other}'"
+        ))),
     }
 }
 
