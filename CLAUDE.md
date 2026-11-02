@@ -34,6 +34,7 @@ cargo test --no-default-features --test examples_support_embedding  # #[path] in
 cargo test --no-default-features --test examples_support_synapse_diag  # #[path] into examples/support/synapse_diag.rs
 cargo test --no-default-features --test examples_support_observability  # #[path] into examples/support/observability.rs
 cargo test --no-default-features --test examples_support_spikenaut  # #[path] into examples/support/spikenaut/mod.rs + telemetry_csv.rs
+cargo test --no-default-features --test real_checkpoint_optin -- --ignored  # needs CHECKPOINT_PATH and OLMOE_SAFETENSORS_DIR
 cargo test --test gpu_sentry_telemetry            # default features; whole file is #[cfg(feature = "cuda")]
 ```
 

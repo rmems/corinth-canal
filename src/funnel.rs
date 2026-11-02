@@ -243,6 +243,8 @@ impl TelemetryFunnel {
         }
     }
 
+    /// Clears GIF membrane and adaptation state only; the encoder baseline is
+    /// kept, so the next encode still compares against it.
     pub fn reset(&mut self) {
         self.hidden.reset();
     }
@@ -338,5 +340,43 @@ mod tests {
         assert_eq!(activity.input_spike_train.len(), 20);
         assert_eq!(activity.potentials.len(), FUNNEL_HIDDEN_NEURONS);
         assert_eq!(activity.iz_potentials.len(), GIF_IZ_NEURONS);
+    }
+
+    #[test]
+    fn hidden_layer_reset_clears_state_and_restores_fresh_behaviour() {
+        let bridge = SignedSplitBankBridge::new();
+        let input = bridge.expand([1, 1, 1, 1], 20);
+        let mut hidden = SparseGifHiddenLayer::new();
+        let _ = hidden.run(&input);
+        assert!(hidden.state_activity());
+
+        hidden.reset();
+
+        assert!(!hidden.state_activity());
+        assert!(hidden.membrane.iter().all(|value| *value == 0.0));
+        assert!(hidden.adaptation.iter().all(|value| *value == 0.0));
+        assert_eq!(hidden.run(&input), SparseGifHiddenLayer::new().run(&input));
+    }
+
+    #[test]
+    fn telemetry_funnel_reset_keeps_encoder_baseline() {
+        let mut funnel = TelemetryFunnel::new([1.0, 5.0, 1.0, 5.0], 20);
+        assert!(!funnel.hidden_state_active());
+        let _ = funnel.encode_snapshot(&snapshot(60.0, 260.0, 77.0, 153.0));
+        let _ = funnel.encode_snapshot(&snapshot(61.0, 266.0, 78.0, 160.0));
+        assert!(funnel.hidden_state_active());
+
+        funnel.reset();
+        assert!(!funnel.hidden_state_active());
+
+        // A wiped baseline would re-seed here and report [0, 0, 0, 0].
+        let activity = funnel.encode_snapshot(&snapshot(62.0, 272.0, 79.0, 166.0));
+        assert_eq!(activity.ternary_events, [1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn active_neuron_indices_returns_nonzero_positions() {
+        assert_eq!(active_neuron_indices(&[0i8, 1, 0, -1]), vec![1, 3]);
+        assert_eq!(active_neuron_indices(&[0.0f32, 2.5]), vec![1]);
     }
 }

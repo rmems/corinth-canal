@@ -68,19 +68,33 @@ fn push_kv_string(out: &mut Vec<u8>, key: &str, value: &str) {
     push_string(out, value);
 }
 
+const OLMOE_NUMERICS: [(&str, u32); 4] = [
+    ("olmoe.embedding_length", EMBEDDING_DIM as u32),
+    ("olmoe.block_count", 16),
+    ("olmoe.expert_count", 64),
+    ("olmoe.expert_used_count", 8),
+];
+
 fn build_test_gguf(tensors: Vec<(&str, Vec<usize>, u32, Vec<u8>)>, alignment: u32) -> Vec<u8> {
+    build_test_gguf_with_numerics(tensors, alignment, &OLMOE_NUMERICS)
+}
+
+fn build_test_gguf_with_numerics(
+    tensors: Vec<(&str, Vec<usize>, u32, Vec<u8>)>,
+    alignment: u32,
+    numerics: &[(&str, u32)],
+) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&GGUF_MAGIC);
     push_u32(&mut out, GGUF_VERSION);
     push_u64(&mut out, tensors.len() as u64);
-    push_u64(&mut out, 7);
+    push_u64(&mut out, 3 + numerics.len() as u64);
     push_kv_u32(&mut out, "general.alignment", alignment);
     push_kv_u32(&mut out, "general.file_type", 1);
     push_kv_string(&mut out, "general.architecture", "olmoe");
-    push_kv_u32(&mut out, "olmoe.embedding_length", EMBEDDING_DIM as u32);
-    push_kv_u32(&mut out, "olmoe.block_count", 16);
-    push_kv_u32(&mut out, "olmoe.expert_count", 64);
-    push_kv_u32(&mut out, "olmoe.expert_used_count", 8);
+    for &(key, value) in numerics {
+        push_kv_u32(&mut out, key, value);
+    }
 
     let mut data_offset = 0usize;
     let mut tensor_payloads = Vec::new();
@@ -776,58 +790,6 @@ fn test_spiking_sim_state_can_reset() {
 }
 
 #[test]
-fn test_real_checkpoint_probe_via_env() {
-    let Some(path) = std::env::var("CHECKPOINT_PATH").ok() else {
-        return;
-    };
-
-    let metadata = Router::probe_model(&path, None).unwrap();
-    assert!(!metadata.architecture.is_empty());
-    assert!(metadata.hidden_size > 0);
-    assert!(metadata.num_experts > 0);
-    assert!(!metadata.routing_tensor_name.is_empty());
-}
-
-#[test]
-fn test_safetensors_olmoe_load_and_route() {
-    let path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
-        .join(".models/safetensors/allenai/OLMoE-1B-7B-0125-Instruct");
-    if !path.is_dir() {
-        return;
-    }
-    let path_str = path.to_str().unwrap();
-
-    let metadata = Router::probe_model(path_str, None).unwrap();
-    assert_eq!(metadata.family, ModelFamily::Olmoe);
-    assert_eq!(metadata.hidden_size, 2048);
-    assert_eq!(metadata.num_experts, 64);
-    assert_eq!(metadata.expert_used_count, 8);
-    assert_eq!(metadata.architecture, "OlmoeForCausalLM");
-    assert_eq!(metadata.quantization, "safetensors");
-
-    let mut model = Router::load_with_mode(path_str, 0, 0, RoutingMode::DenseSim).unwrap();
-    assert!(model.is_loaded());
-    assert_eq!(model.family(), ModelFamily::Olmoe);
-    assert_eq!(model.hidden_size(), 2048);
-    assert_eq!(model.checkpoint_num_experts(), 64);
-    assert_eq!(model.checkpoint_expert_used_count(), 8);
-    assert_eq!(
-        model.routing_tensor_name(),
-        "model.layers.0.mlp.gate.weight"
-    );
-
-    // Forward pass with a dummy embedding
-    let embedding = vec![0.0f32; EMBEDDING_DIM];
-    let out = model.forward(&embedding).unwrap();
-    assert_eq!(out.expert_weights.len(), 64);
-    assert_eq!(out.selected_experts.len(), 8);
-
-    // Token embedding extraction
-    let token_emb = model.extract_token_embedding(0).unwrap();
-    assert_eq!(token_emb.len(), EMBEDDING_DIM);
-}
-
-#[test]
 fn test_iq3_m_dequantization_synthetic() {
     // Build a minimal IQ3_M block for width=256
     // Block layout: d(2) + hmask(32) + qs(64) + scales(12) + scales_h(1) = 111 bytes
@@ -1102,6 +1064,105 @@ fn test_safetensors_synapse_shape_uses_hf_row_major() {
 }
 
 #[test]
+fn test_safetensors_forward_routes_through_gate_tensor() {
+    let gate = "model.layers.0.mlp.gate.weight";
+    let rows = 8usize;
+    let cols = 16usize;
+    // Expert 3 is the only positive row. The winner must not be index 0, which a
+    // tied or all-zero gate could also select.
+    let mut payload = Vec::new();
+    for row in 0..rows {
+        let value: f32 = if row == 3 { 8.0 } else { -8.0 };
+        for _ in 0..cols {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    let gate_len = payload.len();
+    let embed_len = 32 * cols * 4;
+    payload.resize(gate_len + embed_len, 0);
+
+    let header = serde_json::json!({
+        gate: {
+            "dtype": "F32",
+            "shape": [rows, cols],
+            "data_offsets": [0, gate_len]
+        },
+        "model.embed_tokens.weight": {
+            "dtype": "F32",
+            "shape": [32, cols],
+            "data_offsets": [gate_len, gate_len + embed_len]
+        },
+        "__metadata__": {}
+    });
+    let tmp_dir = temp_dir("st_forward");
+    write_safetensors_bytes(&tmp_dir.join("model.safetensors"), &header, &payload);
+    let config = serde_json::json!({
+        "architectures": ["OlmoeForCausalLM"],
+        "hidden_size": cols,
+        "num_hidden_layers": 2,
+        "num_experts": rows,
+        "num_experts_per_tok": 2,
+        "vocab_size": 32
+    });
+    write_hf_config(&tmp_dir, &config);
+
+    let mut model =
+        Router::load_with_mode(tmp_dir.to_str().unwrap(), 0, 0, RoutingMode::DenseSim).unwrap();
+    // A zero embedding would tie every score.
+    let out = model.forward(&vec![1.0; EMBEDDING_DIM]).unwrap();
+
+    assert_eq!(out.selected_experts[0], 3);
+    assert_eq!(out.selected_experts.len(), 2);
+    assert_eq!(out.expert_weights.len(), 8);
+    assert!(out.expert_weights[3] > 0.5, "{:?}", out.expert_weights);
+    assert_eq!(
+        model.extract_token_embedding(0).unwrap().len(),
+        EMBEDDING_DIM
+    );
+}
+
+#[test]
+fn load_with_family_and_mode_applies_compatible_override_and_rejects_incompatible() {
+    let path = write_temp_file(
+        &build_quantized_synapse_checkpoint(vec![0u8; EMBEDDING_DIM * 64 * size_of::<f32>()]),
+        "family-override",
+    );
+    let path_str = path.to_str().unwrap();
+
+    let model = Router::load_with_family_and_mode(
+        path_str,
+        0,
+        0,
+        Some(ModelFamily::Olmoe),
+        RoutingMode::StubUniform,
+    )
+    .unwrap();
+    assert_eq!(model.family(), ModelFamily::Olmoe);
+    assert_eq!(model.model_path(), path_str);
+
+    assert!(
+        Router::load_with_family_and_mode(
+            path_str,
+            0,
+            0,
+            Some(ModelFamily::DeepSeek2),
+            RoutingMode::StubUniform,
+        )
+        .is_err()
+    );
+
+    let stub = Router::load_with_family_and_mode(
+        "",
+        4,
+        2,
+        Some(ModelFamily::DeepSeek2),
+        RoutingMode::StubUniform,
+    )
+    .unwrap();
+    assert_eq!(stub.family(), ModelFamily::DeepSeek2);
+}
+
+#[test]
 fn test_safetensors_i4_signed_tensor_extraction() {
     use super::safetensors::MappedSafetensorsCheckpoint;
 
@@ -1274,8 +1335,7 @@ fn test_adapter_resolve_iq3_m_block_gguf() {
     );
 
     let path = write_temp_file(&checkpoint, "iq3_m_adapter");
-    let (_metadata, mut mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
-    mapped.set_quantization_for_test("IQ3_M".into());
+    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     let adapter =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap())
@@ -1289,7 +1349,6 @@ fn test_adapter_resolve_iq3_m_block_gguf() {
         Some("blk.0.attn_q.weight")
     );
     assert!(adapter.routing_f32_synapse_tensor.is_none());
-    assert_eq!(adapter.quantization, "IQ3_M");
 }
 
 #[test]
@@ -1510,8 +1569,15 @@ fn test_adapter_resolve_token_embedding_q8_0_misaligned_width() {
     let attn_q_payload = vec![0u8; 16];
     let hidden_size = 2064usize;
     let vocab_size = 32usize;
+    let numerics = OLMOE_NUMERICS.map(|(key, value)| {
+        if key == "olmoe.embedding_length" {
+            (key, hidden_size as u32)
+        } else {
+            (key, value)
+        }
+    });
 
-    let checkpoint = build_test_gguf(
+    let checkpoint = build_test_gguf_with_numerics(
         vec![
             (
                 "blk.0.ffn_gate_inp.weight",
@@ -1533,11 +1599,11 @@ fn test_adapter_resolve_token_embedding_q8_0_misaligned_width() {
             ),
         ],
         32,
+        &numerics,
     );
 
     let path = write_temp_file(&checkpoint, "token-embedding-q8-misaligned");
-    let (_metadata, mut mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
-    mapped.set_numeric_for_test("olmoe.embedding_length", Some(hidden_size as u64));
+    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1824,8 +1890,8 @@ fn test_adapter_resolve_quantized_synapse_rank_not_two() {
     );
 }
 
-fn build_standard_adapter_gguf() -> Vec<u8> {
-    build_test_gguf(
+fn build_standard_adapter_gguf(numerics: &[(&str, u32)]) -> Vec<u8> {
+    build_test_gguf_with_numerics(
         vec![
             (
                 "blk.0.ffn_gate_inp.weight",
@@ -1847,14 +1913,19 @@ fn build_standard_adapter_gguf() -> Vec<u8> {
             ),
         ],
         32,
+        numerics,
     )
 }
 
 fn assert_topology_key_required(key: &str, fixture_name: &str, expected_fragment: &str) {
-    let checkpoint = build_standard_adapter_gguf();
+    let numerics: Vec<(&str, u32)> = OLMOE_NUMERICS
+        .into_iter()
+        .filter(|(name, _)| *name != key)
+        .collect();
+    assert_eq!(numerics.len(), OLMOE_NUMERICS.len() - 1, "key={key}");
+    let checkpoint = build_standard_adapter_gguf(&numerics);
     let path = write_temp_file(&checkpoint, fixture_name);
-    let (_metadata, mut mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
-    mapped.set_numeric_for_test(key, None);
+    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());

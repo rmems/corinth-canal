@@ -994,3 +994,22 @@ fn windows_same_file_detects_hardlinks_via_file_id() {
     );
     assert!(!super::paths::paths_refer_to_same_file(&original, &different).unwrap());
 }
+
+#[test]
+fn bf16_to_f32_matches_reference() {
+    for (bits, expected) in [
+        (0x0000, 0.0),
+        (0x3F80, 1.0),
+        (0xBF80, -1.0),
+        (0x4000, 2.0),
+        (0x7F80, f32::INFINITY),
+        (0x0080, f32::MIN_POSITIVE),
+    ] {
+        assert_eq!(bf16_to_f32(bits), expected, "bits={bits:#06x}");
+    }
+
+    let subnormal = bf16_to_f32(0x0001);
+    assert!(subnormal > 0.0);
+    assert!(subnormal.is_subnormal());
+    assert!(bf16_to_f32(0x7FC0).is_nan());
+}

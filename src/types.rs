@@ -436,7 +436,7 @@ impl CloudModelSpec {
 mod tests {
     use super::{
         CheckpointFormat, CloudModelSpec, ModelArchitectureClass, ModelFamily, ModelTarget,
-        ProjectionMode, RoutingMode, checkpoint_format_for_path,
+        ProjectionMode, RoutingMode, TelemetrySnapshot, checkpoint_format_for_path,
     };
 
     #[test]
@@ -977,6 +977,17 @@ mod tests {
                 "slug {:?} must round-trip for {family:?}",
                 family.slug()
             );
+        }
+    }
+
+    #[test]
+    fn thermal_stress_clamps_to_unit_interval() {
+        for (gpu_temp_c, expected) in [(59.0, 0.0), (75.0, 0.5), (95.0, 1.0)] {
+            let snapshot = TelemetrySnapshot {
+                gpu_temp_c,
+                ..Default::default()
+            };
+            assert_eq!(snapshot.thermal_stress(), expected, "{gpu_temp_c}");
         }
     }
 }

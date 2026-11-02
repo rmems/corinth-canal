@@ -151,16 +151,6 @@ impl MappedGgufCheckpoint {
         &self.metadata
     }
 
-    #[cfg(test)]
-    pub(in crate::moe) fn set_quantization_for_test(&mut self, quantization: String) {
-        self.metadata.set_quantization_for_test(quantization);
-    }
-
-    #[cfg(test)]
-    pub(in crate::moe) fn set_numeric_for_test(&mut self, key: &str, value: Option<u64>) {
-        self.metadata.set_numeric_for_test(key, value);
-    }
-
     pub(in crate::moe) fn has_tensor(&self, name: &str) -> bool {
         self.tensors.contains_key(name)
     }

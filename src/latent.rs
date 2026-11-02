@@ -605,6 +605,7 @@ mod tests {
     #[test]
     fn dual_calibrator_primary_rule_legacy_fills_legacy_columns() {
         let mut dual = SnnDualLatentCalibrator::new(SaaqUpdateRule::LegacyV1_0);
+        assert_eq!(dual.primary_rule(), SaaqUpdateRule::LegacyV1_0);
         let output = sample_output(vec![0.5, 0.3, 0.2]);
         let snap = TelemetrySnapshot {
             timestamp_ms: 2_000,

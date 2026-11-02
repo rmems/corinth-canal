@@ -56,19 +56,6 @@ impl GgufMetadata {
     pub(in crate::moe) fn numeric(&self, key: &str) -> Option<usize> {
         self.numerics.get(key).copied().map(|v| v as usize)
     }
-
-    #[cfg(test)]
-    pub(in crate::moe) fn set_quantization_for_test(&mut self, quantization: String) {
-        self.quantization = quantization;
-    }
-
-    #[cfg(test)]
-    pub(in crate::moe) fn set_numeric_for_test(&mut self, key: &str, value: Option<u64>) {
-        match value {
-            Some(v) => self.numerics.insert(key.to_owned(), v),
-            None => self.numerics.remove(key),
-        };
-    }
 }
 
 pub(in crate::moe) fn parse_checkpoint_layout(

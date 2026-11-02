@@ -694,4 +694,20 @@ mod tests {
         assert_eq!(feat, feature_dim_for(SNN_NEURONS));
         assert_eq!(emb, EMBEDDING_DIM);
     }
+
+    #[test]
+    fn load_bias_rejects_wrong_length_and_copies_values() {
+        let mut projector = Projector::with_input_neurons(ProjectionMode::RateSum, 8);
+
+        let short = vec![0.5; EMBEDDING_DIM - 1];
+        assert!(matches!(
+            projector.load_bias(&short),
+            Err(HybridError::InputLengthMismatch { expected: EMBEDDING_DIM, got })
+                if got == EMBEDDING_DIM - 1
+        ));
+
+        let bias = vec![0.5; EMBEDDING_DIM];
+        projector.load_bias(&bias).unwrap();
+        assert_eq!(projector.bias, bias);
+    }
 }
