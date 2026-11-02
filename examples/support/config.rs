@@ -172,6 +172,7 @@ impl RunConfig {
                 source_label: String::new(),
                 csv_path: None,
                 rows: None,
+                rows_skipped: None,
             };
             let _ = telemetry_snapshot_for_tick(0, &dummy);
             let _ = default_spiking_model_config("".into(), 0);

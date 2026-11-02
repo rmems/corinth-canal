@@ -27,6 +27,11 @@ pub struct ResolvedTelemetry {
     pub source_label: String,
     pub csv_path: Option<PathBuf>,
     pub rows: Option<Vec<corinth_canal::TelemetrySnapshot>>,
+    /// Data rows the CSV loader dropped as malformed or non-finite. `Some` when
+    /// the file was read and its header accepted, including when every row was
+    /// dropped and the run degraded to `synthetic_fallback`. `None` when no CSV
+    /// was parsed (synthetic source, unreadable file, or wrong header).
+    pub rows_skipped: Option<usize>,
 }
 
 impl ResolvedTelemetry {
@@ -53,6 +58,14 @@ pub const TELEMETRY_CSV_HEADER: &str =
 pub fn load_csv_telemetry_rows(
     path: &Path,
 ) -> Result<Vec<corinth_canal::TelemetrySnapshot>, Box<dyn std::error::Error>> {
+    load_csv_telemetry_rows_counted(path).map(|(rows, _skipped)| rows)
+}
+
+/// [`load_csv_telemetry_rows`] plus the number of data rows it dropped, so the
+/// count can reach `run_manifest.json` instead of ending at stderr.
+fn load_csv_telemetry_rows_counted(
+    path: &Path,
+) -> Result<(Vec<corinth_canal::TelemetrySnapshot>, usize), Box<dyn std::error::Error>> {
     let contents = std::fs::read_to_string(path).map_err(|error| {
         Error::other(format!(
             "telemetry CSV '{}' could not be read: {error}",
@@ -68,7 +81,7 @@ pub fn load_csv_telemetry_rows(
             path.display()
         );
     }
-    Ok(rows)
+    Ok((rows, skipped))
 }
 
 fn collect_telemetry_csv_rows<'a>(
@@ -156,18 +169,20 @@ pub fn resolve_telemetry_from(source: TelemetrySource, csv_path: PathBuf) -> Res
             source_label: "synthetic".to_string(),
             csv_path: None,
             rows: None,
+            rows_skipped: None,
         },
-        TelemetrySource::Csv => match load_csv_telemetry_rows(&csv_path) {
-            Ok(rows) if !rows.is_empty() => {
+        TelemetrySource::Csv => match load_csv_telemetry_rows_counted(&csv_path) {
+            Ok((rows, skipped)) if !rows.is_empty() => {
                 let label = csv_source_label(&csv_path);
                 ResolvedTelemetry {
                     source: TelemetrySource::Csv,
                     source_label: label,
                     csv_path: Some(csv_path),
                     rows: Some(rows),
+                    rows_skipped: Some(skipped),
                 }
             }
-            Ok(_) => {
+            Ok((_, skipped)) => {
                 eprintln!(
                     "resolve_telemetry_from: CSV '{}' is empty; falling back to synthetic",
                     csv_path.display()
@@ -177,6 +192,7 @@ pub fn resolve_telemetry_from(source: TelemetrySource, csv_path: PathBuf) -> Res
                     source_label: "synthetic_fallback".to_string(),
                     csv_path: Some(csv_path),
                     rows: None,
+                    rows_skipped: Some(skipped),
                 }
             }
             Err(error) => {
@@ -189,6 +205,7 @@ pub fn resolve_telemetry_from(source: TelemetrySource, csv_path: PathBuf) -> Res
                     source_label: "synthetic_fallback".to_string(),
                     csv_path: Some(csv_path),
                     rows: None,
+                    rows_skipped: None,
                 }
             }
         },
@@ -343,6 +360,7 @@ mod tests {
             source_label: "csv_re4".to_string(),
             csv_path: Some(PathBuf::from("/tmp/telemetry.csv")),
             rows: Some(rows),
+            rows_skipped: Some(0),
         };
 
         // tick=0 uses row[0], tick=3 wraps back to row[1] (3 % 2 == 1).
@@ -363,6 +381,7 @@ mod tests {
             source_label: "synthetic_fallback".to_string(),
             csv_path: Some(PathBuf::from("/nonexistent/telemetry.csv")),
             rows: None,
+            rows_skipped: None,
         };
         let snap = telemetry_snapshot_for_tick(5, &resolved);
         // Synthetic path writes its own timestamp, then we overwrite to tick+1.
@@ -380,6 +399,7 @@ mod tests {
         assert!(resolved.csv_path.is_none());
         assert!(resolved.rows.is_none());
         assert_eq!(resolved.row_count(), None);
+        assert_eq!(resolved.rows_skipped, None);
     }
 
     #[test]
@@ -391,7 +411,47 @@ mod tests {
         assert_eq!(resolved.source, TelemetrySource::Csv);
         assert!(resolved.rows.as_ref().is_some_and(|r| r.len() == 1));
         assert_eq!(resolved.row_count(), Some(1));
+        assert_eq!(resolved.rows_skipped, Some(0));
         assert_eq!(resolved.csv_path.as_ref(), Some(&path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn resolve_telemetry_from_csv_counts_dropped_rows() {
+        // Blank lines are padding, not missing samples, so they do not count.
+        let csv = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+                   1000,60.5,250.0,70.0,120.0\n\
+                   malformed,row\n\
+                   \n\
+                   2000,NaN,250.0,70.0,120.0\n\
+                   3000,61.0,252.5,70.5,121.5\n";
+        let path = write_temp_csv("resolve_dropped", csv);
+        let resolved = resolve_telemetry_from(TelemetrySource::Csv, path.clone());
+        assert_eq!(resolved.source, TelemetrySource::Csv);
+        assert_eq!(resolved.row_count(), Some(2));
+        assert_eq!(resolved.rows_skipped, Some(2));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn resolve_telemetry_from_csv_all_rows_dropped_keeps_count_on_fallback() {
+        let csv = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w\n\
+                   malformed,row\n\
+                   2000,NaN,250.0,70.0,120.0\n";
+        let path = write_temp_csv("resolve_all_dropped", csv);
+        let resolved = resolve_telemetry_from(TelemetrySource::Csv, path.clone());
+        assert_eq!(resolved.source_label, "synthetic_fallback");
+        assert_eq!(resolved.row_count(), None);
+        assert_eq!(resolved.rows_skipped, Some(2));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn resolve_telemetry_from_csv_bad_header_has_no_skip_count() {
+        let path = write_temp_csv("resolve_bad_header", "t,a,b,c,d\n1,2,3,4,5\n");
+        let resolved = resolve_telemetry_from(TelemetrySource::Csv, path.clone());
+        assert_eq!(resolved.source_label, "synthetic_fallback");
+        assert_eq!(resolved.rows_skipped, None);
         let _ = std::fs::remove_file(path);
     }
 
@@ -423,5 +483,6 @@ mod tests {
         assert_eq!(resolved.csv_path.as_ref(), Some(&path));
         assert!(resolved.rows.is_none());
         assert_eq!(resolved.row_count(), None);
+        assert_eq!(resolved.rows_skipped, None);
     }
 }
