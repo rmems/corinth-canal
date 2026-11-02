@@ -20,9 +20,7 @@ use self::adapter::{
     ModelAdapter, SYNTHETIC_FALLBACK_SOURCE, SynapseSource, resolve_adapter,
     resolve_safetensors_adapter,
 };
-use self::checkpoint::{
-    MappedGgufCheckpoint, extract_named_token_embedding_from_checkpoint, probe_and_map_checkpoint,
-};
+use self::checkpoint::{MappedGgufCheckpoint, probe_and_map_checkpoint};
 pub use self::ggml::{ggml_type_label, synapse_dequant_path_supported};
 use self::routing::{
     checkpoint_gate_scores, normalize_l2, normalize_to_internal_embedding_dim, resample_embedding,
@@ -247,14 +245,13 @@ impl Router {
             })?;
         let checkpoint = self
             .checkpoint
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| HybridError::ModelLoad {
                 path: self.model_path.clone(),
                 reason: "checkpoint not loaded".into(),
             })?;
         let embedding = match checkpoint {
-            CheckpointBackend::Gguf(cp) => extract_named_token_embedding_from_checkpoint(
-                cp,
+            CheckpointBackend::Gguf(cp) => cp.extract_token_embedding(
                 &adapter.token_embedding_tensor,
                 &self.model_path,
                 token_id,
@@ -536,7 +533,7 @@ impl Router {
             ));
         }
 
-        let (_raw_metadata, checkpoint) = probe_and_map_checkpoint(path)?;
+        let checkpoint = probe_and_map_checkpoint(path)?;
         let adapter = resolve_adapter(checkpoint.metadata(), &checkpoint, family_override, path)?;
         let metadata = RouterMetadata::from_adapter(&adapter);
         Ok((metadata, CheckpointBackend::Gguf(checkpoint), adapter))

@@ -3,7 +3,7 @@
 
 use super::super::ggml::{
     GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_IQ3_S, GGML_TYPE_Q5_K,
-    GGML_TYPE_Q6_K, GGML_TYPE_Q8_0,
+    GGML_TYPE_Q6_K, GGML_TYPE_Q8_0, ggml_type_label,
 };
 #[cfg(feature = "cuda")]
 use super::cuda_register::RegisteredTensorSliceU16;
@@ -43,23 +43,14 @@ impl Drop for MappedGgufCheckpoint {
     }
 }
 
-pub(in crate::moe) fn extract_named_token_embedding_from_checkpoint(
-    checkpoint: &mut MappedGgufCheckpoint,
-    tensor_name: &str,
-    path: &str,
-    token_id: usize,
-) -> Result<Vec<f32>> {
-    checkpoint.extract_token_embedding(tensor_name, path, token_id)
-}
-
 impl MappedGgufCheckpoint {
-    fn extract_token_embedding(
-        &mut self,
+    pub(in crate::moe) fn extract_token_embedding(
+        &self,
         tensor_name: &str,
         path: &str,
         token_id: usize,
     ) -> Result<Vec<f32>> {
-        let info = self.tensor_info(tensor_name, path)?.clone();
+        let info = self.tensor_info(tensor_name, path)?;
         if info.dims.is_empty() {
             return Err(HybridError::UnsupportedFormat(format!(
                 "tensor '{tensor_name}' has no dimensions"
@@ -80,7 +71,7 @@ impl MappedGgufCheckpoint {
                 Ok(weights[token_id * d0..token_id * d0 + d0].to_vec())
             }
             GGML_TYPE_F16 => {
-                let values = self.u16_tensor_values(&info, path, tensor_name)?;
+                let values = self.u16_tensor_values(info, path, tensor_name)?;
                 if token_id >= d1 {
                     return Err(HybridError::InputLengthMismatch {
                         expected: d1,
@@ -93,13 +84,13 @@ impl MappedGgufCheckpoint {
                     .collect())
             }
             GGML_TYPE_Q8_0 => {
-                dequantize_row_q8_0(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
+                dequantize_row_q8_0(self.row_bytes(info, token_id, path, tensor_name)?, d0)
             }
             GGML_TYPE_Q5_K => {
-                dequantize_row_q5_k(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
+                dequantize_row_q5_k(self.row_bytes(info, token_id, path, tensor_name)?, d0)
             }
             GGML_TYPE_Q6_K => {
-                dequantize_row_q6_k(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
+                dequantize_row_q6_k(self.row_bytes(info, token_id, path, tensor_name)?, d0)
             }
             GGML_TYPE_IQ3_S => Err(HybridError::UnsupportedFormat(format!(
                 "tensor '{tensor_name}' uses IQ3_S token embeddings; checkpoint-backed token embedding extraction is unsupported for this quantization"
@@ -111,9 +102,7 @@ impl MappedGgufCheckpoint {
     }
 }
 
-pub(in crate::moe) fn probe_and_map_checkpoint(
-    path: &str,
-) -> Result<(GgufMetadata, MappedGgufCheckpoint)> {
+pub(in crate::moe) fn probe_and_map_checkpoint(path: &str) -> Result<MappedGgufCheckpoint> {
     let file = OpenOptions::new()
         .read(true)
         .open(path)
@@ -134,16 +123,13 @@ pub(in crate::moe) fn probe_and_map_checkpoint(
 
     let parsed = parse_checkpoint_layout(&mmap, path)?;
 
-    Ok((
-        parsed.metadata.clone(),
-        MappedGgufCheckpoint {
-            mmap,
-            tensors: parsed.tensors,
-            #[cfg(feature = "cuda")]
-            registered_gpu_synapse: None,
-            metadata: parsed.metadata,
-        },
-    ))
+    Ok(MappedGgufCheckpoint {
+        mmap,
+        tensors: parsed.tensors,
+        #[cfg(feature = "cuda")]
+        registered_gpu_synapse: None,
+        metadata: parsed.metadata,
+    })
 }
 
 impl MappedGgufCheckpoint {
@@ -341,21 +327,20 @@ impl MappedGgufCheckpoint {
             .as_slice())
     }
 
-    /// Dequantize a full Q8_0 tensor to a flat `Vec<f32>`.
-    ///
-    /// Iterates over every row of the tensor and applies the Q8_0
-    /// block-scale dequantization, producing `dims[0] * dims[1]` output
-    /// elements laid out row-major. `dims[0]` must be divisible by 32.
-    #[allow(dead_code)]
-    pub(in crate::moe) fn dequantize_q8_0_tensor(
+    /// Decode every row of a tensor of `expected_type` into a flat row-major
+    /// `Vec<f32>`, shared by the `dequantize_*_tensor` methods below.
+    fn dequantize_tensor_rows(
         &self,
         name: &str,
         path: &str,
+        expected_type: u32,
+        decode_row: fn(&[u8], usize) -> Result<Vec<f32>>,
     ) -> Result<Vec<f32>> {
-        let info = self.tensor_info(name, path)?.clone();
-        if info.ggml_type != GGML_TYPE_Q8_0 {
+        let info = self.tensor_info(name, path)?;
+        if info.ggml_type != expected_type {
             return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' must be Q8_0, got ggml_type={}",
+                "tensor '{name}' must be {}, got ggml_type={}",
+                ggml_type_label(expected_type),
                 info.ggml_type
             )));
         }
@@ -370,15 +355,29 @@ impl MappedGgufCheckpoint {
             .checked_mul(n_rows)
             .ok_or_else(|| HybridError::ModelLoad {
                 path: path.to_owned(),
-                reason: format!("tensor '{name}' element count overflow ({width}×{n_rows})"),
+                reason: format!("tensor '{name}' element count overflow ({width}x{n_rows})"),
             })?;
         let mut out = Vec::with_capacity(capacity);
         for row in 0..n_rows {
-            let row_bytes = self.row_bytes(&info, row, path, name)?;
-            let dequantized = dequantize_row_q8_0(row_bytes, width)?;
-            out.extend_from_slice(&dequantized);
+            let row_bytes = self.row_bytes(info, row, path, name)?;
+            out.extend_from_slice(&decode_row(row_bytes, width)?);
         }
         Ok(out)
+    }
+
+    // Only the cfg(any(feature = "cuda", test)) Router::dequantized_*_synapse_weights call these.
+    /// Dequantize a full Q8_0 tensor to a flat `Vec<f32>`.
+    ///
+    /// Iterates over every row of the tensor and applies the Q8_0
+    /// block-scale dequantization, producing `dims[0] * dims[1]` output
+    /// elements laid out row-major. `dims[0]` must be divisible by 32.
+    #[cfg_attr(not(any(feature = "cuda", test)), allow(dead_code))]
+    pub(in crate::moe) fn dequantize_q8_0_tensor(
+        &self,
+        name: &str,
+        path: &str,
+    ) -> Result<Vec<f32>> {
+        self.dequantize_tensor_rows(name, path, GGML_TYPE_Q8_0, dequantize_row_q8_0)
     }
 
     /// Dequantize a full Q5_K tensor to a flat `Vec<f32>`.
@@ -386,74 +385,27 @@ impl MappedGgufCheckpoint {
     /// Iterates over every row of the tensor and applies the Q5_K
     /// block-scale dequantization, producing `dims[0] * dims[1]` output
     /// elements laid out row-major. `dims[0]` must be divisible by 256.
-    #[allow(dead_code)]
+    #[cfg_attr(not(any(feature = "cuda", test)), allow(dead_code))]
     pub(in crate::moe) fn dequantize_q5_k_tensor(
         &self,
         name: &str,
         path: &str,
     ) -> Result<Vec<f32>> {
-        let info = self.tensor_info(name, path)?.clone();
-        if info.ggml_type != GGML_TYPE_Q5_K {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' must be Q5_K, got ggml_type={}",
-                info.ggml_type
-            )));
-        }
-        if info.dims.is_empty() {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' has no dimensions"
-            )));
-        }
-        let width = info.dims[0];
-        let n_rows = info.dims.get(1).copied().unwrap_or(1);
-        let capacity = width
-            .checked_mul(n_rows)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{name}' element count overflow ({width}×{n_rows})"),
-            })?;
-        let mut out = Vec::with_capacity(capacity);
-        for row in 0..n_rows {
-            let row_bytes = self.row_bytes(&info, row, path, name)?;
-            let dequantized = dequantize_row_q5_k(row_bytes, width)?;
-            out.extend_from_slice(&dequantized);
-        }
-        Ok(out)
+        self.dequantize_tensor_rows(name, path, GGML_TYPE_Q5_K, dequantize_row_q5_k)
     }
 
-    #[allow(dead_code)]
+    /// Dequantize a full Q6_K tensor to a flat `Vec<f32>`.
+    ///
+    /// Iterates over every row of the tensor and applies the Q6_K
+    /// block-scale dequantization, producing `dims[0] * dims[1]` output
+    /// elements laid out row-major. `dims[0]` must be divisible by 256.
+    #[cfg_attr(not(any(feature = "cuda", test)), allow(dead_code))]
     pub(in crate::moe) fn dequantize_q6_k_tensor(
         &self,
         name: &str,
         path: &str,
     ) -> Result<Vec<f32>> {
-        let info = self.tensor_info(name, path)?.clone();
-        if info.ggml_type != GGML_TYPE_Q6_K {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' must be Q6_K, got ggml_type={}",
-                info.ggml_type
-            )));
-        }
-        if info.dims.is_empty() {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' has no dimensions"
-            )));
-        }
-        let width = info.dims[0];
-        let n_rows = info.dims.get(1).copied().unwrap_or(1);
-        let capacity = width
-            .checked_mul(n_rows)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{name}' element count overflow ({width}x{n_rows})"),
-            })?;
-        let mut out = Vec::with_capacity(capacity);
-        for row in 0..n_rows {
-            let row_bytes = self.row_bytes(&info, row, path, name)?;
-            let dequantized = dequantize_row_q6_k(row_bytes, width)?;
-            out.extend_from_slice(&dequantized);
-        }
-        Ok(out)
+        self.dequantize_tensor_rows(name, path, GGML_TYPE_Q6_K, dequantize_row_q6_k)
     }
 
     /// Dequantize a full IQ3_M tensor to a flat `Vec<f32>`.
@@ -461,39 +413,13 @@ impl MappedGgufCheckpoint {
     /// Iterates over every row of the tensor and applies the IQ3_M
     /// block-scale dequantization, producing `dims[0] * dims[1]` output
     /// elements laid out row-major. `dims[0]` must be divisible by 256.
-    #[allow(dead_code)]
+    #[cfg_attr(not(any(feature = "cuda", test)), allow(dead_code))]
     pub(in crate::moe) fn dequantize_iq3_m_tensor(
         &self,
         name: &str,
         path: &str,
     ) -> Result<Vec<f32>> {
-        let info = self.tensor_info(name, path)?.clone();
-        if info.ggml_type != GGML_TYPE_IQ3_M_BLOCK {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' must be IQ3_M block layout (internal type), got ggml_type={}",
-                info.ggml_type
-            )));
-        }
-        if info.dims.is_empty() {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' has no dimensions"
-            )));
-        }
-        let width = info.dims[0];
-        let n_rows = info.dims.get(1).copied().unwrap_or(1);
-        let capacity = width
-            .checked_mul(n_rows)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{name}' element count overflow ({width}x{n_rows})"),
-            })?;
-        let mut out = Vec::with_capacity(capacity);
-        for row in 0..n_rows {
-            let row_bytes = self.row_bytes(&info, row, path, name)?;
-            let dequantized = dequantize_row_iq3_m(row_bytes, width)?;
-            out.extend_from_slice(&dequantized);
-        }
-        Ok(out)
+        self.dequantize_tensor_rows(name, path, GGML_TYPE_IQ3_M_BLOCK, dequantize_row_iq3_m)
     }
 }
 

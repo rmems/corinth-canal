@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-use super::checkpoint::{dequantize_row_iq3_m, tensor_row_size};
 use super::ggml::*;
 use super::safetensors::dtype_size_bytes;
 use super::safetensors::test_support::{temp_dir, write_hf_config, write_safetensors_bytes};
@@ -790,46 +789,12 @@ fn test_spiking_sim_state_can_reset() {
 }
 
 #[test]
-fn test_iq3_m_dequantization_synthetic() {
-    // Build a minimal IQ3_M block for width=256
-    // Block layout: d(2) + hmask(32) + qs(64) + scales(12) + scales_h(1) = 111 bytes
-    let mut block = vec![0u8; 111];
-    // d = 1.0 (f16 = 0x3C00)
-    block[0] = 0x00;
-    block[1] = 0x3C;
-    // hmask: all zeros (no high bits)
-    // qs: set low 2 bits to 1 for all (value = 1)
-    for item in block.iter_mut().take(98).skip(34) {
-        *item = 0x55; // 01 01 01 01 pattern
-    }
-    // scales: all zeros (scale = 0)
-    // scales_h: 0
-
-    let row = block;
-    let dequantized = dequantize_row_iq3_m(&row, 256).unwrap();
-    assert_eq!(dequantized.len(), 256);
-    // With d=1.0, scale=0, all values should be 0 regardless of q
-    for &val in &dequantized {
-        assert_eq!(val, 0.0, "expected 0.0 with zero scales, got {val}");
-    }
-}
-
-#[test]
 fn test_dtype_size_bytes_rejects_packed_int4() {
     // dtype_size_bytes returns None for packed Int4 formats
     // (callers must handle packed semantics explicitly)
     assert_eq!(dtype_size_bytes("INT4"), None);
     assert_eq!(dtype_size_bytes("I4"), None);
     assert_eq!(dtype_size_bytes("U4"), None);
-}
-
-#[test]
-fn test_tensor_row_size_iq3_m() {
-    // IQ3_M block size: 111 bytes per 256 elements
-    assert_eq!(tensor_row_size(GGML_TYPE_IQ3_M_BLOCK, 256).unwrap(), 111);
-    assert_eq!(tensor_row_size(GGML_TYPE_IQ3_M_BLOCK, 512).unwrap(), 222);
-    // Width must be divisible by 256
-    assert!(tensor_row_size(GGML_TYPE_IQ3_M_BLOCK, 255).is_err());
 }
 
 #[test]
@@ -903,7 +868,7 @@ fn test_iq3_m_full_tensor_dequantization() {
     );
 
     let path = write_temp_file(&checkpoint, "iq3_m_full");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     // Test dequantize_iq3_m_tensor
     let result = mapped.dequantize_iq3_m_tensor("blk.0.attn_q.weight", path.to_str().unwrap());
@@ -945,21 +910,10 @@ fn test_iq3_m_tensor_error_paths() {
     );
 
     let path = write_temp_file(&checkpoint, "iq3_m_err");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     // Should fail because tensor is Q8_0, not IQ3_M
     let result = mapped.dequantize_iq3_m_tensor("blk.0.attn_q.weight", path.to_str().unwrap());
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_dequantize_row_iq3_m_error_paths() {
-    // Test width not divisible by 256
-    let result = dequantize_row_iq3_m(&[0u8; 111], 255);
-    assert!(result.is_err());
-
-    // Test row length mismatch
-    let result = dequantize_row_iq3_m(&[0u8; 110], 256);
     assert!(result.is_err());
 }
 
@@ -1335,7 +1289,7 @@ fn test_adapter_resolve_iq3_m_block_gguf() {
     );
 
     let path = write_temp_file(&checkpoint, "iq3_m_adapter");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     let adapter =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap())
@@ -1382,7 +1336,7 @@ fn test_adapter_resolve_tok_embeddings_fallback() {
     );
 
     let path = write_temp_file(&checkpoint, "tok-embeddings-fallback");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let adapter =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap())
             .unwrap();
@@ -1431,7 +1385,7 @@ fn test_adapter_resolve_tok_embeddings_unsupported_type() {
     );
 
     let path = write_temp_file(&checkpoint, "tok-embeddings-unsupported");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1471,7 +1425,7 @@ fn test_adapter_resolve_token_embedding_invalid_rank() {
     );
 
     let path = write_temp_file(&checkpoint, "token-embedding-invalid-rank");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1511,7 +1465,7 @@ fn test_adapter_resolve_token_embedding_mismatched_width() {
     );
 
     let path = write_temp_file(&checkpoint, "token-embedding-mismatched-width");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1551,7 +1505,7 @@ fn test_adapter_resolve_token_embedding_zero_vocab() {
     );
 
     let path = write_temp_file(&checkpoint, "token-embedding-zero-vocab");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1603,7 +1557,7 @@ fn test_adapter_resolve_token_embedding_q8_0_misaligned_width() {
     );
 
     let path = write_temp_file(&checkpoint, "token-embedding-q8-misaligned");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1642,9 +1596,10 @@ fn test_adapter_does_not_treat_wire_type_31_as_iq3_m() {
     );
 
     let path = write_temp_file(&checkpoint, "type31_not_iq3m");
-    let (metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let adapter =
-        super::adapter::resolve_adapter(&metadata, &mapped, None, path.to_str().unwrap()).unwrap();
+        super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap())
+            .unwrap();
     assert_ne!(
         adapter.synapse_source,
         super::adapter::SynapseSource::DequantizedIQ3M
@@ -1680,7 +1635,7 @@ fn test_adapter_resolve_token_embedding_missing() {
     );
 
     let path = write_temp_file(&checkpoint, "token-embedding-missing");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1713,7 +1668,7 @@ fn test_adapter_resolve_routing_missing() {
     );
 
     let path = write_temp_file(&checkpoint, "routing-missing");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1753,7 +1708,7 @@ fn test_adapter_resolve_routing_wrong_type() {
     );
 
     let path = write_temp_file(&checkpoint, "routing-wrong-type");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1793,7 +1748,7 @@ fn test_adapter_resolve_routing_insufficient_experts() {
     );
 
     let path = write_temp_file(&checkpoint, "routing-insufficient-experts");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1834,7 +1789,7 @@ fn test_adapter_resolve_routing_invalid_orientation() {
     );
 
     let path = write_temp_file(&checkpoint, "routing-invalid-orientation");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
 
@@ -1875,7 +1830,7 @@ fn test_adapter_resolve_quantized_synapse_rank_not_two() {
     );
 
     let path = write_temp_file(&checkpoint, "quantized-rank-not-two");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
     let adapter =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap())
             .unwrap();
@@ -1925,7 +1880,7 @@ fn assert_topology_key_required(key: &str, fixture_name: &str, expected_fragment
     assert_eq!(numerics.len(), OLMOE_NUMERICS.len() - 1, "key={key}");
     let checkpoint = build_standard_adapter_gguf(&numerics);
     let path = write_temp_file(&checkpoint, fixture_name);
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     let result =
         super::adapter::resolve_adapter(mapped.metadata(), &mapped, None, path.to_str().unwrap());
@@ -2022,7 +1977,7 @@ fn test_iq3_m_multi_row_dequantization() {
     );
 
     let path = write_temp_file(&checkpoint, "iq3_m_multi");
-    let (_metadata, mapped) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+    let mapped = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
 
     let result = mapped.dequantize_iq3_m_tensor("blk.0.attn_q.weight", path.to_str().unwrap());
     assert!(result.is_ok());

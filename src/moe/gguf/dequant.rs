@@ -384,4 +384,49 @@ mod tests {
             assert_eq!(*value, i as f32, "index {i}");
         }
     }
+
+    #[test]
+    fn test_iq3_m_dequantization_synthetic() {
+        // Build a minimal IQ3_M block for width=256
+        // Block layout: d(2) + hmask(32) + qs(64) + scales(12) + scales_h(1) = 111 bytes
+        let mut block = vec![0u8; 111];
+        // d = 1.0 (f16 = 0x3C00)
+        block[0] = 0x00;
+        block[1] = 0x3C;
+        // hmask: all zeros (no high bits)
+        // qs: set low 2 bits to 1 for all (value = 1)
+        for item in block.iter_mut().take(98).skip(34) {
+            *item = 0x55; // 01 01 01 01 pattern
+        }
+        // scales: all zeros (scale = 0)
+        // scales_h: 0
+
+        let row = block;
+        let dequantized = dequantize_row_iq3_m(&row, 256).unwrap();
+        assert_eq!(dequantized.len(), 256);
+        // With d=1.0, scale=0, all values should be 0 regardless of q
+        for &val in &dequantized {
+            assert_eq!(val, 0.0, "expected 0.0 with zero scales, got {val}");
+        }
+    }
+
+    #[test]
+    fn test_tensor_row_size_iq3_m() {
+        // IQ3_M block size: 111 bytes per 256 elements
+        assert_eq!(tensor_row_size(GGML_TYPE_IQ3_M_BLOCK, 256).unwrap(), 111);
+        assert_eq!(tensor_row_size(GGML_TYPE_IQ3_M_BLOCK, 512).unwrap(), 222);
+        // Width must be divisible by 256
+        assert!(tensor_row_size(GGML_TYPE_IQ3_M_BLOCK, 255).is_err());
+    }
+
+    #[test]
+    fn test_dequantize_row_iq3_m_error_paths() {
+        // Test width not divisible by 256
+        let result = dequantize_row_iq3_m(&[0u8; 111], 255);
+        assert!(result.is_err());
+
+        // Test row length mismatch
+        let result = dequantize_row_iq3_m(&[0u8; 110], 256);
+        assert!(result.is_err());
+    }
 }

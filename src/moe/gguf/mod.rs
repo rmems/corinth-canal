@@ -17,13 +17,6 @@ mod dequant;
 mod map;
 mod metadata;
 
-pub(super) use dequant::{
-    dequantize_row_iq3_m, dequantize_row_q5_k, dequantize_row_q6_k, dequantize_row_q8_0,
-    f16_to_f32, tensor_row_size,
-};
-pub(super) use map::{
-    MappedGgufCheckpoint, extract_named_token_embedding_from_checkpoint, probe_and_map_checkpoint,
-};
-pub(super) use metadata::{
-    GgufMetadata, GgufTensorInfo, ParsedCheckpointLayout, parse_checkpoint_layout,
-};
+pub(super) use dequant::f16_to_f32;
+pub(super) use map::{MappedGgufCheckpoint, probe_and_map_checkpoint};
+pub(super) use metadata::{GgufMetadata, GgufTensorInfo};
