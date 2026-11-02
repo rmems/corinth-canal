@@ -127,9 +127,11 @@ Instrumented launch sites:
 
 ## Model loading and routing bridge
 
-The runtime model-loading interface is custom and GGUF-backed. Safetensors are
-supported as an inspection/import surface for checkpoint anatomy manifests; they
-do not replace GGUF-backed routing in the current runtime path.
+The runtime model-loading interface is custom, and GGUF is its primary backend.
+Safetensors are an inspection/import surface for checkpoint anatomy manifests.
+`Router` can also load them for token embeddings and CPU gate routing, and the GPU
+temporal path can load `INT4` and `routing-f32` weights from them. GPU host
+registration and the Q8_0, Q5_K, Q6_K and IQ3_M synapse paths are GGUF-only.
 
 Important nuance: the adapter chooses the GPU synapse path from the selected
 tensor's actual `ggml_type`, not from the checkpoint filename or the GGUF-wide

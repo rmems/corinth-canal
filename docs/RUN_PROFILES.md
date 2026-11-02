@@ -193,11 +193,12 @@ candidates. The manifest generator reads only Safetensors headers plus optional
 Hugging Face `.safetensors.index.json` metadata; it does not create a project,
 run activation tracing, or load tensor payload bytes.
 
-Use GGUF when the goal is current `corinth-canal` runtime routing. The
-`Router` path remains GGUF-backed for token embedding extraction, routing
-tensor access, and GPU synapse-source selection. Safetensors support is a setup
-and inspection adapter for experiment preparation, not a replacement for the
-runtime GGUF bridge.
+Prefer GGUF when the goal is the full GPU runtime path: GPU host registration
+and the Q8_0, Q5_K, Q6_K and IQ3_M synapse paths are GGUF-only. `Router` can also
+load a Safetensors directory for token embedding extraction and CPU gate routing,
+and the GPU temporal path can load `INT4` and `routing-f32` weights from it.
+Safetensors support is also the setup and inspection adapter for experiment
+preparation.
 
 ## CSV replay
 

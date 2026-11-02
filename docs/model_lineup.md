@@ -39,7 +39,9 @@ tag is not the `ModelFamily`. `infer_family` maps Kimi/Moonlight filenames to
 ### Batch B — Local safetensors manifest inspection
 
 Models that exist locally as safetensors and are onboarded for header
-inspection / manifest generation only. The router path remains GGUF-backed.
+inspection / manifest generation. `Router` can also load a Safetensors directory
+for token embeddings and CPU gate routing. GPU host registration and the Q8_0,
+Q5_K, Q6_K and IQ3_M synapse paths are GGUF-only.
 
 | MET | Slug | Provider/Model | Shards | Arch |
 |-----|------|----------------|--------|------|

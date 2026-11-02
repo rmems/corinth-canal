@@ -12,3 +12,10 @@ benchmarks/
 docs/
 experiments/
 manifests/
+.beads-credential-key
+.dolt/
+**/*.db
+actions-runner/
+codacy-results.sarif
+configs/local_*.toml
+configs/safetensors_lineup.toml
