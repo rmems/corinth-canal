@@ -445,6 +445,7 @@ mod tests {
             embedding: vec![0.0; 2048],
             expert_weights: Some(expert_weights),
             selected_experts: Some(vec![0]),
+            #[allow(deprecated)]
             reasoning: None,
         }
     }

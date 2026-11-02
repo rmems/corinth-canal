@@ -119,6 +119,20 @@ pub struct TelemetrySnapshot {
 }
 
 impl TelemetrySnapshot {
+    pub(crate) const CHANNELS: usize = 4;
+
+    /// Canonical channel order shared by the telemetry CSV header, the CPU
+    /// encoder and the GPU snapshot upload (read positionally by
+    /// `project_snapshot_current`).
+    pub(crate) fn channel_values(&self) -> [f32; Self::CHANNELS] {
+        [
+            self.gpu_temp_c,
+            self.gpu_power_w,
+            self.cpu_tctl_c,
+            self.cpu_package_power_w,
+        ]
+    }
+
     pub fn thermal_stress(&self) -> f32 {
         ((self.gpu_temp_c - 60.0) / 30.0).clamp(0.0, 1.0)
     }
@@ -321,7 +335,7 @@ impl ProjectionMode {
     }
 }
 
-/// Execution mode used by the Router router.
+/// Execution mode used by the `Router`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RoutingMode {
     StubUniform,
@@ -350,6 +364,16 @@ impl RoutingMode {
         }
     }
 
+    /// Stable stamp used in `run_manifest.json`. Differs from the serde
+    /// spelling (variant names); round-trips through [`Self::from_alias`].
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::StubUniform => "stub_uniform",
+            Self::DenseSim => "dense_sim",
+            Self::SpikingSim => "spiking_sim",
+        }
+    }
+
     /// Effective mode with operator precedence used by calibration runs:
     /// `env_override` (`ROUTING_MODE`) > `lineup` (per-model TOML) > `default`
     /// (`ModelConfig` / `default_spiking_model_config`).
@@ -367,6 +391,7 @@ pub struct ModelOutput {
     pub embedding: Vec<f32>,
     pub expert_weights: Option<Vec<f32>>,
     pub selected_experts: Option<Vec<usize>>,
+    #[deprecated(note = "never populated or read; slated for removal")]
     pub reasoning: Option<String>,
 }
 
@@ -771,6 +796,35 @@ mod tests {
                 mode.as_label()
             );
         }
+    }
+
+    #[test]
+    fn routing_mode_label_round_trips_through_from_alias() {
+        for (mode, label) in [
+            (RoutingMode::StubUniform, "stub_uniform"),
+            (RoutingMode::DenseSim, "dense_sim"),
+            (RoutingMode::SpikingSim, "spiking_sim"),
+        ] {
+            assert_eq!(mode.as_label(), label);
+            assert_eq!(
+                RoutingMode::from_alias(mode.as_label()),
+                Some(mode),
+                "stamp {:?} must round-trip for {mode:?}",
+                mode.as_label()
+            );
+        }
+    }
+
+    #[test]
+    fn telemetry_channel_values_follow_canonical_order() {
+        let snapshot = TelemetrySnapshot {
+            gpu_temp_c: 1.0,
+            gpu_power_w: 2.0,
+            cpu_tctl_c: 3.0,
+            cpu_package_power_w: 4.0,
+            timestamp_ms: 5,
+        };
+        assert_eq!(snapshot.channel_values(), [1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]

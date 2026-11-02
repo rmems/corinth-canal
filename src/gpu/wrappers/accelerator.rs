@@ -184,12 +184,7 @@ impl GpuAccelerator {
             .as_mut()
             .ok_or_else(|| GpuError::MemoryError("temporal state not initialised".into()))?;
 
-        state.snapshot.upload(&[
-            snapshot.gpu_temp_c,
-            snapshot.gpu_power_w,
-            snapshot.cpu_tctl_c,
-            snapshot.cpu_package_power_w,
-        ])?;
+        state.snapshot.upload(&snapshot.channel_values())?;
 
         let stream = Self::new_stream()?;
         let grid = Self::ceil_div_u32(neuron_count as u32, TEMPORAL_BLOCK_SIZE);
@@ -215,7 +210,9 @@ impl GpuAccelerator {
     }
 
     /// Execute one LIF (Leaky Integrate-and-Fire) tick on the GPU.
-    /// Low-level step function; prefer `tick_gpu_temporal` for the full GIF loop.
+    /// Low-level step function; prefer `Model::tick_gpu_temporal` for the full
+    /// GIF loop. There is currently no Rust caller.
+    #[deprecated(note = "no callers; use Model::tick_gpu_temporal")]
     pub fn lif_step_tick(&mut self, neuron_count: usize) -> GpuResult<()> {
         self.ensure_temporal_state(neuron_count)?;
 

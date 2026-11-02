@@ -267,59 +267,44 @@ impl Projector {
             .collect();
 
         // Mode-specific blending
+        let (rate_scale, hist_scale, membrane_scale): (f32, f32, f32) = match self.mode {
+            // SpikingTernary shares RateSum's blend — GIF integration happens in
+            // spiking_linear_project, not in the feature vector itself.
+            ProjectionMode::RateSum | ProjectionMode::SpikingTernary => (1.0, 1.0, 1.0),
+            // Weight histogram more heavily than raw rates
+            ProjectionMode::TemporalHistogram => (0.3, 2.0, 1.0),
+            // Use membrane directly as primary signal
+            ProjectionMode::MembraneSnapshot => (1.0, 1.0, 2.0),
+        };
         let mut features = Vec::with_capacity(self.feature_dim);
-        match self.mode {
-            ProjectionMode::RateSum => {
-                features.extend_from_slice(&rates);
-                features.extend_from_slice(&hist);
-                features.extend_from_slice(&membrane);
-                features.extend_from_slice(&iz);
-            }
-            ProjectionMode::TemporalHistogram => {
-                // Weight histogram more heavily than raw rates
-                let weighted_rates: Vec<f32> = rates.iter().map(|r| r * 0.3).collect();
-                features.extend_from_slice(&weighted_rates);
-                let weighted_hist: Vec<f32> = hist.iter().map(|h| h * 2.0).collect();
-                features.extend_from_slice(&weighted_hist);
-                features.extend_from_slice(&membrane);
-                features.extend_from_slice(&iz);
-            }
-            ProjectionMode::MembraneSnapshot => {
-                // Use membrane directly as primary signal
-                let membrane_primary: Vec<f32> = membrane.iter().map(|v| v * 2.0).collect();
-                features.extend_from_slice(&rates);
-                features.extend_from_slice(&hist);
-                features.extend_from_slice(&membrane_primary);
-                features.extend_from_slice(&iz);
-            }
-            ProjectionMode::SpikingTernary => {
-                // Same feature blend as RateSum — GIF integration happens in
-                // spiking_linear_project, not in the feature vector itself.
-                features.extend_from_slice(&rates);
-                features.extend_from_slice(&hist);
-                features.extend_from_slice(&membrane);
-                features.extend_from_slice(&iz);
-            }
-        }
+        features.extend(rates.iter().map(|r| r * rate_scale));
+        features.extend(hist.iter().map(|h| h * hist_scale));
+        features.extend(membrane.iter().map(|v| v * membrane_scale));
+        features.extend_from_slice(&iz);
 
-        // Pad or truncate to exactly feature_dim
-        features.resize(self.feature_dim, 0.0);
+        debug_assert_eq!(features.len(), self.feature_dim);
         features
     }
 
     // ── Linear projections ────────────────────────────────────────────────────
 
+    /// One output row of W x f + b, before any squash or membrane integration.
+    #[inline]
+    fn affine_row(&self, out_i: usize, features: &[f32]) -> f32 {
+        let mut acc = self.bias[out_i];
+        let row_offset = out_i * self.feature_dim;
+        for (in_j, feature) in features.iter().take(self.feature_dim).enumerate() {
+            acc += self.weights[row_offset + in_j] * *feature;
+        }
+        acc
+    }
+
     /// Dense W × f + b with tanh squash.  Used for all non-spiking modes.
     fn dense_linear_project(&self, features: &[f32]) -> Vec<f32> {
         let mut out = vec![0.0_f32; EMBEDDING_DIM];
         for (out_i, out_slot) in out.iter_mut().enumerate() {
-            let mut acc = self.bias[out_i];
-            let row_offset = out_i * self.feature_dim;
-            for (in_j, feature) in features.iter().take(self.feature_dim).enumerate() {
-                acc += self.weights[row_offset + in_j] * *feature;
-            }
             // Layer norm approximation: tanh squash keeps embedding bounded
-            *out_slot = acc.tanh();
+            *out_slot = self.affine_row(out_i, features).tanh();
         }
         out
     }
@@ -338,11 +323,7 @@ impl Projector {
         let mut spikes = vec![0.0_f32; EMBEDDING_DIM];
         let activity_drive = features.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
         for (out_i, spike) in spikes.iter_mut().enumerate() {
-            let mut acc = self.bias[out_i];
-            let row_offset = out_i * self.feature_dim;
-            for (in_j, feature) in features.iter().take(self.feature_dim).enumerate() {
-                acc += self.weights[row_offset + in_j] * *feature;
-            }
+            let acc = self.affine_row(out_i, features);
             // GIF integration step
             let drive = (acc.tanh() * 0.5 + activity_drive * 0.5).clamp(-1.0, 1.0);
             self.membrane[out_i] = self.membrane[out_i] * self.decay + drive * 0.35;
@@ -519,6 +500,46 @@ mod tests {
         (0..n_steps)
             .map(|t| vec![t % neurons, (t + 1) % neurons])
             .collect()
+    }
+
+    #[test]
+    fn feature_blend_applies_per_mode_scales() {
+        let neurons = 8;
+        let rate_end = neurons;
+        let hist_end = rate_end + neurons * TEMPORAL_BINS;
+        let membrane_end = hist_end + neurons;
+        let spikes = dummy_spike_train(8, neurons);
+        let potentials = vec![0.4; neurons];
+        let iz_pots = vec![15.0; IZ_NEURONS];
+        let features = |mode: ProjectionMode| {
+            Projector::with_input_neurons(mode, neurons).build_feature_vector(
+                &spikes,
+                &potentials,
+                &iz_pots,
+            )
+        };
+        let scaled = |s: &[f32], k: f32| -> Vec<f32> { s.iter().map(|v| v * k).collect() };
+
+        let base = features(ProjectionMode::RateSum);
+        assert_eq!(base.len(), feature_dim_for(neurons));
+        assert!(base[..rate_end].iter().any(|v| *v != 0.0));
+        assert_eq!(features(ProjectionMode::SpikingTernary), base);
+
+        let temporal = features(ProjectionMode::TemporalHistogram);
+        assert_eq!(temporal[..rate_end], scaled(&base[..rate_end], 0.3)[..]);
+        assert_eq!(
+            temporal[rate_end..hist_end],
+            scaled(&base[rate_end..hist_end], 2.0)[..]
+        );
+        assert_eq!(temporal[hist_end..], base[hist_end..]);
+
+        let membrane = features(ProjectionMode::MembraneSnapshot);
+        assert_eq!(membrane[..hist_end], base[..hist_end]);
+        assert_eq!(
+            membrane[hist_end..membrane_end],
+            scaled(&base[hist_end..membrane_end], 2.0)[..]
+        );
+        assert_eq!(membrane[membrane_end..], base[membrane_end..]);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const MYELIN_SHIM_STUB: &str = r#"
-#include <stdint.h>
+#include "myelin_shim.h"
 
 int myelin_launch_gif_step_weighted_f16(
     void* stream,
@@ -116,7 +116,7 @@ fn main() {
             "nvcc not found and `gpu-stub` feature enabled — writing empty fatbin files; \
              GPU will be unavailable at runtime"
         };
-        build_cuda_stub(kernels, &out_dir, warning);
+        build_cuda_stub(kernels, &cu_dir, &out_dir, warning);
         return;
     }
 
@@ -124,7 +124,7 @@ fn main() {
         Some(nvcc) => nvcc,
         None => {
             panic!(
-                "nvcc not found. Install CUDA Toolkit (>= 12.8 for sm_120) or set NVCC=/path/to/nvcc. \
+                "nvcc not found. Install CUDA Toolkit (>= 13.2, the CI floor; sm_120 itself needs >= 12.8) or set NVCC=/path/to/nvcc. \
                  To allow building the CUDA API without nvcc and disable GPU execution at runtime, \
                  enable the `gpu-stub` feature (which implies `cuda`)."
             );
@@ -259,21 +259,24 @@ fn build_myelin_shim(nvcc: &Path, host_compiler: Option<&Path>, cu_dir: &Path, o
     println!("cargo:warning=✓ compiled myelin_shim.cu → libmyelin_shim.a");
 }
 
-fn build_cuda_stub(kernels: &[(&str, &str)], out_dir: &Path, warning: &str) {
+fn build_cuda_stub(kernels: &[(&str, &str)], cu_dir: &Path, out_dir: &Path, warning: &str) {
     println!("cargo:warning={warning}");
     for &(_, fatbin_name) in kernels {
         fs::write(out_dir.join(fatbin_name), &[] as &[u8])
             .unwrap_or_else(|e| panic!("Failed to write stub fatbin {fatbin_name}: {e}"));
     }
-    build_myelin_shim_stub(out_dir);
+    build_myelin_shim_stub(cu_dir, out_dir);
 }
 
-fn build_myelin_shim_stub(out_dir: &Path) {
+fn build_myelin_shim_stub(cu_dir: &Path, out_dir: &Path) {
     let stub_path = out_dir.join("myelin_shim_stub.c");
     fs::write(&stub_path, MYELIN_SHIM_STUB)
         .unwrap_or_else(|e| panic!("Failed to write myelin shim stub: {e}"));
 
-    cc::Build::new().file(&stub_path).compile("myelin_shim");
+    cc::Build::new()
+        .include(cu_dir)
+        .file(&stub_path)
+        .compile("myelin_shim");
     println!("cargo:warning=✓ compiled myelin shim stub → libmyelin_shim.a");
 }
 

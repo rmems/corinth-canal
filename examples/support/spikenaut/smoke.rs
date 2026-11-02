@@ -221,6 +221,7 @@ fn stub_model_output(
         embedding,
         expert_weights: Some(routed.expert_weights),
         selected_experts: Some(routed.selected_experts),
+        #[allow(deprecated)]
         reasoning: None,
     }
 }

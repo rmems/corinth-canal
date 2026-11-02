@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use corinth_canal::types::{ProjectionMode, RoutingMode};
 use corinth_canal::{ExperimentManifest, ExperimentMetrics, ExperimentSummary};
 
 use super::domain::SpikenautDomain;
@@ -83,8 +84,8 @@ fn smoke_manifest_identity(
         repeat_count: 1,
         validation_status: "completed".to_owned(),
         error: None,
-        routing_mode: Some("stub_uniform".to_owned()),
-        projection_mode: Some("spiking_ternary".to_owned()),
+        routing_mode: Some(RoutingMode::StubUniform.as_label().to_owned()),
+        projection_mode: Some(ProjectionMode::SpikingTernary.as_label().to_owned()),
         lineup_declared_count: None,
         lineup_resolved_count: None,
         generated_files: smoke_generated_files(),

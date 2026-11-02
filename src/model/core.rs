@@ -155,6 +155,7 @@ impl Model {
             embedding,
             expert_weights: Some(router_out.expert_weights),
             selected_experts: Some(router_out.selected_experts),
+            #[allow(deprecated)]
             reasoning: None,
         })
     }

@@ -4,7 +4,7 @@ use crate::types::TelemetrySnapshot;
 
 pub const FUNNEL_INPUT_NEURONS: usize = 2048;
 pub const FUNNEL_HIDDEN_NEURONS: usize = 2048;
-const TELEMETRY_CHANNELS: usize = 4;
+const TELEMETRY_CHANNELS: usize = TelemetrySnapshot::CHANNELS;
 const BANK_WIDTH: usize = 2;
 const GIF_FAN_IN: usize = 4;
 const GIF_IZ_NEURONS: usize = 5;

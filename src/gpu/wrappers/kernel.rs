@@ -117,7 +117,8 @@ impl KernelModule {
         Ok(Self { modules, func_map })
     }
 
-    /// Alias kept for satsolver call-sites.
+    /// Alias of [`Self::load`]. It has no callers.
+    #[deprecated(note = "no callers; use KernelModule::load")]
     pub fn load_satsolver() -> GpuResult<Self> {
         Self::load()
     }
@@ -147,7 +148,7 @@ impl KernelModule {
         if bytes.is_empty() {
             return Err(GpuError::ModuleLoadFailed(format!(
                 "fatbin for '{name}' is empty — built with `gpu-stub` feature; \
-                 rebuild without `gpu-stub` and with CUDA Toolkit \u{2265} 12.8 for GPU execution"
+                 rebuild without `gpu-stub` and with CUDA Toolkit \u{2265} 13.2 for GPU execution"
             )));
         }
 

@@ -18,12 +18,7 @@ impl TelemetryEncoder {
     }
 
     pub fn encode(&mut self, snap: &TelemetrySnapshot) -> [i8; 4] {
-        let values = [
-            snap.gpu_temp_c,
-            snap.gpu_power_w,
-            snap.cpu_tctl_c,
-            snap.cpu_package_power_w,
-        ];
+        let values = snap.channel_values();
 
         if !self.initialized {
             self.baseline = values;
