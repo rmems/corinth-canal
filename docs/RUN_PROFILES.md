@@ -63,6 +63,9 @@ The latent telemetry CSV includes both SAAQ trajectories via
   rows shift up one tick. `run_manifest.json` stamps the count as
   `telemetry_rows_skipped`, separate from `telemetry_row_count`; the field is
   absent when no CSV was parsed.
+- `INPUT_DRIVE_GAIN` scales the prompt embedding fed to the GPU loop and changes
+  the latent telemetry. `run_manifest.json` stamps the applied value as
+  `input_drive_gain`, so compare it before comparing two runs.
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including
