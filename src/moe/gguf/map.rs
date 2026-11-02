@@ -71,16 +71,10 @@ impl MappedGgufCheckpoint {
                 Ok(weights[token_id * d0..token_id * d0 + d0].to_vec())
             }
             GGML_TYPE_F16 => {
-                let values = self.u16_tensor_values(info, path, tensor_name)?;
-                if token_id >= d1 {
-                    return Err(HybridError::InputLengthMismatch {
-                        expected: d1,
-                        got: token_id,
-                    });
-                }
-                Ok(values[token_id * d0..token_id * d0 + d0]
-                    .iter()
-                    .map(|&b| f16_to_f32(b))
+                let row = self.row_bytes(info, token_id, path, tensor_name)?;
+                Ok(row
+                    .chunks_exact(2)
+                    .map(|b| f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
                     .collect())
             }
             GGML_TYPE_Q8_0 => {
@@ -208,38 +202,6 @@ impl MappedGgufCheckpoint {
         // slice borrows `self` for lifetime `'a`, keeping the mmap alive.
         let ptr = unsafe { self.mmap.as_ptr().add(start) as *const f32 };
         Ok(unsafe { slice::from_raw_parts(ptr, info.n_elements) })
-    }
-
-    fn u16_tensor_values(
-        &self,
-        info: &GgufTensorInfo,
-        path: &str,
-        tensor_name: &str,
-    ) -> Result<Vec<u16>> {
-        let byte_start = info.absolute_offset;
-        let byte_len = info
-            .n_elements
-            .checked_mul(std::mem::size_of::<u16>())
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' byte length overflow"),
-            })?;
-        let byte_end = byte_start
-            .checked_add(byte_len)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' end offset overflow"),
-            })?;
-        if byte_end > self.mmap.len() {
-            return Err(HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' extends beyond mapped file"),
-            });
-        }
-        Ok(self.mmap[byte_start..byte_end]
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .collect())
     }
 
     fn row_bytes<'a>(

@@ -516,13 +516,10 @@ pub(super) fn shard_metadata_namespaced_key(shard_path: &str, key: &str) -> Stri
 }
 
 pub(super) fn namespaced_shard_metadata_logical_key(namespaced: &str) -> Option<&str> {
-    let rest = namespaced.strip_prefix("shard:")?;
-    if let Some((_, logical_key)) = rest.split_once(SHARD_METADATA_KEY_SEP) {
-        return Some(logical_key);
-    }
-    // Legacy keys used `shard:{path}:{key}` with a single `:` separator; this
-    // remains ambiguous when `key` contains `:`, so prefer new keys above.
-    rest.rsplit_once(':').map(|(_, logical_key)| logical_key)
+    namespaced
+        .strip_prefix("shard:")?
+        .split_once(SHARD_METADATA_KEY_SEP)
+        .map(|(_, logical_key)| logical_key)
 }
 
 pub(super) fn merge_shard_metadata(

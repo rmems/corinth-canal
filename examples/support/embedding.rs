@@ -9,6 +9,7 @@
 pub enum PromptEmbeddingProvider {
     Ollama,
     SyntheticFallback,
+    Unknown,
 }
 
 pub fn resolve_prompt_embedding_provider(value: Option<&str>) -> PromptEmbeddingProvider {
@@ -19,7 +20,8 @@ pub fn resolve_prompt_embedding_provider(value: Option<&str>) -> PromptEmbedding
         .as_deref()
     {
         None | Some("ollama") => PromptEmbeddingProvider::Ollama,
-        _ => PromptEmbeddingProvider::SyntheticFallback,
+        Some("hash" | "synthetic") => PromptEmbeddingProvider::SyntheticFallback,
+        _ => PromptEmbeddingProvider::Unknown,
     }
 }
 
@@ -47,7 +49,7 @@ mod tests {
     fn prompt_embedding_provider_rejects_legacy_llama_cpp() {
         assert_eq!(
             resolve_prompt_embedding_provider(Some("llama_cpp")),
-            PromptEmbeddingProvider::SyntheticFallback
+            PromptEmbeddingProvider::Unknown
         );
     }
 

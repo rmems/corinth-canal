@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Row dequantization helpers and f16 conversion for GGUF tensors.
 
-use super::super::ggml::{GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_Q8_0};
+use super::super::ggml::{
+    GGML_TYPE_F16, GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K, GGML_TYPE_Q8_0,
+};
 use crate::error::{HybridError, Result};
 
 pub(in crate::moe) fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
     match ggml_type {
+        GGML_TYPE_F16 => width.checked_mul(2).ok_or_else(|| {
+            HybridError::UnsupportedFormat(format!("F16 tensor width {width} overflows row size"))
+        }),
         GGML_TYPE_Q8_0 => {
             if !width.is_multiple_of(32) {
                 return Err(HybridError::UnsupportedFormat(format!(
@@ -125,22 +130,18 @@ pub(in crate::moe) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Ve
 
 pub(in crate::moe) fn dequantize_row_q6_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
     if !width.is_multiple_of(256) {
-        return Err(HybridError::ModelLoad {
-            path: "".into(),
-            reason: format!("Q6_K width {width} is not divisible by 256"),
-        });
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q6_K width {width} is not divisible by 256"
+        )));
     }
     // Q6_K block: d(2) + scales(16) + ql(128) + qh(64) = 210 bytes
     // Matches the ggml block_q6_K layout from llama.cpp.
     let expected_len = (width / 256) * 210;
     if row.len() != expected_len {
-        return Err(HybridError::ModelLoad {
-            path: "".into(),
-            reason: format!(
-                "Q6_K row length mismatch: expected {expected_len} bytes for width {width}, got {}",
-                row.len()
-            ),
-        });
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q6_K row length mismatch: expected {expected_len} bytes for width {width}, got {}",
+            row.len()
+        )));
     }
     let mut out = Vec::with_capacity(width);
     for block in row.chunks_exact(210) {
@@ -182,13 +183,10 @@ pub(in crate::moe) fn dequantize_row_iq3_m(row: &[u8], width: usize) -> Result<V
     }
     let expected_len = (width / 256) * 111;
     if row.len() != expected_len {
-        return Err(HybridError::ModelLoad {
-            path: "".into(),
-            reason: format!(
-                "IQ3_M row length mismatch: expected {expected_len} bytes for width {width}, got {}",
-                row.len()
-            ),
-        });
+        return Err(HybridError::UnsupportedFormat(format!(
+            "IQ3_M row length mismatch: expected {expected_len} bytes for width {width}, got {}",
+            row.len()
+        )));
     }
     let mut out = Vec::with_capacity(width);
     for block in row.chunks_exact(111) {
@@ -428,5 +426,16 @@ mod tests {
         // Test row length mismatch
         let result = dequantize_row_iq3_m(&[0u8; 110], 256);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn dequantize_row_q6_k_and_iq3_m_report_unsupported_format() {
+        for err in [
+            dequantize_row_q6_k(&[0u8; 210], 255).unwrap_err(),
+            dequantize_row_q6_k(&[0u8; 209], 256).unwrap_err(),
+            dequantize_row_iq3_m(&[0u8; 110], 256).unwrap_err(),
+        ] {
+            assert!(matches!(err, HybridError::UnsupportedFormat(_)), "{err}");
+        }
     }
 }

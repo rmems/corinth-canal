@@ -996,6 +996,23 @@ fn windows_same_file_detects_hardlinks_via_file_id() {
 }
 
 #[test]
+fn raw_shard_prefixed_metadata_key_does_not_hide_a_later_base_key() {
+    let mut metadata = BTreeMap::new();
+    merge_shard_metadata(
+        &mut metadata,
+        "s1.safetensors",
+        BTreeMap::from([("shard:a:b".to_string(), "x".to_string())]),
+    );
+    merge_shard_metadata(
+        &mut metadata,
+        "s2.safetensors",
+        BTreeMap::from([("b".to_string(), "y".to_string())]),
+    );
+
+    assert_eq!(metadata.get("b").map(String::as_str), Some("y"));
+}
+
+#[test]
 fn bf16_to_f32_matches_reference() {
     for (bits, expected) in [
         (0x0000, 0.0),

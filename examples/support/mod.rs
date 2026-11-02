@@ -136,21 +136,30 @@ pub fn prompt_embedding_for_validation(
 ) -> Result<(Vec<f32>, String), Box<dyn std::error::Error>> {
     let provider = std::env::var("EMBEDDING_PROVIDER").ok();
 
-    if resolve_prompt_embedding_provider(provider.as_deref()) == PromptEmbeddingProvider::Ollama {
-        match pooled_prompt_embedding_from_ollama(prompt_text, target_dim) {
-            Ok((embedding, label)) => return Ok((embedding, label)),
-            Err(error) => {
-                eprintln!(
-                    "Ollama prompt embedding unavailable: {}. Falling back to deterministic text hash embedding.",
-                    error
-                );
+    match resolve_prompt_embedding_provider(provider.as_deref()) {
+        PromptEmbeddingProvider::Ollama => {
+            match pooled_prompt_embedding_from_ollama(prompt_text, target_dim) {
+                Ok((embedding, label)) => return Ok((embedding, label)),
+                Err(error) => {
+                    eprintln!(
+                        "Ollama prompt embedding unavailable: {}. Falling back to deterministic text hash embedding.",
+                        error
+                    );
+                }
             }
         }
-    } else {
-        eprintln!(
-            "Unknown embedding provider '{}'. Falling back to deterministic text hash embedding.",
-            provider.as_deref().unwrap_or("<unset>")
-        );
+        PromptEmbeddingProvider::SyntheticFallback => {
+            eprintln!(
+                "EMBEDDING_PROVIDER={}: using deterministic text hash embedding.",
+                provider.as_deref().unwrap_or_default()
+            );
+        }
+        PromptEmbeddingProvider::Unknown => {
+            eprintln!(
+                "Unknown embedding provider '{}'. Falling back to deterministic text hash embedding.",
+                provider.as_deref().unwrap_or("<unset>")
+            );
+        }
     }
 
     Ok((

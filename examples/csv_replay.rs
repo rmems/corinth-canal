@@ -8,23 +8,14 @@ mod support;
 use support::RunConfig;
 use support::default_spiking_model_config;
 use support::observability::{self, CommandObserver, SafeDiagnosticData};
+use support::telemetry_csv::{ParseDataLine, TELEMETRY_CSV_HEADER, parse_telemetry_csv_data_line};
 
 use corinth_canal::{
     EMBEDDING_DIM, FUNNEL_HIDDEN_NEURONS, HybridError, TelemetryFunnel, model::Model,
     telemetry::TelemetrySnapshot,
 };
 
-const EXPECTED_HEADER: &str = "timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w";
 const TELEMETRY_THRESHOLDS: [f32; 4] = [1.0, 5.0, 1.0, 5.0];
-
-fn parse_u64(v: &str) -> Option<u64> {
-    v.parse::<u64>().ok()
-}
-
-fn parse_f32(v: &str) -> Option<f32> {
-    let n = v.parse::<f32>().ok()?;
-    if n.is_finite() { Some(n) } else { None }
-}
 
 // Local copy: `crate::metric` is `pub(crate)` on purpose, so examples cannot reach it.
 fn mean_squared_error(output: &[f32], target: &[f32]) -> f32 {
@@ -51,7 +42,7 @@ fn main() -> corinth_canal::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run --example csv_replay <telemetry.csv>");
-        eprintln!("CSV format: {EXPECTED_HEADER}");
+        eprintln!("CSV format: {TELEMETRY_CSV_HEADER}");
         std::process::exit(1);
     }
 
@@ -87,22 +78,20 @@ fn run(observer: &CommandObserver, args: &[String]) -> corinth_canal::Result<()>
 }
 
 fn validate_header(header: &str) -> corinth_canal::Result<()> {
-    if header != EXPECTED_HEADER {
+    if header != TELEMETRY_CSV_HEADER {
         return Err(HybridError::InvalidConfig(format!(
-            "invalid CSV header: expected '{EXPECTED_HEADER}', got '{header}'"
+            "invalid CSV header: expected '{TELEMETRY_CSV_HEADER}', got '{header}'"
         )));
     }
     Ok(())
 }
 
-fn dummy_snap() -> TelemetrySnapshot {
-    TelemetrySnapshot {
-        timestamp_ms: 0,
-        gpu_temp_c: 0.0,
-        gpu_power_w: 0.0,
-        cpu_tctl_c: 0.0,
-        cpu_package_power_w: 0.0,
-    }
+struct RowStats {
+    input_spikes: usize,
+    hidden_spikes: usize,
+    loss: f32,
+    snap: TelemetrySnapshot,
+    ternary: [i8; 4],
 }
 
 fn process_one_line(
@@ -111,28 +100,25 @@ fn process_one_line(
     target: &[f32],
     line: &str,
     line_number: usize,
-) -> corinth_canal::Result<(bool, usize, usize, f32, TelemetrySnapshot, [i8; 4])> {
-    if line.is_empty() {
-        return Ok((true, 0, 0, 0.0, dummy_snap(), [0; 4]));
-    }
-    let fields: Vec<&str> = line.split(',').collect();
-    if fields.len() != 5 {
-        eprintln!(
-            "Skipping malformed row {}: expected 5 columns, got {}",
-            line_number,
-            fields.len(),
-        );
-        return Ok((true, 0, 0, 0.0, dummy_snap(), [0; 4]));
-    }
-    let snap = match parse_csv_row(fields, line_number) {
-        Some(s) => s,
-        None => {
-            eprintln!(
-                "Skipping malformed row {}: parse/finite check failed",
-                line_number
-            );
-            return Ok((true, 0, 0, 0.0, dummy_snap(), [0; 4]));
+) -> corinth_canal::Result<Option<RowStats>> {
+    let snap = match parse_telemetry_csv_data_line(line) {
+        ParseDataLine::Empty => return Ok(None),
+        ParseDataLine::Malformed => {
+            let columns = line.split(',').count();
+            if columns != 5 {
+                eprintln!(
+                    "Skipping malformed row {}: expected 5 columns, got {}",
+                    line_number, columns,
+                );
+            } else {
+                eprintln!(
+                    "Skipping malformed row {}: parse/finite check failed",
+                    line_number
+                );
+            }
+            return Ok(None);
         }
+        ParseDataLine::Ok(snap) => snap,
     };
     let activity = funnel.encode_snapshot(&snap);
     let ternary = activity.ternary_events;
@@ -148,7 +134,13 @@ fn process_one_line(
         .sum::<usize>();
     let hidden_spikes = activity.spike_train.iter().map(Vec::len).sum::<usize>();
     let loss = mean_squared_error(output.embedding.as_slice(), target);
-    Ok((false, input_spikes, hidden_spikes, loss, snap, ternary))
+    Ok(Some(RowStats {
+        input_spikes,
+        hidden_spikes,
+        loss,
+        snap,
+        ternary,
+    }))
 }
 
 fn process_rows(
@@ -165,12 +157,17 @@ fn process_rows(
 
     for (idx, raw_line) in lines.enumerate() {
         let line_number = idx + 2;
-        let (skip, input_spikes, hidden_spikes, loss, snap, ternary) =
-            process_one_line(model, funnel, &target, raw_line.trim(), line_number)?;
-        if skip {
+        let Some(RowStats {
+            input_spikes,
+            hidden_spikes,
+            loss,
+            snap,
+            ternary,
+        }) = process_one_line(model, funnel, &target, raw_line.trim(), line_number)?
+        else {
             rows_skipped += 1;
             continue;
-        }
+        };
         total_loss += loss;
         rows_processed += 1;
         total_input_spikes += input_spikes;
@@ -198,21 +195,6 @@ fn process_rows(
         model,
     );
     Ok(())
-}
-
-fn parse_csv_row(fields: Vec<&str>, _line_number: usize) -> Option<TelemetrySnapshot> {
-    let timestamp_ms = parse_u64(fields[0])?;
-    let gpu_temp_c = parse_f32(fields[1])?;
-    let gpu_power_w = parse_f32(fields[2])?;
-    let cpu_tctl_c = parse_f32(fields[3])?;
-    let cpu_package_power_w = parse_f32(fields[4])?;
-    Some(TelemetrySnapshot {
-        timestamp_ms,
-        gpu_temp_c,
-        gpu_power_w,
-        cpu_tctl_c,
-        cpu_package_power_w,
-    })
 }
 
 fn print_summary(

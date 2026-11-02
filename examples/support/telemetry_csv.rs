@@ -102,13 +102,13 @@ fn validate_telemetry_csv_header(
     Ok(())
 }
 
-enum ParseDataLine {
+pub enum ParseDataLine {
     Empty,
     Ok(corinth_canal::TelemetrySnapshot),
     Malformed,
 }
 
-fn parse_telemetry_csv_data_line(raw_line: &str) -> ParseDataLine {
+pub fn parse_telemetry_csv_data_line(raw_line: &str) -> ParseDataLine {
     let line = raw_line.trim();
     if line.is_empty() {
         return ParseDataLine::Empty;
