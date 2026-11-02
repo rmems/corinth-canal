@@ -28,7 +28,7 @@ pub(in crate::moe) fn tensor_row_size(ggml_type: u32, width: usize) -> Result<us
                     "Q6_K tensor width {width} is not divisible by 256"
                 )));
             }
-            // Q6_K block: d(2) + scales(16) + ql(128) + qh(64) = 210 bytes
+            // Q6_K block: ql(128) + qh(64) + scales(16) + d(2) = 210 bytes
             Ok((width / 256) * 210)
         }
         GGML_TYPE_IQ3_M_BLOCK => {
@@ -107,11 +107,15 @@ pub(in crate::moe) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Ve
             let d2 = d * sc2 as f32;
             let mn2 = dmin * m2 as f32;
 
+            // ggml `dequantize_row_q5_K` writes each 64-value group as the 32
+            // low-nibble values (d1/m1) followed by the 32 high-nibble values
+            // (d2/m2). Emitting them pairwise interleaved permutes columns.
             for (lane, &q) in ql_chunk.iter().enumerate() {
-                let qh_byte = qh[lane];
-                let hi1 = if qh_byte & u1 != 0 { 16 } else { 0 };
-                let hi2 = if qh_byte & u2 != 0 { 16 } else { 0 };
+                let hi1 = if qh[lane] & u1 != 0 { 16 } else { 0 };
                 out.push(d1 * ((q & 0x0F) + hi1) as f32 - mn1);
+            }
+            for (lane, &q) in ql_chunk.iter().enumerate() {
+                let hi2 = if qh[lane] & u2 != 0 { 16 } else { 0 };
                 out.push(d2 * ((q >> 4) + hi2) as f32 - mn2);
             }
 
@@ -130,8 +134,8 @@ pub(in crate::moe) fn dequantize_row_q6_k(row: &[u8], width: usize) -> Result<Ve
             reason: format!("Q6_K width {width} is not divisible by 256"),
         });
     }
-    // Q6_K block: d(2) + scales(16) + ql(128) + qh(64) = 210 bytes
-    // Matches the ggml block_q6_K layout from llama.cpp.
+    // ggml block_q6_K (210 bytes): ql[128] low 4 bits, qh[64] high 2 bits,
+    // scales[16] as i8, then d as f16 at the END of the block.
     let expected_len = (width / 256) * 210;
     if row.len() != expected_len {
         return Err(HybridError::ModelLoad {
@@ -142,32 +146,30 @@ pub(in crate::moe) fn dequantize_row_q6_k(row: &[u8], width: usize) -> Result<Ve
             ),
         });
     }
-    let mut out = Vec::with_capacity(width);
-    for block in row.chunks_exact(210) {
-        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-        let scales = &block[2..18];
-        let ql = &block[18..146];
-        let qh = &block[146..210];
-        // Two passes of 128 values each (ql/qh advance by 64/32 per pass).
-        // Each pass reads 8 of the 16 scale entries: pass 0 uses scales[0..8],
-        // pass 1 uses scales[8..16]. Within each pass, the 4 output values per
-        // iteration read different scale offsets (matching ggml's sc[is + offset]).
-        for pass in 0..2u8 {
-            let base = (pass as usize) * 64;
-            let qh_base = (pass as usize) * 32;
-            let sc_pass_base = (pass as usize) * 8;
+    let mut out = vec![0.0f32; width];
+    for (block, y_block) in row.chunks_exact(210).zip(out.chunks_exact_mut(256)) {
+        let ql = &block[0..128];
+        let qh = &block[128..192];
+        let scales = &block[192..208];
+        let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+        // Two halves of 128 values each (ql/qh/scales advance by 64/32/8 per
+        // half). Within a half, iteration `l` writes positions l, l+32, l+64
+        // and l+96, exactly like ggml `dequantize_row_q6_K`.
+        for half in 0..2usize {
+            let ql = &ql[half * 64..];
+            let qh = &qh[half * 32..];
+            let sc = &scales[half * 8..];
+            let y = &mut y_block[half * 128..];
             for l in 0..32 {
                 let is = l / 16;
-                let q1 = ((ql[base + l] & 0x0F) | ((qh[qh_base + l] & 3) << 4)) as i8 - 32;
-                let q2 =
-                    ((ql[base + 32 + l] & 0x0F) | (((qh[qh_base + l] >> 2) & 3) << 4)) as i8 - 32;
-                let q3 = ((ql[base + l] >> 4) | (((qh[qh_base + l] >> 4) & 3) << 4)) as i8 - 32;
-                let q4 =
-                    ((ql[base + 32 + l] >> 4) | (((qh[qh_base + l] >> 6) & 3) << 4)) as i8 - 32;
-                out.push(d * (scales[sc_pass_base + is] as i8) as f32 * q1 as f32);
-                out.push(d * (scales[sc_pass_base + is + 2] as i8) as f32 * q2 as f32);
-                out.push(d * (scales[sc_pass_base + is + 4] as i8) as f32 * q3 as f32);
-                out.push(d * (scales[sc_pass_base + is + 6] as i8) as f32 * q4 as f32);
+                let q1 = ((ql[l] & 0x0F) | ((qh[l] & 3) << 4)) as i8 - 32;
+                let q2 = ((ql[l + 32] & 0x0F) | (((qh[l] >> 2) & 3) << 4)) as i8 - 32;
+                let q3 = ((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) as i8 - 32;
+                let q4 = ((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) as i8 - 32;
+                y[l] = d * (sc[is] as i8) as f32 * q1 as f32;
+                y[l + 32] = d * (sc[is + 2] as i8) as f32 * q2 as f32;
+                y[l + 64] = d * (sc[is + 4] as i8) as f32 * q3 as f32;
+                y[l + 96] = d * (sc[is + 6] as i8) as f32 * q4 as f32;
             }
         }
     }
