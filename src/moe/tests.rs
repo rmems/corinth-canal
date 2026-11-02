@@ -1119,9 +1119,10 @@ fn write_safetensors_gate_checkpoint(
 
 #[test]
 fn test_safetensors_forward_accepts_a_requested_subset_of_gate_experts() {
-    // The checkpoint has 64 experts and 8 are requested. GGUF has always
-    // allowed this; Safetensors used to load it and then fail on forward.
-    let tmp_dir = write_safetensors_gate_checkpoint("st_gate_subset", [64, 16], 16, 64);
+    // The checkpoint has 16 experts and 8 are requested. GGUF has always
+    // allowed this; Safetensors used to load it and then fail on forward,
+    // because gate scoring wanted the expert dimension to equal the request.
+    let tmp_dir = write_safetensors_gate_checkpoint("st_gate_subset", [16, 32], 32, 16);
 
     let mut model =
         Router::load_with_mode(tmp_dir.to_str().unwrap(), 8, 2, RoutingMode::DenseSim).unwrap();
@@ -1129,6 +1130,27 @@ fn test_safetensors_forward_accepts_a_requested_subset_of_gate_experts() {
 
     assert_eq!(out.expert_weights.len(), 8);
     assert_eq!(out.selected_experts[0], 3);
+}
+
+#[test]
+fn test_safetensors_load_accepts_gate_with_hidden_size_below_expert_count() {
+    // Safetensors used to reject this at load, with or without a subset,
+    // because it compared min(d0, d1) with config num_experts. GGUF never did.
+    let tmp_dir = write_safetensors_gate_checkpoint("st_gate_narrow", [64, 16], 16, 64);
+
+    for (requested, routed) in [(0, 64), (8, 8)] {
+        let mut model = Router::load_with_mode(
+            tmp_dir.to_str().unwrap(),
+            requested,
+            2,
+            RoutingMode::DenseSim,
+        )
+        .unwrap();
+        let out = model.forward(&vec![1.0; EMBEDDING_DIM]).unwrap();
+
+        assert_eq!(out.expert_weights.len(), routed);
+        assert_eq!(out.selected_experts[0], 3);
+    }
 }
 
 #[test]
