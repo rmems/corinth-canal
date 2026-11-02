@@ -2230,6 +2230,32 @@ fn test_gguf_f16_token_embedding_reads_only_the_requested_row() {
 }
 
 #[test]
+fn test_gguf_f16_token_embedding_bounds_each_row_on_a_truncated_file() {
+    // The directory declares 3 rows of width 2, but the payload stops after 2.
+    // Reading one row must not depend on the whole tensor being mapped.
+    let bits: [u16; 4] = [0x3C00, 0x4000, 0x3800, 0xBC00];
+    let payload: Vec<u8> = bits.iter().flat_map(|b| b.to_le_bytes()).collect();
+    let checkpoint = build_test_gguf(
+        vec![("token_embd.weight", vec![2, 3], GGML_TYPE_F16, payload)],
+        32,
+    );
+    let path = write_temp_file(&checkpoint, "f16_token_truncated");
+    let path_str = path.to_str().unwrap();
+    let mapped = probe_and_map_checkpoint(path_str).unwrap();
+
+    assert_eq!(
+        mapped
+            .extract_token_embedding("token_embd.weight", path_str, 1)
+            .unwrap(),
+        vec![0.5, -1.0]
+    );
+    let err = mapped
+        .extract_token_embedding("token_embd.weight", path_str, 2)
+        .unwrap_err();
+    assert!(matches!(err, HybridError::ModelLoad { .. }), "{err}");
+}
+
+#[test]
 fn synthetic_router_metadata_uses_the_shared_fallback_label() {
     // `run_manifest.json` persists this string and CLAUDE.md pins it, so the
     // stub metadata and the SynapseSource label table must agree. They were

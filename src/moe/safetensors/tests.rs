@@ -6,7 +6,7 @@ use super::manifest::{
     shard_metadata_namespaced_key,
 };
 use super::paths::{canonical_existing_or_parent, parent_or_current};
-use super::test_support::{temp_dir, write_safetensors};
+use super::test_support::{temp_dir, write_hf_config, write_safetensors, write_safetensors_bytes};
 use super::*;
 use std::collections::BTreeMap;
 use std::fs;
@@ -1029,4 +1029,95 @@ fn bf16_to_f32_matches_reference() {
     assert!(subnormal > 0.0);
     assert!(subnormal.is_subnormal());
     assert!(bf16_to_f32(0x7FC0).is_nan());
+}
+
+fn write_minimal_hf_config(dir: &Path) {
+    write_hf_config(
+        dir,
+        &serde_json::json!({"architectures": ["TestModel"], "hidden_size": 16, "num_hidden_layers": 1, "vocab_size": 8}),
+    );
+}
+
+fn one_f32_header(end_offset: u64) -> serde_json::Value {
+    serde_json::json!({"a": {"dtype": "F32", "shape": [1], "data_offsets": [0, end_offset]}})
+}
+
+#[test]
+fn from_directory_without_index_lets_the_last_shard_own_a_duplicate_tensor() {
+    let dir = temp_dir("load-last-shard-wins");
+    write_minimal_hf_config(&dir);
+    write_safetensors_bytes(
+        &dir.join("model-00001-of-00002.safetensors"),
+        &one_f32_header(4),
+        &1.0f32.to_le_bytes(),
+    );
+    write_safetensors_bytes(
+        &dir.join("model-00002-of-00002.safetensors"),
+        &one_f32_header(4),
+        &2.0f32.to_le_bytes(),
+    );
+
+    let path = dir.to_str().unwrap();
+    let checkpoint = MappedSafetensorsCheckpoint::from_directory(path).unwrap();
+    assert_eq!(checkpoint.extract_tensor_f32("a", path).unwrap(), vec![2.0]);
+}
+
+#[test]
+fn from_directory_without_index_ignores_a_malformed_overridden_entry() {
+    // The same entry is fatal when its shard owns the tensor, so this fixture
+    // really is malformed and the load below succeeds only by skipping it.
+    let alone = temp_dir("load-malformed-owner");
+    write_minimal_hf_config(&alone);
+    write_safetensors_bytes(
+        &alone.join("model-00001-of-00002.safetensors"),
+        &one_f32_header(999),
+        &1.0f32.to_le_bytes(),
+    );
+    let err = match MappedSafetensorsCheckpoint::from_directory(alone.to_str().unwrap()) {
+        Ok(_) => panic!("a malformed owned entry must fail the load"),
+        Err(err) => err.to_string(),
+    };
+    assert!(!err.contains("config.json"), "{err}");
+
+    let dir = temp_dir("load-malformed-overridden");
+    write_minimal_hf_config(&dir);
+    write_safetensors_bytes(
+        &dir.join("model-00001-of-00002.safetensors"),
+        &one_f32_header(999),
+        &1.0f32.to_le_bytes(),
+    );
+    write_safetensors_bytes(
+        &dir.join("model-00002-of-00002.safetensors"),
+        &one_f32_header(4),
+        &2.0f32.to_le_bytes(),
+    );
+
+    let path = dir.to_str().unwrap();
+    let checkpoint = MappedSafetensorsCheckpoint::from_directory(path).unwrap();
+    assert_eq!(checkpoint.extract_tensor_f32("a", path).unwrap(), vec![2.0]);
+}
+
+#[test]
+fn from_directory_with_index_ignores_a_malformed_tensor_outside_the_weight_map() {
+    let dir = temp_dir("load-indexed-skip");
+    write_minimal_hf_config(&dir);
+    let shard = "model-00001-of-00001.safetensors";
+    write_safetensors_bytes(
+        &dir.join(shard),
+        &serde_json::json!({
+            "a": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
+            "not_indexed": {"dtype": "F32", "shape": [1], "data_offsets": [0, 999]},
+        }),
+        &3.0f32.to_le_bytes(),
+    );
+    fs::write(
+        dir.join("model.safetensors.index.json"),
+        serde_json::to_vec(&serde_json::json!({"weight_map": {"a": shard}})).unwrap(),
+    )
+    .unwrap();
+
+    let path = dir.to_str().unwrap();
+    let checkpoint = MappedSafetensorsCheckpoint::from_directory(path).unwrap();
+    assert_eq!(checkpoint.extract_tensor_f32("a", path).unwrap(), vec![3.0]);
+    assert!(checkpoint.tensor_info("not_indexed").is_none());
 }
