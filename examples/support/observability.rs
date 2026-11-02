@@ -575,6 +575,17 @@ pub fn git_sha() -> String {
     "unknown".to_owned()
 }
 
+/// Map a [`git_sha`] result onto `run_manifest.json`'s optional `commit_sha`.
+///
+/// [`git_sha`] reports an unresolved checkout as the literal `"unknown"` so
+/// Sentry/OTel always carry a tag. A manifest should not record that
+/// placeholder as if it were a commit, so it becomes `None` here (the field
+/// is then omitted from the JSON) rather than a fake SHA.
+pub fn manifest_commit_sha(git_sha: &str) -> Option<String> {
+    let sha = git_sha.trim();
+    (!sha.is_empty() && sha != "unknown").then(|| sha.to_owned())
+}
+
 fn resolve_sentry_release(git_sha: &str) -> String {
     if let Some(release) = std::env::var("SENTRY_RELEASE")
         .ok()
@@ -933,6 +944,28 @@ mod tests {
             run_probe("git_sha", &[("AGENTOS_GIT_SHA", "deadbee")]),
             "deadbee"
         );
+    }
+
+    #[test]
+    fn manifest_commit_sha_keeps_resolved_shas() {
+        assert_eq!(manifest_commit_sha("deadbee"), Some("deadbee".to_owned()));
+        assert_eq!(
+            manifest_commit_sha(" be6162a\n"),
+            Some("be6162a".to_owned())
+        );
+    }
+
+    #[test]
+    fn manifest_commit_sha_drops_unresolved_placeholder() {
+        assert_eq!(manifest_commit_sha("unknown"), None);
+        assert_eq!(manifest_commit_sha(""), None);
+        assert_eq!(manifest_commit_sha("   "), None);
+    }
+
+    #[test]
+    fn manifest_commit_sha_matches_git_sha_env_override() {
+        let sha = run_probe("git_sha", &[("AGENTOS_GIT_SHA", "deadbee")]);
+        assert_eq!(manifest_commit_sha(&sha), Some("deadbee".to_owned()));
     }
 
     #[test]

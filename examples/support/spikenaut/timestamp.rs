@@ -296,7 +296,11 @@ fn is_leap_year(year: i32) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-pub(super) fn format_system_time_rfc3339_utc(now: std::time::SystemTime) -> String {
+/// Format `now` as RFC 3339 UTC with millisecond precision
+/// (`YYYY-MM-DDTHH:MM:SS.mmmZ`). Shared by the Spikenaut smoke manifest and
+/// `saaq_latent_calibration` so every `run_manifest.json` `created_at` has
+/// one portable, sortable form.
+pub fn format_system_time_rfc3339_utc(now: std::time::SystemTime) -> String {
     let dur = now
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -440,5 +444,20 @@ mod tests {
             "1970-01-01T00:00:00.000Z"
         );
         assert_eq!(parse_timestamp_string("1970-01-01T00:00:00.000Z"), Some(0));
+    }
+
+    #[test]
+    fn format_system_time_rfc3339_utc_round_trips_real_dates() {
+        use std::time::{Duration, UNIX_EPOCH};
+        // A known-good-run timestamp and a leap-day second, with millis.
+        let run = UNIX_EPOCH + Duration::from_millis(1_776_974_175_042);
+        assert_eq!(
+            format_system_time_rfc3339_utc(run),
+            "2026-04-23T19:56:15.042Z"
+        );
+        let leap = UNIX_EPOCH + Duration::from_secs(1_709_251_199);
+        let formatted = format_system_time_rfc3339_utc(leap);
+        assert_eq!(formatted, "2024-02-29T23:59:59.000Z");
+        assert_eq!(parse_timestamp_string(&formatted), Some(1_709_251_199_000));
     }
 }

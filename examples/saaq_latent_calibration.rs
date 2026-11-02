@@ -633,9 +633,16 @@ fn build_manifest(
     ExperimentManifest {
         run_id: ctx.run_id.clone(),
         run_tag: ctx.run_tag.map(|s| s.to_owned()),
-        created_at: format!("{:?}", std::time::SystemTime::now()),
+        // RFC 3339 UTC, matching the Spikenaut smoke manifest. The previous
+        // `format!("{:?}", SystemTime::now())` emitted a platform-specific
+        // Debug struct (`SystemTime { tv_sec: .., tv_nsec: .. }` on Unix,
+        // `SystemTime { intervals: .. }` on Windows) that no tool could parse.
+        created_at: support::spikenaut::format_system_time_rfc3339_utc(std::time::SystemTime::now()),
         repo: "corinth-canal".to_owned(),
-        commit_sha: None,
+        // Same SHA the validation_start/finish tracing events carry, so an
+        // archived manifest links back to the code that produced it.
+        // Omitted (not faked) when the checkout cannot be resolved.
+        commit_sha: observability::manifest_commit_sha(&observability::git_sha()),
         model_slug: ctx.spec.slug.clone(),
         model_family: format!("{:?}", model.router_family()),
         architecture: model.router_architecture().to_owned(),

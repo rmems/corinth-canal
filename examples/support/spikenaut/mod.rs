@@ -36,4 +36,4 @@ pub use map::map_record;
 #[allow(unused_imports)]
 pub use smoke::run_dual_saaq_cpu_smoke;
 #[allow(unused_imports)]
-pub use timestamp::parse_timestamp_string;
+pub use timestamp::{format_system_time_rfc3339_utc, parse_timestamp_string};
