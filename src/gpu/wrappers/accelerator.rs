@@ -2,7 +2,7 @@
 // ════════════════════════════════════════════════════════════════════
 //  gpu/accelerator.rs — High-level GPU accelerator facade
 //
-//  GpuAccelerator bundles the CUDA context, loaded PTX modules, and
+//  GpuAccelerator bundles the CUDA context, loaded fatbin modules, and
 //  convenience launchers for the neuro-spike kernel set.
 //
 //  When no GPU is present the struct can still be constructed in
@@ -53,10 +53,10 @@ struct TemporalState {
     saaq_partial_walkers: GpuBuffer<u32>,
 }
 
-/// Facade that owns a CUDA context and the compiled PTX modules.
+/// Facade that owns a CUDA context and the compiled fatbin modules.
 pub struct GpuAccelerator {
     temporal_state: Option<TemporalState>,
-    /// `None` when PTX modules failed to load.
+    /// `None` when fatbin modules failed to load.
     modules: Option<KernelModule>,
     /// `None` when running in CPU-only / stub mode. Keep this field last so
     /// device buffers and modules are dropped before the CUDA context.
@@ -129,7 +129,7 @@ impl GpuAccelerator {
         !cfg!(gpu_stub) && self._ctx.is_some()
     }
 
-    /// `true` if a CUDA context is available. PTX-backed helpers may still be
+    /// `true` if a CUDA context is available. Fatbin-backed helpers may still be
     /// unavailable if module loading failed, but the shim-backed temporal F16
     /// path can still run.
     ///
@@ -544,8 +544,9 @@ impl GpuAccelerator {
 
     /// Copy the best SAT walker assignment into `output`.
     ///
-    /// Completes the SAT pipeline whose reducer [`Self::satsolver_aux_reduce_best`]
-    /// is already live: this wrapper launches the `satsolver_extract` kernel and
+    /// Pairs with the reducer [`Self::satsolver_aux_reduce_best`], whose only caller
+    /// (`Model::compute_routing_telemetry`) also has no caller yet. This wrapper
+    /// launches the `satsolver_extract` kernel and
     /// blocks until the best solved assignment has been written to `output`.
     ///
     /// There is currently no Rust caller. The kernel remains a load-time

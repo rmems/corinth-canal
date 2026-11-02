@@ -2,8 +2,8 @@
 //! Diagnostic pass for issue #31.
 //!
 //! Loads each validation model in the configured lineup (LINEUP_CONFIG, then
-//! CHECKPOINT_PATH, then autodiscovery — same precedence as the SAAQ
-//! runner) and prints, per model, the GGUF facts that drive the
+//! SAFETENSORS_LINEUP_CONFIG, then CHECKPOINT_PATH, then autodiscovery — same
+//! precedence as the SAAQ runner) and prints, per model, the GGUF facts that drive the
 //! synthetic-vs-real synapse decision in
 //! `src/moe/adapter.rs::resolve_adapter`. Writes a JSON report to
 //! `<output_root>/synapse_diagnostic.json`.
@@ -187,7 +187,7 @@ fn run(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Stream the JSON report through a buffered writer so peak memory stays
-    // bounded as the lineup grows beyond the current 5-model fixture.
+    // bounded as the lineup grows.
     let json_path = cfg.output_root.join("synapse_diagnostic.json");
     let file = fs::File::create(&json_path)?;
     let mut writer = BufWriter::new(file);

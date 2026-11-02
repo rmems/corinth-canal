@@ -11,7 +11,7 @@ pub type GpuResult<T> = Result<T, GpuError>;
 pub enum GpuError {
     /// CUDA context / device initialisation failed.
     InitFailed(String),
-    /// PTX module failed to load or JIT-compile.
+    /// Fatbin module failed to load (including PTX-fallback JIT failures).
     ModuleLoadFailed(String),
     /// A kernel function was not found in the loaded module.
     KernelNotFound(String),

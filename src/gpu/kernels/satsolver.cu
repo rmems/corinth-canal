@@ -17,7 +17,7 @@
 //  Kernels exported:
 //    satsolver_init          — initialise assignment + clause data
 //    satsolver_step          — one WalkSAT flip step per walker
-//    satsolver_aux_update    — update auxiliary scores (break / make counts)
+//    satsolver_aux_update    — recompute sat_flags and emit per-block best (score, walker) partials
 //    satsolver_check_solution — check which walkers have found a solution
 //    satsolver_extract       — copy best-found assignment to output
 //    satsolver_best_reduce_pass1 — per-block min(score, walker) reduction

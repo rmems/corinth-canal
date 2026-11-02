@@ -297,9 +297,9 @@ pub fn init_sentry(command: &'static str) -> Option<ClientInitGuard> {
 /// sends: `capture_error`, `capture_message`, panic payloads from the default
 /// panic integration, and string values in scope extras. Several of those
 /// carry absolute paths — `HybridError::ModelLoad` and `MissingTensor` bake
-/// `{path}` into their `Display`, and `GpuError::ModuleLoadFailed` can embed a
-/// `.ptx`/fatbin path that `src/gpu/wrappers/sentry_capture.rs` sends as an
-/// extra.
+/// `{path}` into their `Display`. `GpuError::ModuleLoadFailed` carries only the
+/// module name and the driver's free-form JIT log, which
+/// `src/gpu/wrappers/sentry_capture.rs` sends as extras, so the hook covers those too.
 ///
 /// A path becomes `<path:stem>`, keeping the event correlatable to a
 /// checkpoint without publishing the machine's directory layout.
@@ -547,12 +547,8 @@ pub fn run_id() -> String {
 ///
 /// Precedence:
 ///   1. `AGENTOS_GIT_SHA` (set by managed CI / AgentOS).
-///   2. `git rev-parse --short HEAD` invoked from the current working
-///      directory. This matches the fallback already used by
-///      `scripts/observability/newrelic_event.sh` and
-///      `scripts/observability/sentry_release.sh`, so Rust traces and
-///      shell-emitted releases / events agree on the SHA for the same
-///      checkout (PR #30 review consistency requirement).
+///   2. `git rev-parse --short HEAD`, the same short form that names the
+///      Sentry release (`corinth-canal@<sha>`, see `resolve_sentry_release`).
 ///   3. Literal `"unknown"` when neither source resolves (e.g. running
 ///      from outside a git checkout with the env var unset).
 pub fn git_sha() -> String {

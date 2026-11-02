@@ -2,7 +2,7 @@
 // ════════════════════════════════════════════════════════════════════
 //  spiking_network.cu — LIF / STDP spiking-network CUDA kernels
 //
-//  Kernels exported (name-exact for PTX symbol lookup in kernel.rs):
+//  Kernels looked up by name in kernel.rs:
 //    poisson_encode       — rate-coded Poisson spike train
 //    project_snapshot_current — project telemetry snapshot to per-neuron current
 //    lif_step             — LIF neuron step (unweighted)
@@ -16,11 +16,13 @@
 //    membrane_dv_dt_reduce_pass1 — per-block reduction of |dv/dt|
 //    routing_entropy_reduce_pass1 — per-block reduction of routing entropy
 //    latent_reduce_pass2          — final reduction of pass1 partials
+//
+//  Launched via myelin_shim.cu (not looked up by name):
+//    gif_step_weighted_f16        — F16-synapse variant of gif_step_weighted
 //    saaq_find_best_walker        — SAAQ pass 1 argmax reduction; writes one partial per block
 //    saaq_reduce_partials_f16     — SAAQ pass 2 reduction over block partials; writes single u32 best_walker
 //
-//  Parameters follow the 16-neuron / 16-channel architecture in
-//  neuro-spike-core/src/snn/engine.rs.
+//  GIF constants mirror SparseGifHiddenLayer in src/funnel.rs.
 //
 //  Target: sm_120 (RTX 5080 Blackwell) · CUDA 13.x
 // ════════════════════════════════════════════════════════════════════
@@ -42,7 +44,7 @@
 #define GIF_RESET_RATIO      0.35f
 #define GIF_ADAPTATION_TERM  0.05f
 
-// ── STDP constants (match stdp.rs) ───────────────────────────────
+// ── STDP constants (no CPU counterpart in this crate) ──
 #define STDP_A_PLUS   0.01f
 #define STDP_A_MINUS  0.012f
 #define STDP_TAU      20.0f

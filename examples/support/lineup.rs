@@ -154,7 +154,7 @@ pub fn cloud_lineup_path_from_env() -> Option<PathBuf> {
 }
 
 /// Parsed representation of a safetensors model entry from
-/// `configs/safetensors_lineup.toml`.
+/// `configs/safetensors_lineup.toml` (local copy of `configs/local_safetensors_lineup.template.toml`).
 #[derive(Debug, Clone)]
 pub struct SafetensorsModelEntry {
     pub slug: String,
@@ -163,7 +163,7 @@ pub struct SafetensorsModelEntry {
     pub target: String,
 }
 
-/// Parse a `configs/safetensors_lineup.toml` file and return every entry
+/// Parse a safetensors lineup file (see `configs/local_safetensors_lineup.template.toml`) and return every entry
 /// whose path exists on disk. Missing paths are skipped with a warning.
 pub fn load_safetensors_lineup(
     path: &Path,

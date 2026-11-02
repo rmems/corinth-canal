@@ -1,8 +1,9 @@
 # corinth-canal model adapter configurations.
 #
-# Static per-family metadata consumed by the run matrix validator and
-# `Surrogate_Viz.jl`. Each [[adapter]] entry describes the policies and
-# capabilities for one model family.
+# Reference metadata only: no code in this repository loads this file.
+# RunMatrix (src/experiment/schema.rs) deserializes [[run]] entries and nothing
+# else, so editing these policies changes no validation behaviour. Each
+# [[adapter]] entry documents the intended policies for one model family.
 #
 # Fields:
 #   model_family              family slug (must match ModelFamily::slug())

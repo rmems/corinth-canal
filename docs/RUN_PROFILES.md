@@ -158,9 +158,10 @@ Each cloud entry carries:
   `cloud_lineup_shipped_inventory_parses` asserts the set
 - `required_env_vars` — env var names that must be set for execution
 
-`CLOUD_LINEUP_CONFIG` parsing and cloud execution guards currently live in
-`examples/support/mod.rs`. The main `just saaq` runner path is not yet wired to
-consume cloud lineup config directly.
+`CLOUD_LINEUP_CONFIG` parsing and the cloud execution guard live in
+`examples/support/lineup.rs` (re-exported through the `support` module).
+`RunConfig::from_env` validates a set `CLOUD_LINEUP_CONFIG` and aborts the run on
+failure, but the `just saaq` runner does not consume cloud entries as run models.
 
 ## Safetensors manifest
 
@@ -168,7 +169,7 @@ consume cloud lineup config directly.
 |---------|---------|
 | Inspect a single Safetensors checkpoint | `cargo run --example safetensors_manifest --no-default-features -- <checkpoint-or-dir> artifacts/safetensors_manifest.json` |
 
-The safetensors lineup template (`configs/local_safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/mod.rs` parse the local copy. The `safetensors_manifest` example
+The safetensors lineup template (`configs/local_safetensors_lineup.template.toml`) can be copied to `configs/safetensors_lineup.toml`; helper utilities in `examples/support/lineup.rs` parse the local copy. The `safetensors_manifest` example
 currently uses positional CLI arguments for single-checkpoint inspection.
 
 Local entries onboarded:
@@ -180,6 +181,11 @@ Local entries onboarded:
 | `trinity_nano_base` | arcee-ai/Trinity-Nano-Base | 7 |
 | `phi_tiny_moe_instruct` | microsoft/Phi-tiny-MoE-instruct | 2 |
 | `moonlight_16b_a3b_bnb_4bit` | slowfastai/Moonlight-16B-A3B-bnb-4bit | 2 |
+| `olmoe_1b_7b_0125_instruct` | allenai/OLMoE-1B-7B-0125-Instruct | 3 |
+| `lfm2_8b_a1b` | lfm2-8b-a1b | 4 |
+| `qwen_moe_2_7b_int4` | Qwen-MoE-2.7B-Int4 | 3 |
+
+The template `configs/local_safetensors_lineup.template.toml` is authoritative if this table drifts.
 
 Use Safetensors manifests when the goal is checkpoint anatomy: tensor names,
 dtypes, shapes, byte sizes, source shards, and recognizable MoE router/expert
@@ -274,12 +280,4 @@ Projection modes (selected via `PROJECTION_MODE`, default `SpikingTernary`):
 - `MembraneSnapshot`
 - `SpikingTernary`
 
-Model families supported by the GGUF adapter layer:
-
-- `Olmoe`
-- `Qwen3Moe`
-- `Gemma4`
-- `DeepSeek2`
-- `LlamaMoe`
-- `Zaya`
-- `Glm4`
+Model families supported by the adapter layer: the `ModelFamily` enum in `src/types.rs` is the list. The GGUF and Safetensors architecture aliases per family live in `FAMILY_ARCHES` in `src/moe/adapter.rs`; consult those tables rather than a prose list.

@@ -78,7 +78,11 @@ Important paths:
 - `src/model/telemetry_io.rs`
   - Routing telemetry CSV helpers.
 - `src/moe/checkpoint.rs`
-  - GGUF parsing, mmap access, tensor slicing, metadata.
+  - Thin compatibility façade re-exporting `src/moe/gguf/`.
+- `src/moe/gguf/`
+  - GGUF parsing, mmap access, tensor slicing, metadata, dequantization, CUDA host-register.
+- `src/moe/safetensors/`
+  - Safetensors header inspection, manifests, and mmap token-embedding load.
 - `src/moe/adapter.rs`
   - Model-family adapter resolution.
 - `src/moe/routing.rs`
@@ -138,7 +142,7 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
 
 - Start at `src/lib.rs` for the exported crate surface.
 - Read `src/model/mod.rs` before descending into `core.rs` and `temporal.rs`.
-- Read `src/moe/mod.rs` before descending into `adapter.rs`, `checkpoint.rs`, and `routing.rs`.
+- Read `src/moe/mod.rs` before descending into `adapter.rs`, `gguf/`, and `routing.rs`.
 - Use `examples/saaq_latent_calibration.rs` as the research loop entrypoint.
 
 ## Workflow Policy

@@ -111,11 +111,16 @@ Instrumented launch sites:
 | `src/moe/gguf/` | GGUF parse, mmap, tensor slicing, dequantization, CUDA host register |
 | `src/moe/adapter.rs` | Model-family adapter resolution and tensor selection |
 | `src/moe/routing.rs` | Router math (gate scores, resampling, normalization, top-k) |
+| `src/moe/ggml.rs` | GGUF/GGML type ids, `ggml_type_label`, `synapse_dequant_path_supported` |
 | `src/moe/safetensors/` | Safetensors façade: inspection/manifest (`discovery`/`json`/`paths`/`manifest`/`validate`) + HF config + mmap load (`config`/`map`) |
 | `src/projector.rs` | `ProjectionMode` spike-to-embedding projection |
 | `src/funnel.rs` | Telemetry funnel, signed split banks, GIF hidden layer |
 | `src/telemetry.rs` | `TelemetryEncoder` and `TelemetrySnapshot` bridge |
 | `src/latent.rs` | SAAQ 1.0 / 1.5 calibration and CSV export |
+| `src/types.rs` | `TelemetrySnapshot`, `ModelFamily`, `RoutingMode`, `ProjectionMode`, `CloudModelSpec`, `ModelConfig`, `EMBEDDING_DIM` |
+| `src/error.rs` | `HybridError` and the crate `Result` alias |
+| `src/experiment/schema.rs` | `RunMatrix`, `ExperimentManifest`, `ExperimentSummary` (TOML matrix, `run_manifest.json` and `summary.json` shapes) |
+| `src/metric.rs` | `pub(crate)` MSE helper |
 | `src/gpu/` | CUDA wrappers, buffers, kernel launchers |
 | `examples/support/config.rs` | Example-only environment/config resolution |
 | `examples/support/spikenaut/` | Spikenaut JSONL → canonical replay CSV + CPU dual-SAAQ smoke |
@@ -166,15 +171,7 @@ When the selected tensor is dequantized and not already square, the GPU
 temporal path resamples it to the neuron grid instead of rejecting the
 checkpoint outright.
 
-Supported families in code today:
-
-- `Olmoe`
-- `Qwen3Moe`
-- `Gemma4`
-- `DeepSeek2`
-- `LlamaMoe`
-- `Zaya`
-- `Glm4`
+Supported families in code today: the `ModelFamily` enum in `src/types.rs` is the authoritative list (21 variants at time of writing, including `NemotronLegacy`, which only serde deserialization can select). `ModelFamily::from_alias` holds the operator aliases, and `FAMILY_ARCHES` in `src/moe/adapter.rs` maps GGUF and Safetensors architecture strings onto the enum. Consult those rather than keeping a prose list here.
 
 ### Cloud model metadata
 

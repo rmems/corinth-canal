@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Integration harness for `examples/support/spikenaut/`.
 //!
-//! Example targets do not run unit-test harnesses, so this `#[path]` include
-//! is what makes the ingest/mapping tests execute under
+//! Plain `cargo test` builds example targets without running their tests
+//! (`--all-targets` does run them), so this `#[path]` include is what makes
+//! the ingest/mapping tests execute under
 //! `cargo test --no-default-features`.
 
 #[path = "../examples/support/spikenaut/mod.rs"]

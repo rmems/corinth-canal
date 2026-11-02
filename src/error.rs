@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Error types for `corinth-canal`.
 //!
-//! All public functions in this crate return [`HybridError`] wrapped in a
-//! [`Result`].  Downstream callers can match on variants to distinguish
-//! configuration mistakes from I/O failures or runtime model errors.
+//! Most fallible library APIs return [`HybridError`] wrapped in a [`Result`].
+//! Two exceptions remain: the `ProjectionMode` env parsers in `types.rs` return
+//! `Result<_, String>`, and the cuda-gated `gpu` and `model` temporal APIs return
+//! `GpuResult`, which has no `From` bridge into [`HybridError`] yet. Downstream
+//! callers can match on variants to distinguish configuration mistakes from I/O
+//! failures or runtime model errors.
 
 use thiserror::Error;
 
@@ -11,13 +14,14 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum HybridError {
     // ── Configuration errors ──────────────────────────────────────────────
-    /// A required field in [`ModelConfig`](crate::types::ModelConfig) was
-    /// empty or out of range.
+    /// Configuration or schema validation failed
+    /// ([`ModelConfig`](crate::types::ModelConfig), `RunMatrix`, adapter or router
+    /// settings), or a config-like artifact could not be serialized.
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 
     // ── Model loading errors ──────────────────────────────────────────────
-    /// The GGUF file could not be opened / parsed.
+    /// A checkpoint (GGUF or Safetensors) could not be opened, parsed or described.
     #[error("model load failed for '{path}': {reason}")]
     ModelLoad { path: String, reason: String },
 
@@ -34,7 +38,8 @@ pub enum HybridError {
     #[error("input length mismatch: expected {expected}, got {got}")]
     InputLengthMismatch { expected: usize, got: usize },
 
-    /// Router forward pass returned an error.
+    /// Routing output lacked data the caller required (for example
+    /// `expert_weights` missing from `ModelOutput`).
     #[error("Router forward pass failed: {0}")]
     RouterForward(String),
 

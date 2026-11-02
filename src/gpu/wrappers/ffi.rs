@@ -2,7 +2,7 @@
 // ════════════════════════════════════════════════════════════════════
 //  gpu/ffi.rs — C ABI shim wrappers for Blackwell-critical kernels
 //
-//  Most kernels still launch through PTX/JIT in kernel.rs. The two
+//  Most kernels launch through the fatbin modules loaded in kernel.rs. The two
 //  latency-critical Blackwell paths below launch through a linked CUDA
 //  shim so Rust can pass raw driver handles into a runtime `<<<>>>` call.
 // ════════════════════════════════════════════════════════════════════

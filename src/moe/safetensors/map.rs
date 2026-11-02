@@ -147,9 +147,8 @@ fn build_unsharded_shard_map(
 }
 
 impl MappedSafetensorsCheckpoint {
-    /// Map a Safetensors directory containing `config.json` and either
-    /// `model.safetensors.index.json` (sharded) or `model.safetensors`
-    /// (single-file).
+    /// Map a directory containing `config.json` plus either one
+    /// `*.safetensors.index.json` (sharded) or one or more `*.safetensors` shards.
     pub fn from_directory(path: &str) -> Result<Self> {
         let root = Path::new(path);
         if !root.is_dir() {

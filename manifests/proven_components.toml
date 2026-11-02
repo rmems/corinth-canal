@@ -9,28 +9,28 @@ schema_version = 1
 path            = "src/model/core.rs"
 status          = "reference"
 target_repo     = "rmems-model"
-owner_notes     = "Gated on Stage E routing-CSV path refactor."
+owner_notes     = "Orchestration still couples runtime behaviour, artifact wiring and GGUF-backed routing; not yet promotable as an isolated surface."
 last_proven_run = ""
 
 [[component]]
 path            = "src/model/temporal.rs"
 status          = "stabilizing"
 target_repo     = "rmems-model"
-owner_notes     = "GPU temporal loop proven; needs explicit CSV path field."
+owner_notes     = "GPU temporal loop proven; legacy CWD-relative routing CSV fallback remains when ModelConfig::gpu_routing_telemetry_path is unset, so callers must set the sink explicitly."
 last_proven_run = ""
 
 [[component]]
 path            = "src/model/telemetry_io.rs"
 status          = "stabilizing"
 target_repo     = "rmems-model"
-owner_notes     = "Pure helper; blocked on caller passing absolute path."
+owner_notes     = "Pure helper; public behaviour stable; promotion depends on the surrounding runtime/API cleanup."
 last_proven_run = ""
 
 [[component]]
 path            = "src/moe/mod.rs"
 status          = "stabilizing"
 target_repo     = "rmems-moe"
-owner_notes     = "Router host; pending full five-family matrix."
+owner_notes     = "Router host; surface is clean. Pending full model-family validation matrix (consult the ModelFamily enum for the current count)."
 last_proven_run = ""
 
 [[component]]
@@ -48,10 +48,17 @@ owner_notes     = "Split of checkpoint: metadata, map, dequant, cuda_register. N
 last_proven_run = ""
 
 [[component]]
+path            = "src/moe/ggml.rs"
+status          = "reference"
+target_repo     = "rmems-moe"
+owner_notes     = "GGUF wire type ids, public ggml_type_label / synapse_dequant_path_supported, internal-only GGML_TYPE_IQ3_M_BLOCK. Sits beside the parse layer tracked by #115; moves only if that adoption does."
+last_proven_run = ""
+
+[[component]]
 path            = "src/moe/adapter.rs"
 status          = "stabilizing"
 target_repo     = "rmems-moe"
-owner_notes     = "Five-family support; needs CI matrix."
+owner_notes     = "Adapter resolution covers all ModelFamily variants (consult the enum for the current count); needs broader per-family validation coverage."
 last_proven_run = ""
 
 [[component]]
@@ -72,7 +79,7 @@ last_proven_run = ""
 path            = "src/projector.rs"
 status          = "stabilizing"
 target_repo     = "rmems-projector"
-owner_notes     = "ProjectionMode surface frozen."
+owner_notes     = "ProjectionMode surface is stable; SpikingTernary remains the live research path."
 last_proven_run = ""
 
 [[component]]
@@ -86,7 +93,7 @@ last_proven_run = ""
 path            = "src/telemetry.rs"
 status          = "stabilizing"
 target_repo     = "rmems-telemetry"
-owner_notes     = "Schema frozen."
+owner_notes     = "Telemetry encoding surface is small and stable."
 last_proven_run = ""
 
 [[component]]
@@ -100,5 +107,40 @@ last_proven_run = ""
 path            = "src/gpu"
 status          = "reference"
 target_repo     = "rmems-gpu"
-owner_notes     = "Blocked on build.rs portability."
+owner_notes     = "Kernel sources and cust wrappers remain coupled to reference-repo build/runtime assumptions; blocked on portability and validation breadth."
+last_proven_run = ""
+
+[[component]]
+path            = "src/types.rs"
+status          = "stabilizing"
+target_repo     = "rmems-types"
+owner_notes     = "Externally-visible vocabulary; serde aliases are load-bearing for existing matrices, so any rename is breaking."
+last_proven_run = ""
+
+[[component]]
+path            = "src/error.rs"
+status          = "stabilizing"
+target_repo     = "rmems-types"
+owner_notes     = "HybridError is the crate-wide error type; src/gpu has an unbridged GpuError, and unifying them is the graduation gate."
+last_proven_run = ""
+
+[[component]]
+path            = "src/experiment/"
+status          = "reference"
+target_repo     = "rmems-experiment"
+owner_notes     = "RunMatrix / ExperimentManifest / ExperimentSummary: the TOML matrix and run_manifest.json schemas."
+last_proven_run = ""
+
+[[component]]
+path            = "src/metric.rs"
+status          = "reference"
+target_repo     = "n/a"
+owner_notes     = "pub(crate) MSE helper."
+last_proven_run = ""
+
+[[component]]
+path            = "examples/support/config.rs"
+status          = "reference"
+target_repo     = "n/a"
+owner_notes     = "Intentionally stays here; env-truth surface for the reference repo only."
 last_proven_run = ""

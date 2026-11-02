@@ -27,6 +27,8 @@ pub struct FunnelActivity {
     pub input_spike_train: Vec<Vec<usize>>,
     pub spike_train: Vec<Vec<usize>>,
     pub potentials: Vec<f32>,
+    /// Always zeros. The Izhikevich adaptive bank is not implemented; every
+    /// non-test producer emits zeros. Kept for projector shape compatibility.
     pub iz_potentials: Vec<f32>,
 }
 
@@ -134,6 +136,11 @@ impl SparseGifHiddenLayer {
         }
     }
 
+    /// Returns `(spike_train, potentials, iz_potentials)`.
+    ///
+    /// The third tuple element is always zeros. The Izhikevich adaptive bank is
+    /// not implemented; every non-test producer emits zeros. Kept for projector
+    /// shape compatibility.
     pub fn run(
         &mut self,
         input_spike_train: &[Vec<usize>],

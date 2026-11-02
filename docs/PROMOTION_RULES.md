@@ -32,8 +32,9 @@ A module moves from **stabilizing** to **proven** only after all of:
    A module that is only validated against a subset must say which subset in
    its `docs/MODULE_STATUS.md` note rather than silently inheriting a short
    list from here.
-2. **Dual-SAAQ parity.** The run emits both `saaq_delta_q_*_v1_0` and
-   `saaq_delta_q_*_v1_5` columns, and the two rules diverge in the
+2. **Dual-SAAQ parity.** The run populates both the `saaq_delta_q_legacy_{prev,target}`
+   (SAAQ 1.0) and `saaq_delta_q_v15_{prev,target}` (SAAQ 1.5) columns of
+   `latent_telemetry.csv` (solo calibrators leave them at 0.0), and the two rules diverge in the
    expected regime (1.5 < 1.0 on large deltas by the sqrt-rate rule).
 3. **GPU validation and determinism check.** The relevant CUDA path has Tier 1
    repo-native evidence from `docs/CUDA_VALIDATION.md`, and a `REPEAT_COUNT=2`

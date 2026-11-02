@@ -48,6 +48,9 @@ inspection / manifest generation only. The router path remains GGUF-backed.
 | MET-58 | `trinity_nano_base` | arcee-ai/Trinity-Nano-Base | 7 | moe |
 | — | `phi_tiny_moe_instruct` | microsoft/Phi-tiny-MoE-instruct | 2 | moe |
 | — | `moonlight_16b_a3b_bnb_4bit` | slowfastai/Moonlight-16B-A3B-bnb-4bit | 2 | moe |
+| — | `olmoe_1b_7b_0125_instruct` | allenai/OLMoE-1B-7B-0125-Instruct | 3 | moe |
+| — | `lfm2_8b_a1b` | lfm2-8b-a1b | 4 | moe |
+| — | `qwen_moe_2_7b_int4` | Qwen-MoE-2.7B-Int4 | 3 | moe |
 
 ### Batch C — Cloud model metadata stubs
 

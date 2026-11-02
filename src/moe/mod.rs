@@ -6,7 +6,8 @@
 //! - `moe/checkpoint.rs` compatibility re-export of `gguf/`
 //! - `moe/adapter.rs` for model-family detection and tensor selection
 //! - `moe/routing.rs` for routing math and embedding resampling
-//! - `moe/safetensors.rs` for Safetensors header inspection, manifests, and tensor loading
+//! - `moe/safetensors/` for Safetensors header inspection, manifests, and tensor loading (see its module doc for the submodule split)
+//! - `moe/ggml.rs` for GGUF/GGML wire-type constants and labels
 
 mod adapter;
 pub(crate) use adapter::SYNTHETIC_FALLBACK_SOURCE;

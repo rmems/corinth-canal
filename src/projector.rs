@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Spike-to-expert projector — the heart of the neuromorphic-ANN fusion.
 //!
-//! The [`Projector`] sits between the Spikenaut SNN and Router's expert router.
+//! The [`Projector`] sits between the GIF hidden layer (`SparseGifHiddenLayer`
+//! on the CPU, GPU `gif_step_weighted_tick`) and the MoE `Router`.
 //! Its job is to compress the high-dimensional spike activity (neuron indices +
 //! firing rates + membrane potentials) into a single dense embedding vector
 //! that Router can use as a context prefix.
@@ -33,11 +34,13 @@ pub use crate::types::ProjectionMode;
 
 // ── Projection weight matrix ───────────────────────────────────────────────────
 
-/// Number of neurons in the Spikenaut SNN.
+/// Default input neuron count; override with `with_input_neurons`.
 const SNN_NEURONS: usize = 2048;
 const TEMPORAL_BINS: usize = 4;
 
-/// Number of Izhikevich neurons in the adaptive bank.
+/// Feature slots reserved for an Izhikevich adaptive bank that is not
+/// implemented; non-test callers pass zeros. Removing them would change
+/// `feature_dim_for` and therefore the projection weight matrix.
 const IZ_NEURONS: usize = 5;
 
 fn feature_dim_for(snn_neurons: usize) -> usize {
@@ -68,12 +71,12 @@ fn unit_symmetric(hash: u64) -> f32 {
 
 // ── Projector ─────────────────────────────────────────────────────────────────
 
-/// Converts Spikenaut SNN output into a dense embedding for Router.
+/// Converts GIF hidden-layer activity into a dense embedding for the Router.
 ///
-/// Internally this is a **learned linear layer** `W ∈ ℝ^{EMBEDDING_DIM × FEATURE_DIM}`
-/// plus a bias `b ∈ ℝ^{EMBEDDING_DIM}`, initialised with Xavier-uniform weights.
-/// The weight matrix is updated only by Julia/E-prop via the spine; it is
-/// **frozen from the Rust side**.
+/// Internally this is a linear layer `W ∈ ℝ^{EMBEDDING_DIM × feature_dim}`, where
+/// `feature_dim = feature_dim_for(snn_neurons)`, plus a bias `b ∈ ℝ^{EMBEDDING_DIM}`.
+/// The weights are deterministic Xavier-uniform at construction, are never
+/// trained in this crate, and change only through `load_weights`/`load_bias`.
 ///
 /// Note two different defaults exist and they disagree:
 /// [`ProjectionMode::default()`] is [`ProjectionMode::SpikingTernary`], but
@@ -99,8 +102,8 @@ pub struct Projector {
 
     feature_dim: usize,
 
-    /// Flat weight matrix `W`, row-major layout: `W[out * FEATURE_DIM + in]`.
-    /// Shape: `[EMBEDDING_DIM, FEATURE_DIM]`.
+    /// Flat weight matrix `W`, row-major layout: `W[out * feature_dim + in]`.
+    /// Shape: `[EMBEDDING_DIM, feature_dim]`.
     weights: Vec<f32>,
 
     /// Bias vector `b`.  Shape: `[EMBEDDING_DIM]`.
@@ -172,9 +175,11 @@ impl Projector {
     /// Project SNN spike activity into a dense embedding.
     ///
     /// # Arguments
-    /// * `spike_train`  — per-step spike sets from `SpikingNetwork::step`.
+    /// * `spike_train`  — per-step spike sets from the GIF hidden layer.
     /// * `potentials`   — membrane potentials after the final SNN time-step.
-    /// * `iz_potentials`— Izhikevich neuron voltages (5 adaptive neurons).
+    /// * `iz_potentials`— adaptive-bank voltages; up to `IZ_NEURONS` are read and
+    ///   missing slots are zero-filled. The Izhikevich adaptive bank is not
+    ///   implemented, so non-test callers pass zeros and this input is reserved.
     ///
     /// # Returns
     /// Dense embedding `Vec<f32>` of length [`EMBEDDING_DIM`].
@@ -209,7 +214,7 @@ impl Projector {
     ) -> Vec<f32> {
         let n_steps = spike_train.len().max(1) as f32;
 
-        // 1. Firing rates per neuron [16 dims]
+        // 1. Firing rates per neuron [snn_neurons]
         let mut rates = vec![0.0_f32; self.snn_neurons];
         for step in spike_train {
             for &idx in step {
@@ -227,7 +232,7 @@ impl Projector {
             *ema = self.ema_alpha * *rate + (1.0 - self.ema_alpha) * *ema;
         }
 
-        // 2. Temporal histogram bins (4 equal-width bins) [64 dims]
+        // 2. Temporal histogram bins (4 equal-width bins) [snn_neurons * TEMPORAL_BINS]
         let bins = TEMPORAL_BINS;
         let mut hist = vec![0.0_f32; self.snn_neurons * bins];
         if !spike_train.is_empty() {
@@ -246,13 +251,13 @@ impl Projector {
             }
         }
 
-        // 3. Membrane potentials [16 dims] — clamped to [0, 1]
+        // 3. Membrane potentials [snn_neurons] — clamped to [0, 1]
         let membrane: Vec<f32> = potentials[..self.snn_neurons]
             .iter()
             .map(|&v| v.clamp(0.0, 1.0))
             .collect();
 
-        // 4. Izhikevich adaptive bank potentials [5 dims]
+        // 4. Izhikevich adaptive bank potentials [IZ_NEURONS]
         let iz: Vec<f32> = iz_potentials
             .iter()
             .take(IZ_NEURONS)
@@ -297,7 +302,7 @@ impl Projector {
             }
         }
 
-        // Pad or truncate to exactly FEATURE_DIM
+        // Pad or truncate to exactly feature_dim
         features.resize(self.feature_dim, 0.0);
         features
     }
@@ -326,9 +331,9 @@ impl Projector {
     /// 2. Build a bounded drive from the signed learned current plus the
     ///    peak feature activity magnitude.
     /// 3. Integrate: `membrane = membrane * decay + drive * 0.35`.
-    /// 3. Fire +1 if membrane > threshold (soft reset: membrane -= threshold).
-    /// 4. Fire -1 if membrane < -threshold (soft reset: membrane += threshold).
-    /// 5. Otherwise output 0.0.
+    /// 4. Fire +1 if membrane > threshold (soft reset: membrane -= threshold).
+    /// 5. Fire -1 if membrane < -threshold (soft reset: membrane += threshold);
+    ///    otherwise output 0.0.
     fn spiking_linear_project(&mut self, features: &[f32]) -> Vec<f32> {
         let mut spikes = vec![0.0_f32; EMBEDDING_DIM];
         let activity_drive = features.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
@@ -353,16 +358,14 @@ impl Projector {
         spikes
     }
 
-    // ── Weight management (for spine / E-prop updates) ────────────────────────
+    // ── Weight management (external injection) ────────────────────────────────
 
-    /// Replace the weight matrix with values received from `SpikenautDistill.jl`.
-    ///
-    /// Julia sends the updated projector weights as a flat `f32` slice via the
-    /// spine after each E-prop step.
+    /// Replace the weight matrix with an externally supplied flat row-major slice;
+    /// this crate never trains these weights.
     ///
     /// # Errors
     /// Returns [`HybridError::InputLengthMismatch`] if the slice length ≠
-    /// `EMBEDDING_DIM × FEATURE_DIM`.
+    /// `EMBEDDING_DIM × feature_dim`.
     pub fn load_weights(&mut self, weights: &[f32]) -> Result<()> {
         let expected = EMBEDDING_DIM * self.feature_dim;
         if weights.len() != expected {

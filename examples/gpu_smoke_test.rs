@@ -1,4 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+//! Direct GPU temporal smoke test against a real GGUF checkpoint (`just smoke`).
+//!
+//! Usage:
+//!   CHECKPOINT_PATH=/path/to/model.gguf cargo run --release --example gpu_smoke_test
+//!
+//! Loads `.env.local`, then reads `CHECKPOINT_PATH` (required; blank is an error) and
+//! `GPU_SMOKE_TICKS` (default 10000; unset, unparsable or 0 uses the default).
+//! `RunConfig::from_env` also validates any optional lineups that are set, so a stale one aborts.
+//!
+//! Runs that many `tick_gpu_temporal` calls with synthetic input and checks `best_walker` range,
+//! binary spikes and finite membrane on the first tick, the last tick and every 1000th tick.
+//! Exits non-zero if the router fails to load, the GPU is not ready, or a check fails. Writes no
+//! run artifacts.
 mod support;
 
 use corinth_canal::{gpu::GpuAccelerator, model::Model};

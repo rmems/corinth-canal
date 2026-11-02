@@ -67,7 +67,7 @@ impl SynapseDiagOutcome {
             Self::Success => None,
             Self::NoModelsResolved => Some(
                 "synapse_diagnostic: no validation models resolved (LINEUP_CONFIG / \
-                 CHECKPOINT_PATH / autodiscovery all returned empty)"
+                 SAFETENSORS_LINEUP_CONFIG / CHECKPOINT_PATH / autodiscovery all returned empty)"
                     .to_owned(),
             ),
             Self::ProbeFailures { failed, total } if strict => Some(format!(

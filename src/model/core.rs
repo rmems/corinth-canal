@@ -173,6 +173,14 @@ impl Model {
         Ok(loss)
     }
 
+    /// Reduce the SAT walkers to the best score and walker, then append one row
+    /// to the routing telemetry CSV.
+    ///
+    /// There is currently no Rust caller, and none could supply real buffers yet:
+    /// the `satsolver_init` and `satsolver_step` kernels that would fill them are
+    /// loaded but have no host wrapper. Like
+    /// [`GpuAccelerator::satsolver_extract`], this stays public until the SAT path
+    /// is either finished or removed (GH#148).
     #[allow(clippy::too_many_arguments)]
     pub fn compute_routing_telemetry(
         &self,

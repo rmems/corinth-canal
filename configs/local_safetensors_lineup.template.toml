@@ -13,9 +13,7 @@
 # Fields:
 #   slug          directory-safe identifier (used in artifact paths)
 #   family        optional model family for tensor classification heuristics
-#                 one of: olmoe | qwen3_moe | gemma4 | deepseek2 | llama_moe | zaya | glm4
-#                         | nemotron | lfm2_moe | granite_3_1_a800m | moonlight_16b_a3b
-#                         | slim_moe | trinity
+#                 any slug or alias accepted by ModelFamily::from_alias (src/types.rs)
 #                 leave blank when no existing corinth-canal family matches
 #   path          absolute path to a .safetensors file, .safetensors.index.json,
 #                 or directory containing safetensors shards

@@ -13,7 +13,7 @@ LLM-models-onboarding branch.*
 ## Configuration
 
 Cloud model metadata lives in `configs/saaq_cloud_lineup.toml`. Helper
-parsing/validation lives in `examples/support/mod.rs` and can be referenced via:
+parsing/validation lives in `examples/support/lineup.rs` (re-exported via `support`) and can be referenced via:
 
 > **Note:** the checked-in `saaq_cloud_lineup.toml` is an inventory stub. None
 > of its 15 entries declare `required_env_vars`, so `cloud_execution_guard`
@@ -59,7 +59,7 @@ tests write their own temporary TOML. The shipped inventory is checked by
 When any `required_env_vars` entry is unset or empty during helper parsing:
 
 1. The parser emits a diagnostic to stderr listing the missing vars.
-2. The candidate remains in the parsed lineup with `provider_available = false`.
+2. The candidate remains in the parsed lineup; `CloudModelSpec::cloud_provider_available()` returns false for it, and `cloud_execution_guard` rejects it, naming the same missing vars.
 
 Example diagnostic:
 

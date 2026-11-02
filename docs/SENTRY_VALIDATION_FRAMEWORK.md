@@ -1,5 +1,7 @@
 # Sentry Validation Framework Plan
 
+> **Status: unimplemented proposal, kept for reference (added alongside #52).** Only the "Current Status (Phase 2A)" section describes real code. There is no `src/sentry/`, no `validate-*` or `check-reproducibility` binary, no `schemas/` directory and none of the listed fixtures. The `jsonschema` and `csv` crates under Dependencies are not in `Cargo.toml` and would need the justification `AGENTS.md` requires for any new dependency. The version floors below are also out of date: `.github/workflows/gpu-tests.yml` requires CUDA 13.2 and sm_120, so treat that workflow as the source of truth.
+
 ## Overview
 
 This document outlines the comprehensive Sentry validation framework to be implemented in Phase 2B. This framework will provide robust validation, testing, and reproducibility guarantees for the entire observability pipeline.

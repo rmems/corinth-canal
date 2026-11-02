@@ -1,18 +1,18 @@
 # corinth-canal SAAQ 1.5 cloud model lineup.
 #
-# Parsed by cloud lineup helpers in examples/support/mod.rs.
-# This file is cloud metadata scaffolding; main example runners may wire it
-# in separately. Each [[model]] entry is a cloud metadata stub — corinth-canal
-# does not create, provision, or tear down cloud resources.
+# Parsed by load_cloud_lineup in examples/support/lineup.rs. This file is cloud
+# metadata scaffolding. Each [[model]] entry is a cloud metadata stub —
+# corinth-canal does not create, provision, or tear down cloud resources.
 #
 # Cloud execution is delegated to Dioscuri-Cloud. This file records
 # metadata for fail-fast validation.
 #
-# Wire-up note: this file is NOT yet loaded by `examples/saaq_latent_calibration.rs`.
-# The parsing helpers (`load_cloud_lineup`, `cloud_execution_guard`) exist
-# in `examples/support/mod.rs` and are tested, but the runner does not
-# invoke them yet. For now this config serves as a documented inventory
-# and validator for `cloud_execution_guard` unit tests.
+# Wire-up note: when CLOUD_LINEUP_CONFIG names this file, RunConfig::from_env
+# (examples/support/config.rs) parses it with load_cloud_lineup and runs
+# cloud_execution_guard on every entry, aborting the run on any failure. Entries
+# are validated only and are not added to the run set, and no shipped entry
+# declares required_env_vars, so the guard passes all of them. This file remains
+# a documented inventory, not a model source.
 #
 # Fields:
 #   slug                directory-safe identifier (used in artifact paths)
@@ -31,11 +31,10 @@
 #
 # Note: Cloud models are downloaded on GPU; no API keys or env vars required.
 #
-# ── SAAQ campaign tags (per-model overrides in artifact manifests) ──
-# Defaults applied by the runner unless overridden per-entry:
-#   SAAQ_RULE        = "saaq_v1_5"
-#   TELEMETRY_SOURCE = "synthetic" | "csv"
-#   REPEAT_COUNT     = 2
+# Campaign settings (SAAQ_RULE, TELEMETRY_SOURCE, REPEAT_COUNT, RUN_TAG) are read
+# from the environment by the runner (examples/support/); this file carries no
+# per-entry overrides, and any extra key fails to parse (deny_unknown_fields).
+# The runner default for REPEAT_COUNT is 1; `just saaq-campaign` sets 2.
 #
 # No Terraform, no cloud credentials, no provider SDK code.
 
