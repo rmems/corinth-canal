@@ -55,6 +55,9 @@ The latent telemetry CSV includes both SAAQ trajectories via
 - `TICKS=0` with `TELEMETRY_SOURCE=csv` uses the full CSV row count so corpus
   runs cover exactly one telemetry loop.
 - When `TICKS > csv_row_count`, the runner warns about wraparound contamination.
+- `INPUT_DRIVE_GAIN` scales the prompt embedding fed to the GPU loop and changes
+  the latent telemetry. `run_manifest.json` stamps the applied value as
+  `input_drive_gain`, so compare it before comparing two runs.
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including
