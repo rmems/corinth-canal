@@ -91,24 +91,34 @@ jobs:
           #   2. aws-lc-rs must be absent *for the stated reason*, matched on
           #      cargo's "did not match any packages" message.
           # Anything else fails the step loudly rather than passing it quietly.
-          if ! cargo tree -i ring --no-default-features >/dev/null 2>&1; then
-            echo "::error::Could not resolve ring in the dependency graph. Either the ring pin in Cargo.toml is gone, or cargo failed to resolve the graph at all — in both cases the aws-lc-rs check below cannot be trusted."
-            cargo tree -i ring --no-default-features
-            exit 1
-          fi
-          aws_lc_tree=$(cargo tree -i aws-lc-rs --no-default-features 2>&1)
-          aws_lc_rc=$?
-          if [ "${aws_lc_rc}" -eq 0 ]; then
-            echo "::error::aws-lc-rs is back in the dependency graph; the ring pin in Cargo.toml has been defeated by feature unification."
-            cargo tree -i aws-lc-rs -e features --no-default-features || true
-            exit 1
-          fi
-          if ! printf '%s\n' "${aws_lc_tree}" | grep -q 'did not match any packages'; then
-            echo "::error::cargo tree failed for a reason other than aws-lc-rs being absent (exit ${aws_lc_rc}); cannot confirm ring-only TLS."
-            printf '%s\n' "${aws_lc_tree}"
-            exit 1
-          fi
-          echo "ring-only TLS confirmed: ring resolves, aws-lc-rs is absent from the graph."
+          #
+          # Both feature sets are checked. sentry and rustls are optional behind
+          # `cuda`, so --no-default-features sees only their dev-dependency
+          # copies, and --features cuda is the only view of the [dependencies]
+          # specs that default and Docker builds use. cargo tree runs no build
+          # scripts, so this needs no CUDA install.
+          assert_ring_only() {
+            if ! cargo tree -i ring "$@" >/dev/null 2>&1; then
+              echo "::error::Could not resolve ring in the dependency graph ($*). Either the ring pin in Cargo.toml is gone, or cargo failed to resolve the graph at all — in both cases the aws-lc-rs check below cannot be trusted."
+              cargo tree -i ring "$@"
+              exit 1
+            fi
+            aws_lc_tree=$(cargo tree -i aws-lc-rs "$@" 2>&1)
+            aws_lc_rc=$?
+            if [ "${aws_lc_rc}" -eq 0 ]; then
+              echo "::error::aws-lc-rs is back in the dependency graph ($*); the ring pin in Cargo.toml has been defeated by feature unification."
+              cargo tree -i aws-lc-rs -e features "$@" || true
+              exit 1
+            fi
+            if ! printf '%s\n' "${aws_lc_tree}" | grep -q 'did not match any packages'; then
+              echo "::error::cargo tree failed for a reason other than aws-lc-rs being absent (exit ${aws_lc_rc}, $*); cannot confirm ring-only TLS."
+              printf '%s\n' "${aws_lc_tree}"
+              exit 1
+            fi
+            echo "ring-only TLS confirmed ($*): ring resolves, aws-lc-rs is absent from the graph."
+          }
+          assert_ring_only --no-default-features
+          assert_ring_only --no-default-features --features cuda
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2
