@@ -18,7 +18,7 @@ use corinth_canal::{gpu::GpuAccelerator, model::Model};
 use std::io::Error;
 use std::time::Instant;
 use support::{
-    RunConfig, default_spiking_model_config,
+    RunConfig, default_spiking_model_config, gpu_smoke_ticks_from_env,
     observability::{self, CommandObserver, SafeDiagnosticData},
 };
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,14 +52,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>> {
     let run_cfg = RunConfig::from_env();
-    let smoke_ticks = gpu_smoke_ticks();
+    let smoke_ticks = gpu_smoke_ticks_from_env();
+    let model_slug = observability::checkpoint_slug(&run_cfg.checkpoint_path);
     let mut safe = SafeDiagnosticData::default();
-    if let Some(model_slug) = observability::checkpoint_slug(&run_cfg.checkpoint_path) {
-        safe = safe.with_model_slug(&model_slug);
-        observer.annotate(safe);
-    } else {
-        observer.annotate(safe);
+    if let Some(slug) = model_slug.as_deref() {
+        safe = safe.with_model_slug(slug);
     }
+    observer.annotate(safe);
     if run_cfg.checkpoint_path.trim().is_empty() {
         return Err(Error::other("CHECKPOINT_PATH must point to a GGUF checkpoint").into());
     }
@@ -118,14 +117,6 @@ fn run(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>> {
     println!("gpu smoke test finished cleanly");
 
     Ok(())
-}
-
-fn gpu_smoke_ticks() -> usize {
-    std::env::var("GPU_SMOKE_TICKS")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|ticks| *ticks > 0)
-        .unwrap_or(10_000)
 }
 
 fn should_validate_tick(tick: usize, smoke_ticks: usize) -> bool {

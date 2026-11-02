@@ -5,10 +5,6 @@ use corinth_canal::{
     CloudModelSpec, ModelArchitectureClass, ModelFamily, ModelTarget, moe::RoutingMode,
 };
 
-fn parse_family_slug(value: &str) -> Option<ModelFamily> {
-    ModelFamily::from_alias(value)
-}
-
 /// Parse a `CLOUD_LINEUP_CONFIG` file (see `configs/saaq_cloud_lineup.toml`)
 /// and return every entry.
 ///
@@ -64,7 +60,7 @@ pub fn load_cloud_lineup(path: &Path) -> Result<Vec<CloudModelSpec>, Box<dyn std
                 .into());
             }
         };
-        let family = parse_family_slug(&entry.family);
+        let family = ModelFamily::from_alias(&entry.family);
         if family.is_none() && !entry.family.is_empty() {
             eprintln!(
                 "cloud_lineup: unknown family '{}' for slug={}; leaving family inference to probe",
@@ -78,36 +74,26 @@ pub fn load_cloud_lineup(path: &Path) -> Result<Vec<CloudModelSpec>, Box<dyn std
             );
         }
         let spec = CloudModelSpec {
-            slug: entry.slug.clone(),
+            slug: entry.slug,
             family,
-            cloud_model_id: entry.cloud_model_id.clone(),
-            source_url: entry.source_url.clone(),
+            cloud_model_id: entry.cloud_model_id,
+            source_url: entry.source_url,
             target: ModelTarget::Cloud,
             architecture,
-            active_params: entry.active_params.clone(),
-            total_params: entry.total_params.clone(),
-            provider_format: entry.provider_format.clone(),
-            required_env_vars: entry.required_env_vars.clone(),
+            active_params: entry.active_params,
+            total_params: entry.total_params,
+            provider_format: entry.provider_format,
+            required_env_vars: entry.required_env_vars,
         };
 
-        if !spec.cloud_provider_available() {
-            let unset: Vec<_> = entry
-                .required_env_vars
-                .iter()
-                .filter(|var| !std::env::var(var).is_ok_and(|v| !v.is_empty()))
-                .collect();
-            if !unset.is_empty() {
-                eprintln!(
-                    "cloud_lineup: provider unavailable for slug={} ({}): missing env vars: {}",
-                    entry.slug,
-                    entry.cloud_model_id,
-                    unset
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            }
+        let unset = missing_required_env_vars(&spec);
+        if !unset.is_empty() {
+            eprintln!(
+                "cloud_lineup: provider unavailable for slug={} ({}): missing env vars: {}",
+                spec.slug,
+                spec.cloud_model_id,
+                unset.join(", ")
+            );
         }
 
         out.push(spec);
@@ -120,14 +106,7 @@ pub fn load_cloud_lineup(path: &Path) -> Result<Vec<CloudModelSpec>, Box<dyn std
 /// Re-checks `required_env_vars` at call time and returns an error
 /// describing any that are missing.
 pub fn cloud_execution_guard(entry: &CloudModelSpec) -> Result<(), String> {
-    if entry.required_env_vars.is_empty() {
-        return Ok(());
-    }
-    let unset: Vec<_> = entry
-        .required_env_vars
-        .iter()
-        .filter(|var| !std::env::var(var).is_ok_and(|v| !v.is_empty()))
-        .collect();
+    let unset = missing_required_env_vars(entry);
     if unset.is_empty() {
         return Ok(());
     }
@@ -137,12 +116,16 @@ pub fn cloud_execution_guard(entry: &CloudModelSpec) -> Result<(), String> {
          vars in your deployment environment.",
         entry.slug,
         entry.cloud_model_id,
-        unset
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+        unset.join(", ")
     ))
+}
+
+fn missing_required_env_vars(spec: &CloudModelSpec) -> Vec<&str> {
+    spec.required_env_vars
+        .iter()
+        .filter(|var| !std::env::var(var).is_ok_and(|v| !v.is_empty()))
+        .map(String::as_str)
+        .collect()
 }
 
 /// Load the cloud lineup path from the `CLOUD_LINEUP_CONFIG` env var.
@@ -207,7 +190,7 @@ pub fn load_safetensors_lineup(
             );
             continue;
         }
-        let family = parse_family_slug(&entry.family);
+        let family = ModelFamily::from_alias(&entry.family);
         if family.is_none() && !entry.family.is_empty() {
             eprintln!(
                 "safetensors_lineup: unknown family '{}' for slug={}",
@@ -379,7 +362,7 @@ fn resolve_gguf_lineup_entry(
             reason: "file not found",
         });
     }
-    let parsed_family = parse_family_slug(&family);
+    let parsed_family = ModelFamily::from_alias(&family);
     if parsed_family.is_none() {
         eprintln!(
             "lineup_config: unknown family '{family}' for slug={slug}; leaving family inference to probe",

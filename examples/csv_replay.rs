@@ -65,13 +65,12 @@ fn main() -> corinth_canal::Result<()> {
 fn run(observer: &CommandObserver, args: &[String]) -> corinth_canal::Result<()> {
     let csv_path = &args[1];
     let run_cfg = RunConfig::from_env();
+    let model_slug = observability::checkpoint_slug(&run_cfg.checkpoint_path);
     let mut safe = SafeDiagnosticData::default().with_telemetry_source("csv");
-    if let Some(model_slug) = observability::checkpoint_slug(&run_cfg.checkpoint_path) {
-        safe = safe.with_model_slug(&model_slug);
-        observer.annotate(safe);
-    } else {
-        observer.annotate(safe);
+    if let Some(slug) = model_slug.as_deref() {
+        safe = safe.with_model_slug(slug);
     }
+    observer.annotate(safe);
 
     let cfg = default_spiking_model_config(run_cfg.checkpoint_path.clone(), 20);
     let mut model = Model::new_with_projector_neurons(cfg.clone(), FUNNEL_HIDDEN_NEURONS)?;

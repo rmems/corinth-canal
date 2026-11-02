@@ -134,6 +134,7 @@ impl RunConfig {
         // the compiler consider them "used" for dead_code purposes in *all* binaries
         // without any #[allow(dead_code)] or #[allow(unused_imports)].
         if false {
+            let _ = super::gpu_smoke_ticks_from_env();
             let _ = &run_config.prompt_profile;
             let _ = run_config.prompt_text;
             let _ = run_config.ticks;
@@ -239,8 +240,9 @@ impl ValidationModelResolution {
 ///   1. `LINEUP_CONFIG` file (hard error if set but unparseable; with
 ///      `LINEUP_STRICT=1`, also a hard error if any declared checkpoint is
 ///      missing).
-///   2. `CHECKPOINT_PATH` (single-model override via the legacy path).
-///   3. Machine-local autodiscovery under `$HOME/Downloads/SNN_Quantization`.
+///   2. `SAFETENSORS_LINEUP_CONFIG` file (hard error if set but unloadable).
+///   3. `CHECKPOINT_PATH` (single-model override).
+///   4. Machine-local autodiscovery under `$HOME/Downloads/SNN_Quantization`.
 fn resolve_validation_models(
     lineup_path: Option<&Path>,
     safetensors_lineup_path: Option<&Path>,
@@ -294,8 +296,7 @@ fn resolve_validation_models(
     }
 
     // Legacy single-model override or autodiscovery
-    let _ = checkpoint_path;
-    ValidationModelResolution::from_models(discover_validation_models())
+    ValidationModelResolution::from_models(discover_validation_models(checkpoint_path))
 }
 
 fn abort_gguf_lineup_load(path: &Path, err: Box<dyn std::error::Error>) -> ! {

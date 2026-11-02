@@ -26,7 +26,7 @@ use corinth_canal::{
     ModelFamily, SaaqUpdateRule, moe::Router, moe::RoutingMode, projector::ProjectionMode,
 };
 use std::io::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub const DEFAULT_MATH_PROMPT_TEXT: &str = "The derivative of a constant is mathematically zero.";
@@ -108,13 +108,7 @@ pub fn prompt_text_for_profile(profile: &str) -> &'static str {
 
 pub fn model_family_override_from_env() -> Option<ModelFamily> {
     let value = std::env::var("MODEL_FAMILY").ok()?;
-    parse_family_slug(&value)
-}
-
-/// Shared family-slug parser used by `MODEL_FAMILY` and by lineup-config
-/// `family = "..."` entries. Thin wrapper over [`ModelFamily::from_alias`].
-pub fn parse_family_slug(value: &str) -> Option<ModelFamily> {
-    ModelFamily::from_alias(value)
+    ModelFamily::from_alias(&value)
 }
 
 /// Parse a lineup-config `routing_mode` entry.
@@ -239,15 +233,14 @@ pub fn pooled_prompt_embedding_from_ollama(
     Ok((embedding, label))
 }
 
-pub fn discover_validation_models() -> Vec<ValidationModelSpec> {
-    if let Ok(path) = std::env::var("CHECKPOINT_PATH")
-        && !path.trim().is_empty()
-    {
+pub fn discover_validation_models(checkpoint_path: &str) -> Vec<ValidationModelSpec> {
+    if !checkpoint_path.trim().is_empty() {
+        let path = checkpoint_path.to_owned();
         let family = Router::probe_model(&path, None)
             .ok()
             .map(|metadata| metadata.family);
         return vec![ValidationModelSpec {
-            slug: slug_from_path(&path),
+            slug: observability::checkpoint_slug(&path).unwrap_or_else(|| "gguf_model".to_owned()),
             family,
             path,
             routing_mode: None,
@@ -353,6 +346,14 @@ pub fn repeat_count_from_env() -> usize {
     env_usize("REPEAT_COUNT", 1).max(1)
 }
 
+pub fn gpu_smoke_ticks_from_env() -> usize {
+    std::env::var("GPU_SMOKE_TICKS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|ticks| *ticks > 0)
+        .unwrap_or(10_000)
+}
+
 /// Machine-local `TELEMETRY_SOURCE` resolution (config boundary).
 ///
 /// Empty / unrecognised values fall back to [`TelemetrySource::Synthetic`] so a
@@ -445,15 +446,6 @@ pub fn projection_mode_override_from_env() -> Option<ProjectionMode> {
             std::process::exit(1);
         }
     }
-}
-
-fn slug_from_path(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("gguf_model")
-        .replace(['.', '-', ' '], "_")
-        .to_ascii_lowercase()
 }
 
 fn resample_embedding(input: &[f32], target_len: usize) -> Vec<f32> {

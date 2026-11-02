@@ -20,13 +20,12 @@ fn main() -> corinth_canal::Result<()> {
 
 fn run(observer: &CommandObserver) -> corinth_canal::Result<()> {
     let run_cfg = RunConfig::from_env();
+    let model_slug = observability::checkpoint_slug(&run_cfg.checkpoint_path);
     let mut safe = SafeDiagnosticData::default().with_telemetry_source("synthetic");
-    if let Some(model_slug) = observability::checkpoint_slug(&run_cfg.checkpoint_path) {
-        safe = safe.with_model_slug(&model_slug);
-        observer.annotate(safe);
-    } else {
-        observer.annotate(safe);
+    if let Some(slug) = model_slug.as_deref() {
+        safe = safe.with_model_slug(slug);
     }
+    observer.annotate(safe);
     let routing_mode = run_cfg
         .routing_mode_override
         .unwrap_or(RoutingMode::SpikingSim);
