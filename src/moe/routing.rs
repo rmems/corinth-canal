@@ -1,11 +1,59 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Routing math and embedding resampling for the GGUF and Safetensors router bridge.
 
-use super::checkpoint::{GgufTensorInfo, MappedGgufCheckpoint};
+use super::checkpoint::MappedGgufCheckpoint;
 use super::safetensors::MappedSafetensorsCheckpoint;
 use crate::error::{HybridError, Result};
 use crate::types::EMBEDDING_DIM;
 use std::cmp::Ordering;
+
+/// How gate scoring indexes a rank-2 routing tensor's flat weights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GateOrientation {
+    /// `dims[0] == hidden_size`; a weight sits at `dim * stride + expert_id`.
+    HiddenMajor { stride: usize },
+    /// `dims[1] == hidden_size`; a weight sits at `expert_id * stride + dim`.
+    ExpertMajor { stride: usize },
+}
+
+/// The routing-tensor shape rule for both GGUF and Safetensors: one dimension
+/// must equal `hidden_size` and the other must be at least `num_experts`.
+/// Load-time validation and gate scoring both go through this.
+pub(super) fn gate_orientation(
+    d0: usize,
+    d1: usize,
+    hidden_size: usize,
+    num_experts: usize,
+) -> Option<GateOrientation> {
+    if d0 == hidden_size && d1 >= num_experts {
+        return Some(GateOrientation::HiddenMajor { stride: d1 });
+    }
+    if d0 >= num_experts && d1 == hidden_size {
+        return Some(GateOrientation::ExpertMajor { stride: d1 });
+    }
+    None
+}
+
+fn gate_scores_from_weights(
+    weights: &[f32],
+    orientation: GateOrientation,
+    num_experts: usize,
+    embedding: &[f32],
+) -> Vec<f32> {
+    let mut gate_scores = Vec::with_capacity(num_experts);
+    for expert_id in 0..num_experts {
+        let mut score = 0.0f32;
+        for (dim, &value) in embedding.iter().enumerate() {
+            let index = match orientation {
+                GateOrientation::HiddenMajor { stride } => dim * stride + expert_id,
+                GateOrientation::ExpertMajor { stride } => expert_id * stride + dim,
+            };
+            score += weights[index] * value;
+        }
+        gate_scores.push(score);
+    }
+    gate_scores
+}
 
 pub(super) fn checkpoint_gate_scores(
     checkpoint: &MappedGgufCheckpoint,
@@ -16,16 +64,26 @@ pub(super) fn checkpoint_gate_scores(
 ) -> Result<Vec<f32>> {
     let info = checkpoint.tensor_info(routing_tensor_name, model_path)?;
     let weights = checkpoint.f32_tensor(routing_tensor_name, model_path)?;
-    let mut gate_scores = Vec::with_capacity(num_experts);
-    for expert_id in 0..num_experts {
-        let mut score = 0.0f32;
-        for (dim, &value) in embedding.iter().enumerate() {
-            let index = routing_weight_index(info, expert_id, dim, num_experts, embedding.len())?;
-            score += weights[index] * value;
-        }
-        gate_scores.push(score);
+    if info.dims.len() != 2 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "routing tensor '{routing_tensor_name}' must be rank-2, got {:?}",
+            info.dims
+        )));
     }
-    Ok(gate_scores)
+    let orientation = gate_orientation(info.dims[0], info.dims[1], embedding.len(), num_experts)
+        .ok_or_else(|| {
+            HybridError::UnsupportedFormat(format!(
+                "unsupported routing tensor orientation {:?} for hidden_size={}",
+                info.dims,
+                embedding.len()
+            ))
+        })?;
+    Ok(gate_scores_from_weights(
+        weights,
+        orientation,
+        num_experts,
+        embedding,
+    ))
 }
 
 pub(super) fn safetensors_gate_scores(
@@ -50,29 +108,20 @@ pub(super) fn safetensors_gate_scores(
             shape
         )));
     }
-    let d0 = shape[0];
-    let d1 = shape[1];
-
-    let mut gate_scores = Vec::with_capacity(num_experts);
-    for expert_id in 0..num_experts {
-        let mut score = 0.0f32;
-        for (dim, &value) in embedding.iter().enumerate() {
-            let index = if d0 == embedding.len() && d1 == num_experts {
-                dim * d1 + expert_id
-            } else if d0 == num_experts && d1 == embedding.len() {
-                expert_id * d1 + dim
-            } else {
-                return Err(HybridError::UnsupportedFormat(format!(
-                    "unsupported safetensors routing tensor orientation {:?} for hidden_size={}",
-                    shape,
-                    embedding.len()
-                )));
-            };
-            score += weights[index] * value;
-        }
-        gate_scores.push(score);
-    }
-    Ok(gate_scores)
+    let orientation = gate_orientation(shape[0], shape[1], embedding.len(), num_experts)
+        .ok_or_else(|| {
+            HybridError::UnsupportedFormat(format!(
+                "unsupported safetensors routing tensor orientation {:?} for hidden_size={}",
+                shape,
+                embedding.len()
+            ))
+        })?;
+    Ok(gate_scores_from_weights(
+        &weights,
+        orientation,
+        num_experts,
+        embedding,
+    ))
 }
 
 pub(super) fn synthetic_gate_scores(num_experts: usize, embedding: &[f32]) -> Vec<f32> {
@@ -162,32 +211,70 @@ pub(super) fn normalize_to_internal_embedding_dim(input: &[f32]) -> Vec<f32> {
     out
 }
 
-fn routing_weight_index(
-    tensor: &GgufTensorInfo,
-    expert_id: usize,
-    dim: usize,
-    num_experts: usize,
-    hidden_size: usize,
-) -> Result<usize> {
-    let d0 = tensor.dims[0];
-    let d1 = tensor.dims[1];
-
-    if d0 == hidden_size && d1 >= num_experts {
-        return Ok(dim * d1 + expert_id);
-    }
-    if d0 >= num_experts && d1 == hidden_size {
-        return Ok(expert_id * d1 + dim);
-    }
-
-    Err(HybridError::UnsupportedFormat(format!(
-        "unsupported routing tensor orientation {:?} for hidden_size={hidden_size}",
-        tensor.dims
-    )))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_orientation_requires_a_hidden_dim_and_enough_experts() {
+        use GateOrientation::{ExpertMajor, HiddenMajor};
+
+        // Exact shapes, in both orientations.
+        assert_eq!(
+            gate_orientation(16, 8, 16, 8),
+            Some(HiddenMajor { stride: 8 })
+        );
+        assert_eq!(
+            gate_orientation(8, 16, 16, 8),
+            Some(ExpertMajor { stride: 16 })
+        );
+        // The expert dimension may hold more experts than are requested.
+        assert_eq!(
+            gate_orientation(16, 64, 16, 8),
+            Some(HiddenMajor { stride: 64 })
+        );
+        assert_eq!(
+            gate_orientation(64, 16, 16, 8),
+            Some(ExpertMajor { stride: 16 })
+        );
+        // A square tensor resolves to the first rule.
+        assert_eq!(
+            gate_orientation(16, 16, 16, 8),
+            Some(HiddenMajor { stride: 16 })
+        );
+        // No hidden dimension, or too few experts.
+        assert_eq!(gate_orientation(32, 32, 16, 8), None);
+        assert_eq!(gate_orientation(64, 4096, 2048, 8), None);
+        assert_eq!(gate_orientation(4, 16, 16, 8), None);
+        assert_eq!(gate_orientation(16, 4, 16, 8), None);
+    }
+
+    #[test]
+    fn gate_scores_from_weights_indexes_both_orientations() {
+        let weights = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let embedding = [10.0, 100.0];
+
+        // Expert 0 reads indices 0 and 3; expert 1 reads indices 1 and 4.
+        assert_eq!(
+            gate_scores_from_weights(
+                &weights,
+                GateOrientation::HiddenMajor { stride: 3 },
+                2,
+                &embedding,
+            ),
+            vec![410.0, 520.0]
+        );
+        // Expert 0 reads indices 0 and 1; expert 1 reads indices 2 and 3.
+        assert_eq!(
+            gate_scores_from_weights(
+                &weights,
+                GateOrientation::ExpertMajor { stride: 2 },
+                2,
+                &embedding,
+            ),
+            vec![210.0, 430.0]
+        );
+    }
 
     #[test]
     fn resample_embedding_preserves_target_length() {

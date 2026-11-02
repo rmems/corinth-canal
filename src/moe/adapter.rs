@@ -6,6 +6,7 @@ use super::ggml::{
     GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_M_BLOCK, GGML_TYPE_Q5_K, GGML_TYPE_Q6_K,
     GGML_TYPE_Q8_0,
 };
+use super::routing::gate_orientation;
 use super::safetensors::{MappedSafetensorsCheckpoint, SafetensorsMetadata, is_packed_int4};
 use crate::error::{HybridError, Result};
 use crate::types::ModelFamily;
@@ -115,13 +116,38 @@ fn resolve_token_embedding_tensor(
     })
 }
 
-/// Resolve the GGUF gate tensor name and reject shapes the runtime cannot index.
+/// Reject routing tensor shapes the runtime cannot index, for GGUF and
+/// Safetensors alike.
 ///
-/// Gate scoring (`routing_weight_index`) requires one dimension to equal
-/// `hidden_size` (metadata `embedding_length`, matching the resampled embedding
-/// length in `Router::compute_gate_scores`) and the other to be ≥ `num_experts`.
+/// Gate scoring (`gate_orientation`) requires one dimension to equal
+/// `hidden_size` (metadata `embedding_length` or config `hidden_size`, matching
+/// the resampled embedding length in `Router::compute_gate_scores`) and the
+/// other to be ≥ `num_experts`.
 /// Do **not** relax this to `min(d0, d1) >= num_experts`: that previously
 /// accepted tensors that then failed on the first gate-score pass.
+fn check_routing_shape(
+    routing_tensor: &str,
+    path: &str,
+    d0: usize,
+    d1: usize,
+    hidden_size: usize,
+    num_experts: usize,
+) -> Result<()> {
+    if gate_orientation(d0, d1, hidden_size, num_experts).is_some() {
+        return Ok(());
+    }
+    if d0 != hidden_size && d1 != hidden_size {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "routing tensor '{routing_tensor}' in '{path}' has unsupported orientation dims={d0}x{d1}; expected one dimension to equal hidden_size={hidden_size} and the other to be at least {num_experts}"
+        )));
+    }
+    let routing_experts = if d0 == hidden_size { d1 } else { d0 };
+    Err(HybridError::UnsupportedFormat(format!(
+        "routing tensor '{routing_tensor}' in '{path}' only exposes {routing_experts} experts, expected at least {num_experts}"
+    )))
+}
+
+/// Resolve the GGUF gate tensor name and reject shapes the runtime cannot index.
 fn resolve_routing_tensor(
     checkpoint: &MappedGgufCheckpoint,
     hidden_size: usize,
@@ -144,19 +170,8 @@ fn resolve_routing_tensor(
         )));
     }
     let (d0, d1) = (routing_info.dims[0], routing_info.dims[1]);
-    // Same orientation contract as `routing_weight_index` (routing.rs).
-    let has_hidden_size_dim = d0 == hidden_size || d1 == hidden_size;
-    if !has_hidden_size_dim {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "routing tensor '{routing_tensor}' in '{path}' has unsupported orientation dims={d0}x{d1}; expected one dimension to equal hidden_size={hidden_size} and the other to be at least {num_experts}"
-        )));
-    }
-    let routing_experts = if d0 == hidden_size { d1 } else { d0 };
-    if routing_experts < num_experts {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "routing tensor '{routing_tensor}' in '{path}' only exposes {routing_experts} experts, expected at least {num_experts}"
-        )));
-    }
+    // Same orientation contract as `gate_orientation` (routing.rs).
+    check_routing_shape(&routing_tensor, path, d0, d1, hidden_size, num_experts)?;
     Ok(routing_tensor)
 }
 
@@ -488,7 +503,7 @@ pub(super) fn resolve_safetensors_adapter(
     let token_embedding_tensor = resolve_safetensors_token_embedding(family, checkpoint, path)?;
     let routing_tensor = resolve_safetensors_routing_tensor(family, checkpoint, path)?;
 
-    // Validate routing tensor is rank-2 and exposes enough experts.
+    // Validate routing tensor is rank-2 and that gate scoring can index it.
     let routing_info =
         checkpoint
             .tensor_info(&routing_tensor)
@@ -502,12 +517,14 @@ pub(super) fn resolve_safetensors_adapter(
             routing_info.1
         )));
     }
-    let routing_experts = routing_info.1[0].min(routing_info.1[1]);
-    if routing_experts < num_experts {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "routing tensor '{routing_tensor}' in '{path}' only exposes {routing_experts} experts, expected at least {num_experts}"
-        )));
-    }
+    check_routing_shape(
+        &routing_tensor,
+        path,
+        routing_info.1[0],
+        routing_info.1[1],
+        hidden_size,
+        num_experts,
+    )?;
 
     // Safetensors path: use the resolved routing tensor as preferred synapse;
     // detect Int4 quantized weights. Note: float dtypes (F16/BF16/F32)

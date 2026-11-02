@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 use super::ggml::*;
 use super::safetensors::dtype_size_bytes;
-use super::safetensors::test_support::{temp_dir, write_hf_config, write_safetensors_bytes};
+use super::safetensors::test_support::{
+    TestDir, temp_dir, write_hf_config, write_safetensors_bytes,
+};
 use super::*;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1066,6 +1068,92 @@ fn test_safetensors_forward_routes_through_gate_tensor() {
         model.extract_token_embedding(0).unwrap().len(),
         EMBEDDING_DIM
     );
+}
+
+/// Olmoe Safetensors checkpoint whose gate has `gate_shape`; row 3 is the only
+/// positive row, so a gate read in `[rows, hidden_size]` order selects expert 3.
+fn write_safetensors_gate_checkpoint(
+    label: &str,
+    gate_shape: [usize; 2],
+    hidden_size: usize,
+    num_experts: usize,
+) -> TestDir {
+    let [rows, cols] = gate_shape;
+    let mut payload = Vec::new();
+    for row in 0..rows {
+        let value: f32 = if row == 3 { 8.0 } else { -8.0 };
+        for _ in 0..cols {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    let gate_len = payload.len();
+    let embed_len = 32 * hidden_size * 4;
+    payload.resize(gate_len + embed_len, 0);
+
+    let header = serde_json::json!({
+        "model.layers.0.mlp.gate.weight": {
+            "dtype": "F32",
+            "shape": gate_shape,
+            "data_offsets": [0, gate_len]
+        },
+        "model.embed_tokens.weight": {
+            "dtype": "F32",
+            "shape": [32, hidden_size],
+            "data_offsets": [gate_len, gate_len + embed_len]
+        },
+        "__metadata__": {}
+    });
+    let tmp_dir = temp_dir(label);
+    write_safetensors_bytes(&tmp_dir.join("model.safetensors"), &header, &payload);
+    let config = serde_json::json!({
+        "architectures": ["OlmoeForCausalLM"],
+        "hidden_size": hidden_size,
+        "num_hidden_layers": 2,
+        "num_experts": num_experts,
+        "num_experts_per_tok": 2,
+        "vocab_size": 32
+    });
+    write_hf_config(&tmp_dir, &config);
+    tmp_dir
+}
+
+#[test]
+fn test_safetensors_forward_accepts_a_requested_subset_of_gate_experts() {
+    // The checkpoint has 64 experts and 8 are requested. GGUF has always
+    // allowed this; Safetensors used to load it and then fail on forward.
+    let tmp_dir = write_safetensors_gate_checkpoint("st_gate_subset", [64, 16], 16, 64);
+
+    let mut model =
+        Router::load_with_mode(tmp_dir.to_str().unwrap(), 8, 2, RoutingMode::DenseSim).unwrap();
+    let out = model.forward(&vec![1.0; EMBEDDING_DIM]).unwrap();
+
+    assert_eq!(out.expert_weights.len(), 8);
+    assert_eq!(out.selected_experts[0], 3);
+}
+
+#[test]
+fn test_safetensors_load_rejects_gate_without_hidden_size_dimension() {
+    // min(32, 32) >= 8, but gate scoring cannot index this shape.
+    let tmp_dir = write_safetensors_gate_checkpoint("st_gate_orientation", [32, 32], 16, 8);
+
+    let result = Router::load_with_mode(tmp_dir.to_str().unwrap(), 8, 2, RoutingMode::DenseSim);
+
+    assert!(matches!(
+        result,
+        Err(HybridError::UnsupportedFormat(msg)) if msg.contains("unsupported orientation")
+    ));
+}
+
+#[test]
+fn test_safetensors_load_rejects_gate_with_too_few_experts() {
+    let tmp_dir = write_safetensors_gate_checkpoint("st_gate_few_experts", [4, 16], 16, 8);
+
+    let result = Router::load_with_mode(tmp_dir.to_str().unwrap(), 8, 2, RoutingMode::DenseSim);
+
+    assert!(matches!(
+        result,
+        Err(HybridError::UnsupportedFormat(msg)) if msg.contains("only exposes 4 experts")
+    ));
 }
 
 #[test]
