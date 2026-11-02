@@ -329,6 +329,76 @@ pub(super) fn inspect_shard(path: &Path, root: &Path) -> Result<ShardInspection>
     parse_header(path, root, file_len, header_len_u64, header)
 }
 
+/// Validate one tensor entry of a Safetensors header against its shard's data
+/// section, returning its dtype, shape and data offsets.
+pub(super) fn parse_tensor_entry(
+    path: &Path,
+    name: &str,
+    value: &Value,
+    data_len: u64,
+) -> Result<(String, Vec<usize>, [usize; 2])> {
+    let tensor = value
+        .as_object()
+        .ok_or_else(|| model_load(path, format!("tensor '{name}' metadata must be an object")))?;
+    let dtype = tensor
+        .get("dtype")
+        .and_then(Value::as_str)
+        .ok_or_else(|| model_load(path, format!("tensor '{name}' is missing dtype")))?
+        .to_string();
+    let shape = tensor
+        .get("shape")
+        .and_then(Value::as_array)
+        .ok_or_else(|| model_load(path, format!("tensor '{name}' is missing shape")))?
+        .iter()
+        .map(|dim| {
+            dim.as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| model_load(path, format!("tensor '{name}' has invalid shape")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let offsets = tensor
+        .get("data_offsets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| model_load(path, format!("tensor '{name}' is missing data_offsets")))?;
+    if offsets.len() != 2 {
+        return Err(model_load(
+            path,
+            format!("tensor '{name}' data_offsets must have length 2"),
+        ));
+    }
+    let start = offsets[0]
+        .as_u64()
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| model_load(path, format!("tensor '{name}' has invalid start offset")))?;
+    let end = offsets[1]
+        .as_u64()
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| model_load(path, format!("tensor '{name}' has invalid end offset")))?;
+    if start > end {
+        return Err(model_load(
+            path,
+            format!("tensor '{name}' data_offsets are reversed"),
+        ));
+    }
+    if end as u64 > data_len {
+        return Err(model_load(
+            path,
+            format!("tensor '{name}' extends beyond Safetensors data section"),
+        ));
+    }
+    let byte_size = end - start;
+    let expected = expected_tensor_byte_size(&dtype, &shape, path, name)?;
+    if expected != byte_size {
+        return Err(model_load(
+            path,
+            format!(
+                "tensor '{name}' byte size mismatch: shape/dtype imply {expected} bytes, data_offsets span {byte_size} bytes"
+            ),
+        ));
+    }
+    Ok((dtype, shape, [start, end]))
+}
+
 pub(super) fn parse_header(
     path: &Path,
     root: &Path,
@@ -353,65 +423,8 @@ pub(super) fn parse_header(
             continue;
         }
 
-        let tensor = value.as_object().ok_or_else(|| {
-            model_load(path, format!("tensor '{name}' metadata must be an object"))
-        })?;
-        let dtype = tensor
-            .get("dtype")
-            .and_then(Value::as_str)
-            .ok_or_else(|| model_load(path, format!("tensor '{name}' is missing dtype")))?
-            .to_string();
-        let shape = tensor
-            .get("shape")
-            .and_then(Value::as_array)
-            .ok_or_else(|| model_load(path, format!("tensor '{name}' is missing shape")))?
-            .iter()
-            .map(|dim| {
-                dim.as_u64()
-                    .and_then(|v| usize::try_from(v).ok())
-                    .ok_or_else(|| model_load(path, format!("tensor '{name}' has invalid shape")))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let offsets = tensor
-            .get("data_offsets")
-            .and_then(Value::as_array)
-            .ok_or_else(|| model_load(path, format!("tensor '{name}' is missing data_offsets")))?;
-        if offsets.len() != 2 {
-            return Err(model_load(
-                path,
-                format!("tensor '{name}' data_offsets must have length 2"),
-            ));
-        }
-        let start = offsets[0]
-            .as_u64()
-            .and_then(|v| usize::try_from(v).ok())
-            .ok_or_else(|| model_load(path, format!("tensor '{name}' has invalid start offset")))?;
-        let end = offsets[1]
-            .as_u64()
-            .and_then(|v| usize::try_from(v).ok())
-            .ok_or_else(|| model_load(path, format!("tensor '{name}' has invalid end offset")))?;
-        if start > end {
-            return Err(model_load(
-                path,
-                format!("tensor '{name}' data_offsets are reversed"),
-            ));
-        }
-        if end as u64 > data_len {
-            return Err(model_load(
-                path,
-                format!("tensor '{name}' extends beyond Safetensors data section"),
-            ));
-        }
+        let (dtype, shape, [start, end]) = parse_tensor_entry(path, name, value, data_len)?;
         let byte_size = end - start;
-        let expected = expected_tensor_byte_size(&dtype, &shape, path, name)?;
-        if expected != byte_size {
-            return Err(model_load(
-                path,
-                format!(
-                    "tensor '{name}' byte size mismatch: shape/dtype imply {expected} bytes, data_offsets span {byte_size} bytes"
-                ),
-            ));
-        }
 
         tensors.push(SafetensorsTensorRecord {
             name: name.clone(),

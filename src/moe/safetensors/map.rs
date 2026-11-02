@@ -4,13 +4,16 @@
 use super::super::checkpoint::f16_to_f32;
 use super::config::HfConfig;
 use super::json::parse_json_rejecting_duplicate_keys;
-use super::manifest::{MAX_HEADER_BYTES, find_index_file, list_safetensors_files, read_index};
+use super::manifest::{
+    MAX_HEADER_BYTES, find_index_file, list_safetensors_files, parse_tensor_entry, read_index,
+};
 use super::model_load;
 use super::paths::index_shard_path;
 use super::validate::{expected_tensor_byte_size, is_packed_int4};
 use crate::error::{HybridError, Result};
 use memmap2::Mmap;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -33,7 +36,7 @@ pub struct SafetensorsMetadata {
 #[derive(Debug)]
 pub struct MappedSafetensorsCheckpoint {
     shards: Vec<MappedShard>,
-    tensor_map: std::collections::BTreeMap<String, TensorLocation>,
+    tensor_map: BTreeMap<String, TensorLocation>,
     pub metadata: SafetensorsMetadata,
 }
 
@@ -43,6 +46,19 @@ struct TensorLocation {
     dtype: String,
     shape: Vec<usize>,
     data_offsets: [usize; 2],
+}
+
+impl TensorLocation {
+    /// Claims a tensor for a shard before that shard's header entry is parsed.
+    /// An empty `dtype` marks it as not yet found.
+    fn placeholder(shard_idx: usize) -> Self {
+        Self {
+            shard_idx,
+            dtype: String::new(),
+            shape: Vec::new(),
+            data_offsets: [0, 0],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -57,16 +73,11 @@ struct MappedShard {
 fn build_indexed_shard_map(
     root: &Path,
     index_path: &Path,
-) -> Result<(
-    Vec<PathBuf>,
-    std::collections::BTreeMap<String, TensorLocation>,
-)> {
+) -> Result<(Vec<PathBuf>, BTreeMap<String, TensorLocation>)> {
     let raw_index = read_index(index_path)?;
     let mut shard_paths: Vec<PathBuf> = Vec::new();
-    let mut tensor_map: std::collections::BTreeMap<String, TensorLocation> =
-        std::collections::BTreeMap::new();
-    let mut shard_index_by_path: std::collections::BTreeMap<PathBuf, usize> =
-        std::collections::BTreeMap::new();
+    let mut tensor_map: BTreeMap<String, TensorLocation> = BTreeMap::new();
+    let mut shard_index_by_path: BTreeMap<PathBuf, usize> = BTreeMap::new();
     for (tensor_name, relative) in &raw_index.weight_map {
         let shard_path = index_shard_path(root, index_path, relative)?;
         let shard_idx = *shard_index_by_path
@@ -76,74 +87,48 @@ fn build_indexed_shard_map(
                 shard_paths.push(shard_path);
                 idx
             });
-        tensor_map.insert(
-            tensor_name.clone(),
-            TensorLocation {
-                shard_idx,
-                dtype: String::new(),
-                shape: Vec::new(),
-                data_offsets: [0, 0],
-            },
-        );
+        tensor_map.insert(tensor_name.clone(), TensorLocation::placeholder(shard_idx));
     }
     Ok((shard_paths, tensor_map))
 }
 
-fn build_unsharded_shard_map(
-    shards: &[PathBuf],
-) -> Result<(
-    Vec<PathBuf>,
-    std::collections::BTreeMap<String, TensorLocation>,
-)> {
-    let mut tensor_map: std::collections::BTreeMap<String, TensorLocation> =
-        std::collections::BTreeMap::new();
-    for (shard_idx, shard_path) in shards.iter().enumerate() {
-        let file = File::open(shard_path).map_err(|e| model_load(shard_path, e.to_string()))?;
-        let mmap =
-            unsafe { Mmap::map(&file) }.map_err(|e| model_load(shard_path, e.to_string()))?;
-        let file_len = mmap.len() as u64;
-        let mut len_bytes = [0u8; 8];
-        let mut reader = &mmap[..];
-        reader
-            .read_exact(&mut len_bytes)
-            .map_err(|e| model_load(shard_path, format!("read header length: {e}")))?;
-        let header_len = u64::from_le_bytes(len_bytes);
-        if header_len > MAX_HEADER_BYTES as u64 {
-            return Err(model_load(
-                shard_path,
-                format!("header length {header_len} exceeds limit {MAX_HEADER_BYTES}"),
-            ));
-        }
-        if 8u64
-            .checked_add(header_len)
-            .is_none_or(|end| end > file_len)
-        {
-            return Err(model_load(shard_path, "header extends beyond file".into()));
-        }
-        let header_bytes = &mmap[8..8 + header_len as usize];
-        let header = parse_json_rejecting_duplicate_keys(header_bytes, shard_path, "header")?;
-        let object = header.as_object().ok_or_else(|| {
-            model_load(
-                shard_path,
-                "Safetensors header must be a JSON object".into(),
-            )
-        })?;
-        for (name, _value) in object {
-            if name == "__metadata__" {
-                continue;
-            }
-            tensor_map.insert(
-                name.clone(),
-                TensorLocation {
-                    shard_idx,
-                    dtype: String::new(),
-                    shape: Vec::new(),
-                    data_offsets: [0, 0],
-                },
-            );
-        }
+/// Map one shard and parse its header, returning the mapping, the header
+/// length, the data section length and the header object.
+fn map_shard(path: &Path) -> Result<(Mmap, u64, u64, serde_json::Map<String, Value>)> {
+    let file = File::open(path).map_err(|e| model_load(path, e.to_string()))?;
+    let mmap = unsafe { Mmap::map(&file) }.map_err(|e| model_load(path, e.to_string()))?;
+    let file_len = mmap.len() as u64;
+    let mut len_bytes = [0u8; 8];
+    let mut reader = &mmap[..];
+    reader
+        .read_exact(&mut len_bytes)
+        .map_err(|e| model_load(path, format!("read header length: {e}")))?;
+    let header_len = u64::from_le_bytes(len_bytes);
+    if header_len > MAX_HEADER_BYTES as u64 {
+        return Err(model_load(
+            path,
+            format!("header length {header_len} exceeds limit {MAX_HEADER_BYTES}"),
+        ));
     }
-    Ok((shards.to_vec(), tensor_map))
+    if 8u64
+        .checked_add(header_len)
+        .is_none_or(|end| end > file_len)
+    {
+        return Err(model_load(path, "header extends beyond file".into()));
+    }
+    let header_bytes = &mmap[8..8 + header_len as usize];
+    let Value::Object(object) = parse_json_rejecting_duplicate_keys(header_bytes, path, "header")?
+    else {
+        return Err(model_load(
+            path,
+            "Safetensors header must be a JSON object".into(),
+        ));
+    };
+    let data_len = file_len
+        .checked_sub(8)
+        .and_then(|len| len.checked_sub(header_len))
+        .ok_or_else(|| model_load(path, "data range underflow".into()))?;
+    Ok((mmap, header_len, data_len, object))
 }
 
 impl MappedSafetensorsCheckpoint {
@@ -158,56 +143,41 @@ impl MappedSafetensorsCheckpoint {
         let config = Self::read_config(root)?;
 
         // Try index-first (sharded) layout; fall back to single-file
-        let (shard_paths, mut tensor_map) = if let Some(index_path) = find_index_file(root)? {
-            build_indexed_shard_map(root, &index_path)?
+        let index_path = find_index_file(root)?;
+        let (shard_paths, mut tensor_map) = if let Some(index_path) = &index_path {
+            build_indexed_shard_map(root, index_path)?
         } else {
             let shards = list_safetensors_files(root)?;
             if shards.is_empty() {
                 return Err(model_load(root, "no .safetensors files found".into()));
             }
-            build_unsharded_shard_map(&shards)?
+            (shards, BTreeMap::new())
         };
 
-        // Map each shard and parse its header to resolve tensor dtypes/offsets
-        let mut shards: Vec<MappedShard> = Vec::new();
-        for (shard_idx, shard_path) in shard_paths.iter().enumerate() {
-            let file = File::open(shard_path).map_err(|e| model_load(shard_path, e.to_string()))?;
-            let mmap =
-                unsafe { Mmap::map(&file) }.map_err(|e| model_load(shard_path, e.to_string()))?;
-            let file_len = mmap.len() as u64;
-            let mut len_bytes = [0u8; 8];
-            let mut reader = &mmap[..];
-            reader
-                .read_exact(&mut len_bytes)
-                .map_err(|e| model_load(shard_path, format!("read header length: {e}")))?;
-            let header_len = u64::from_le_bytes(len_bytes);
-            if header_len > MAX_HEADER_BYTES as u64 {
-                return Err(model_load(
-                    shard_path,
-                    format!("header length {header_len} exceeds limit {MAX_HEADER_BYTES}"),
-                ));
-            }
-            if 8u64
-                .checked_add(header_len)
-                .is_none_or(|end| end > file_len)
-            {
-                return Err(model_load(shard_path, "header extends beyond file".into()));
-            }
-            let header_bytes = &mmap[8..8 + header_len as usize];
-            let header = parse_json_rejecting_duplicate_keys(header_bytes, shard_path, "header")?;
-            let object = header.as_object().ok_or_else(|| {
-                model_load(
-                    shard_path,
-                    "Safetensors header must be a JSON object".into(),
-                )
-            })?;
+        // Map each shard once, in order, and parse its header
+        let mapped = shard_paths
+            .iter()
+            .map(|shard_path| map_shard(shard_path))
+            .collect::<Result<Vec<_>>>()?;
 
-            let data_len = file_len
-                .checked_sub(8)
-                .and_then(|len| len.checked_sub(header_len))
-                .ok_or_else(|| model_load(shard_path, "data range underflow".into()))?;
+        // Without an index, each shard's tensors claim their names in shard
+        // order, so the last shard declaring a tensor owns it
+        if index_path.is_none() {
+            for (shard_idx, (_, _, _, object)) in mapped.iter().enumerate() {
+                for name in object.keys() {
+                    if name != "__metadata__" {
+                        tensor_map.insert(name.clone(), TensorLocation::placeholder(shard_idx));
+                    }
+                }
+            }
+        }
 
-            for (name, value) in object {
+        // Resolve tensor dtypes/offsets from the shard that owns each tensor
+        let mut shards: Vec<MappedShard> = Vec::with_capacity(mapped.len());
+        for (shard_idx, (shard_path, (mmap, header_len, data_len, object))) in
+            shard_paths.iter().zip(mapped).enumerate()
+        {
+            for (name, value) in &object {
                 if name == "__metadata__" {
                     continue;
                 }
@@ -217,77 +187,11 @@ impl MappedSafetensorsCheckpoint {
                 if loc.shard_idx != shard_idx {
                     continue;
                 }
-                let tensor = value.as_object().ok_or_else(|| {
-                    model_load(
-                        shard_path,
-                        format!("tensor '{name}' metadata must be an object"),
-                    )
-                })?;
-                let dtype = tensor
-                    .get("dtype")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        model_load(shard_path, format!("tensor '{name}' missing dtype"))
-                    })?
-                    .to_string();
-                let shape = tensor
-                    .get("shape")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| {
-                        model_load(shard_path, format!("tensor '{name}' missing shape"))
-                    })?
-                    .iter()
-                    .map(|dim| {
-                        dim.as_u64()
-                            .and_then(|v| usize::try_from(v).ok())
-                            .ok_or_else(|| {
-                                model_load(shard_path, format!("tensor '{name}' invalid shape"))
-                            })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let offsets = tensor
-                    .get("data_offsets")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| {
-                        model_load(shard_path, format!("tensor '{name}' missing data_offsets"))
-                    })?;
-                if offsets.len() != 2 {
-                    return Err(model_load(
-                        shard_path,
-                        format!("tensor '{name}' data_offsets must have length 2"),
-                    ));
-                }
-                let start = offsets[0]
-                    .as_u64()
-                    .and_then(|v| usize::try_from(v).ok())
-                    .ok_or_else(|| {
-                        model_load(shard_path, format!("tensor '{name}' invalid start offset"))
-                    })?;
-                let end = offsets[1]
-                    .as_u64()
-                    .and_then(|v| usize::try_from(v).ok())
-                    .ok_or_else(|| {
-                        model_load(shard_path, format!("tensor '{name}' invalid end offset"))
-                    })?;
-                if start > end || end as u64 > data_len {
-                    return Err(model_load(
-                        shard_path,
-                        format!("tensor '{name}' data range invalid"),
-                    ));
-                }
-                let expected = expected_tensor_byte_size(&dtype, &shape, shard_path, name)?;
-                if expected != end - start {
-                    return Err(model_load(
-                        shard_path,
-                        format!(
-                            "tensor '{name}' byte size mismatch: expected {expected}, got {}",
-                            end - start
-                        ),
-                    ));
-                }
+                let (dtype, shape, offsets) =
+                    parse_tensor_entry(shard_path, name, value, data_len)?;
                 loc.dtype = dtype;
                 loc.shape = shape;
-                loc.data_offsets = [start, end];
+                loc.data_offsets = offsets;
             }
 
             shards.push(MappedShard {
