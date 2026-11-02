@@ -51,4 +51,6 @@ pub(super) fn model_load(path: &Path, reason: String) -> HybridError {
 }
 
 #[cfg(test)]
+pub(in crate::moe) mod test_support;
+#[cfg(test)]
 mod tests;

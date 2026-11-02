@@ -6,56 +6,11 @@ use super::manifest::{
     shard_metadata_namespaced_key,
 };
 use super::paths::{canonical_existing_or_parent, parent_or_current};
+use super::test_support::{temp_dir, write_safetensors};
 use super::*;
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::Write;
-use std::ops::Deref;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-struct TestDir(PathBuf);
-
-impl Deref for TestDir {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<Path> for TestDir {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn temp_dir(name: &str) -> TestDir {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "corinth-safetensors-{name}-{}-{nanos}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&path).unwrap();
-    TestDir(path)
-}
-
-fn write_safetensors(path: &Path, header: &str, data_len: usize) {
-    let mut file = File::create(path).unwrap();
-    file.write_all(&(header.len() as u64).to_le_bytes())
-        .unwrap();
-    file.write_all(header.as_bytes()).unwrap();
-    file.write_all(&vec![0u8; data_len]).unwrap();
-}
 
 #[test]
 fn parses_single_file_manifest_and_labels_candidates() {
