@@ -55,6 +55,10 @@ The latent telemetry CSV includes both SAAQ trajectories via
 - `TICKS=0` with `TELEMETRY_SOURCE=csv` uses the full CSV row count so corpus
   runs cover exactly one telemetry loop.
 - When `TICKS > csv_row_count`, the runner warns about wraparound contamination.
+- CSV rows that are malformed or non-finite are dropped, not filled, and later
+  rows shift up one tick. `run_manifest.json` stamps the count as
+  `telemetry_rows_skipped`, separate from `telemetry_row_count`; the field is
+  absent when no CSV was parsed.
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including

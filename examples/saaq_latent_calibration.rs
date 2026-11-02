@@ -659,6 +659,7 @@ fn build_manifest(
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
         telemetry_row_count,
+        telemetry_rows_skipped: ctx.resolved.rows_skipped,
         wraparound_enabled,
         wraparound_loops,
         ticks_effective: ctx.ticks,
