@@ -26,7 +26,8 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64, cuda-13.3, sm_120, gpu]
+    # See gpu-cuda-13.3-sm_120.yml — legacy runner label until `cuda-13.3` is applied.
+    runs-on: [self-hosted, Linux, X64, cuda-13.2, sm_120, gpu]
     env:
       CUDAHOSTCXX: /usr/bin/clang++
 

@@ -130,6 +130,6 @@ Per-run artifacts land under `VALIDATION_OUTPUT_ROOT` (default `./artifacts`): `
 
 ## CI
 
-GitHub Actions is primary: `ci.yml` (CPU — fmt, clippy `--locked`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --locked`, llvm-cov → Codecov; then a self-hosted Ryzen job with a fork guard), `gpu-tests.yml` (CUDA ≥ 13.3 / sm_120 build validation), `docker-build.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
+GitHub Actions is primary: `ci.yml` (CPU — fmt, clippy `--locked`, `cargo test --lib --no-default-features --locked`, `cargo check --examples --locked`, llvm-cov → Codecov; then a self-hosted Ryzen job with a fork guard), `gpu-cuda-13.3-sm_120.yml` (CUDA ≥ 13.3 / sm_120 build validation), `docker-cuda-13.3-sm_120.yml`, `sentry-release.yml`, `snyk-security.yml`. `scripts/*` is gitignored by design, so CI checkouts do not contain it.
 
 Note the split in test scope: the hosted job runs only `--lib`, so `tests/` and example-target tests are exercised solely by the Ryzen job (`cargo test --all-targets --no-default-features --locked`), which is skipped for fork PRs. Run `--all-targets` locally before pushing rather than trusting the hosted job.

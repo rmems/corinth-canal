@@ -14,7 +14,10 @@ permissions:
 
 jobs:
   gpu-tests:
-    runs-on: [self-hosted, Linux, X64, cuda-13.3, sm_120, gpu]
+    # The self-hosted runner may still carry the legacy `cuda-13.2` label in GitHub
+    # Actions even after the host toolkit is upgraded. Toolchain policy is enforced
+    # by the nvcc check below and the pinned `nvidia/cuda:13.3.0-devel-*` image.
+    runs-on: [self-hosted, Linux, X64, cuda-13.2, sm_120, gpu]
     name: GPU CUDA Build Validation
     # SECURITY: Fork guard — prevent fork PRs from running on self-hosted runners.
     # Without this, an attacker could fork the repo, modify workflow steps,

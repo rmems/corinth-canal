@@ -140,7 +140,7 @@ jobs:
     # job: ShipOfTheseus (Fedora, Ryzen) or DESKTOP-4E1V5HV (Windows). Labels
     # are AND-matched, so only labels both runners carry are listed here;
     # pinning `Linux`/`ryzen` left the job queued whenever Fedora was off.
-    # GPU jobs (gpu-tests.yml, docker-build.yml) keep their gpu/cuda labels.
+    # GPU jobs (gpu-cuda-13.3-sm_120.yml, docker-cuda-13.3-sm_120.yml) keep their gpu/cuda labels.
     runs-on: [self-hosted, X64]
     timeout-minutes: 60
     # SECURITY: Explicit minimal permissions for self-hosted runner job.

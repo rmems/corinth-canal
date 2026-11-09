@@ -73,7 +73,7 @@ reviews:
         commands in sync with the local gates documented in the repo. Every
         uses: reference is pinned to a full commit SHA today; new or bumped
         actions must be too. GPU tests run on [self-hosted, Linux, X64,
-        cuda-13.3, sm_120, gpu] and must stay gated away from untrusted PRs.
+        cuda-13.2/cuda-13.3, sm_120, gpu] and must stay gated away from untrusted PRs.
   tools:
     clippy:
       enabled: true
