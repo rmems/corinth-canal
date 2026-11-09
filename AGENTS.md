@@ -129,7 +129,7 @@ exercise the default feature set.
 
 ### Cross-platform and security CI
 
-- GitHub Actions: primary (see `.github/workflows/*.yml` for CPU, GPU, Docker, Sentry).
+- GitHub Actions: primary (see `.github/workflows/*.yml` for CPU, GPU, Sentry).
 - Snyk: security scans (SCA for open-source deps, Code for SAST, etc.) are performed via the Snyk MCP server tools (e.g. `snyk__snyk_sca_scan`, `snyk__snyk_code_scan`, `snyk__snyk_container_scan`, `snyk__snyk_iac_scan`) instead of a dedicated CI workflow. Use during development, reviews, or agent-assisted tasks. GH#108. Aikido is tracked separately (see #70).
 
 Run `cargo check --no-default-features && cargo test --no-default-features` locally before substantial Rust changes (per Git Workflow below). Docs-only, license-only, CI-only, or similar non-behavioral/non-Rust edits do not require full cargo validation (use targeted checks or skip as escape hatch). GHA provides additional platform coverage. Snyk MCP provides on-demand security scanning.
