@@ -171,6 +171,9 @@ When emitted, the GPU routing telemetry CSV schema is:
 token_idx,best_score,best_walker,spike_count,mean_adaptation,active_fraction
 ```
 
+`mean_adaptation` is reserved in the schema; writers currently emit `0.0` until
+GPU adaptation state is exported into that column.
+
 ## Quick start
 
 ### Check the repo
