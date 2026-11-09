@@ -63,10 +63,6 @@ reviews:
         Python 3.11 (CI). CI gate: ruff check benchmarks (ruff 0.15.14) and
         python -m unittest discover -s benchmarks/tests. Keep code compatible
         with the declared Python floor.
-    - path: Dockerfile
-      instructions: >-
-        Dockerfile. Keep secrets out of layers and build args, and keep
-        toolchain versions in line with the CI pins.
     - path: .github/workflows/**
       instructions: >-
         GitHub Actions workflows. Keep permissions: least-privilege and job
