@@ -67,19 +67,20 @@ pub(super) fn append_gpu_routing_telemetry_row(
         }
     }
 
-    let needs_header = std::fs::metadata(path)
-        .map(|metadata| metadata.len() == 0)
-        .unwrap_or(false);
+    for _ in 0..64 {
+        if std::fs::metadata(path)
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
+        {
+            break;
+        }
+        std::thread::yield_now();
+    }
 
     let mut file = OpenOptions::new()
         .append(true)
         .open(path)
         .map_err(|e| GpuError::MemoryError(format!("CSV Write Failed: {e}")))?;
-
-    if needs_header {
-        writeln!(file, "{GPU_ROUTING_TELEMETRY_HEADER}")
-            .map_err(|e| GpuError::MemoryError(format!("CSV Write Failed: {e}")))?;
-    }
 
     append_row_only(&mut file, &row)
 }
