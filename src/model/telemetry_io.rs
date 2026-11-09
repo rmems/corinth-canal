@@ -37,12 +37,12 @@ pub(super) fn append_gpu_routing_telemetry_row(
     mean_adaptation: f32,
     active_fraction: f32,
 ) -> GpuResult<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                GpuError::MemoryError(format!("CSV Write Failed: could not create parent: {e}"))
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            GpuError::MemoryError(format!("CSV Write Failed: could not create parent: {e}"))
+        })?;
     }
 
     let row = format_gpu_routing_row(
