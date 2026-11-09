@@ -1,4 +1,4 @@
-name: GPU CUDA Build Validation (13.2 + sm_120)
+name: GPU CUDA Build Validation (13.3 + sm_120)
 on:
   pull_request:
     branches:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   gpu-tests:
-    runs-on: [self-hosted, Linux, X64, cuda-13.2, sm_120, gpu]
+    runs-on: [self-hosted, Linux, X64, cuda-13.3, sm_120, gpu]
     name: GPU CUDA Build Validation
     # SECURITY: Fork guard — prevent fork PRs from running on self-hosted runners.
     # Without this, an attacker could fork the repo, modify workflow steps,
@@ -33,12 +33,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       
-      - name: Check CUDA Version >= 13.2
+      - name: Check CUDA Version >= 13.3
         run: |
           CUDA_VERSION=$(nvcc --version | grep -oP 'release \K[0-9.]+' | head -1)
-          REQUIRED="13.2"
+          REQUIRED="13.3"
           if [ "$(printf '%s\n' "$REQUIRED" "$CUDA_VERSION" | sort -V | head -n1)" != "$REQUIRED" ]; then
-            echo "❌ CUDA $CUDA_VERSION < 13.2 required"
+            echo "❌ CUDA $CUDA_VERSION < 13.3 required"
             exit 1
           fi
           echo "✅ CUDA $CUDA_VERSION verified"
@@ -51,7 +51,7 @@ jobs:
           docker run --rm \
             -v "$PWD:/app" \
             -w /app \
-            nvidia/cuda:13.2.0-devel-ubuntu22.04 \
+            nvidia/cuda:13.3.0-devel-ubuntu22.04 \
             bash -lc '
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
@@ -103,5 +103,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nValidation: CUDA lib-test compile + example compile in Ubuntu 22.04 / CUDA 13.2 toolchain\nCUDA: 13.2+ (sm_120)\n[View logs](${context.payload.repository.html_url}/actions/runs/${context.runId})`
+              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nValidation: CUDA lib-test compile + example compile in Ubuntu 22.04 / CUDA 13.3 toolchain\nCUDA: 13.3+ (sm_120)\n[View logs](${context.payload.repository.html_url}/actions/runs/${context.runId})`
             });

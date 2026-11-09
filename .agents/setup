@@ -15,7 +15,7 @@
 #   - tool directories exposed to later shells (/etc/profile.d + /usr/local/bin links)
 #
 # It ends with a dependency fetch/prebuild, not a test run.
-# sm_120 / CUDA 13.2 stay out of this script: orbs have no GPU.
+# sm_120 / CUDA 13.3 stay out of this script: orbs have no GPU.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

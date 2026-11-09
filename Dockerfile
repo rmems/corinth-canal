@@ -1,4 +1,4 @@
-ARG CUDA_VERSION=13.2.0
+ARG CUDA_VERSION=13.3.0
 ARG CUDAHOSTCXX=/usr/bin/clang++
 
 # Build stage
