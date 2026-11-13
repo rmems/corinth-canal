@@ -91,17 +91,25 @@ saaq:
 # Full SAAQ 1.5 MoE baseline campaign (2 phases x REPEAT_COUNT runs per model).
 # Both phases set LINEUP_STRICT=1 so a declared-but-missing checkpoint aborts
 # instead of silently shrinking the model set between phases.
+# The usable-row count comes from `validate_local_saaq --count-usable-rows`,
+# i.e. the same loader the runner replays with, so rows a shell numeric test
+# would accept but the loader rejects (f32 overflow such as 1e39) are not
+# counted toward the TICKS preflight (RM-1449).
 saaq-campaign:
     @[ -n "${LINEUP_CONFIG:-}" ] && [ -f "${LINEUP_CONFIG}" ] || { echo "error: saaq-campaign requires LINEUP_CONFIG to name an existing lineup. A baseline campaign must pin its model set, and autodiscovery includes the dense glm46v_flash_q8_0, which aborts the sweep on missing expert_count. Copy configs/local_gguf_lineup.template.toml and set LINEUP_CONFIG in .env.local." >&2; exit 1; }
     @[ -n "${TELEMETRY_CSV_PATH:-}" ] && [ -f "${TELEMETRY_CSV_PATH}" ] || { echo "error: phase 2/2 needs TELEMETRY_CSV_PATH to point at an existing CSV. Without it the runner degrades to synthetic telemetry (stamped synthetic_fallback) and this campaign would compare synthetic against synthetic." >&2; exit 1; }
-    @awk -v HDR='timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w' 'BEGIN{FS=","} {line=$0; sub(/\r$/,"",line); gsub(/^[ \t]+|[ \t]+$/,"",line)} NR==1{if(line!=HDR){hdrbad=1;exit 2} next} line==""{next} {if(split(line,f,",")!=5)next; if(f[1] !~ /^[0-9]+$/)next; bad=0; for(i=2;i<=5;i++) if(f[i] !~ /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/) bad=1; if(bad)next; found=1; exit 0} END{if(hdrbad)exit 2; if(!found)exit 3}' "${TELEMETRY_CSV_PATH}" && rc=0 || rc=$?; [ "$rc" = 0 ] || { [ "$rc" = 2 ] && echo "error: TELEMETRY_CSV_PATH header is not the canonical schema (timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w)." >&2 || echo "error: TELEMETRY_CSV_PATH contains no usable row (needs 5 fields: u64 timestamp + 4 numbers). Every row is blank or malformed, so the runner would skip them all and degrade to synthetic." >&2; exit 1; }
+    @head -n1 "${TELEMETRY_CSV_PATH}" | tr -d '\r' | grep -qx 'timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w' || { echo "error: TELEMETRY_CSV_PATH header is not the canonical schema (timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w)." >&2; exit 1; }
+    @rows=$(cargo run -q --example validate_local_saaq --no-default-features -- --count-usable-rows "${TELEMETRY_CSV_PATH}") || exit 1; \
+    [ "$rows" -gt 0 ] 2>/dev/null || { echo "error: TELEMETRY_CSV_PATH contains no usable row (needs 5 fields: u64 timestamp + 4 finite f32). Every row is blank or malformed, so the runner would skip them all and degrade to synthetic." >&2; exit 1; }; \
+    ticks="${TICKS:-}"; case "$ticks" in ''|*[!0-9]*) ticks=512;; esac; [ "$ticks" = 0 ] && ticks="$rows"; \
+    [ "$ticks" -le "$rows" ] || { echo "error: TICKS=$ticks exceeds the $rows usable rows in TELEMETRY_CSV_PATH; phase 2/2 runs with STRICT_WRAPAROUND=1 and would abort after the full phase-1 GPU sweep. Set TICKS<=$rows (or TICKS=0 for one full pass) before starting the campaign." >&2; exit 1; }
     @echo ">>> phase 1/2: synthetic baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
         RUN_TAG=campaign_syn LINEUP_STRICT=1 \
         cargo run --release --example saaq_latent_calibration
     @echo ">>> phase 2/2: csv replay baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=csv \
-        RUN_TAG=campaign_csv LINEUP_STRICT=1 \
+        RUN_TAG=campaign_csv LINEUP_STRICT=1 STRICT_WRAPAROUND=1 \
         cargo run --release --example saaq_latent_calibration
     @echo "ok: campaign finished; see artifacts/index.csv"
 
