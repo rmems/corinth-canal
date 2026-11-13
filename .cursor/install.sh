@@ -29,11 +29,17 @@ fi
 
 # Download a URL to a file. Fail if curl did not finish; do not pipe into a shell.
 # Checksums are verified only when the publisher actually ships one.
+# --retry-all-errors needs curl >= 7.71 (Ubuntu 20.04 ships 7.68); probe support
+# so older bases still get --retry instead of aborting on an unknown option.
+retry_flags=(--retry 5)
+if curl --help all 2>/dev/null | grep -q -- '--retry-all-errors'; then
+  retry_flags+=(--retry-all-errors)
+fi
 download() {
   local url="$1" dest="$2"
   curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
     --connect-timeout 15 --max-time 120 \
-    --retry 5 --retry-all-errors -o "$dest" "$url"
+    "${retry_flags[@]}" -o "$dest" "$url"
 }
 
 # rustup publishes a sha256 next to rustup-init. The hash file names the binary
