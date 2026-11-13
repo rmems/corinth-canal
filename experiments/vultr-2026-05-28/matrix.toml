@@ -18,11 +18,21 @@
 #   norm_policy         "protect" | "quantize" | "drop"
 #   telemetry_source    "synthetic" | "csv"
 #   output_root         artifact output directory
-#   max_runtime_minutes hard runtime cap (0 = disabled, but validation rejects 0)
-#   max_disk_gib        hard disk cap
-#   expected_artifacts  list of expected output files
-#   success_metrics     list of success criteria
-#   skip_reason         if set, run is skipped
+#   max_runtime_minutes declared runtime budget; must be non-zero for an
+#                       enabled run. NOT enforced: no runner loads this file,
+#                       so nothing kills a run that exceeds it.
+#   max_disk_gib        declared disk budget; same caveat, not enforced
+#   expected_artifacts  files the operator expects to find afterwards
+#                       (reviewed by hand, not checked by code)
+#   success_metrics     post-hoc review criteria (not evaluated by code)
+#   skip_reason         if set, the run is a documented skip and validation
+#                       bypasses every check for it
+#
+# This matrix is a plan for the operator; saaq_latent_calibration is driven
+# by env / lineup config and never reads it. Keep it validating on a clean
+# checkout: the grok-1 entry carries a skip_reason because validation gates
+# grok-1 on GROK1_ARTIFACT_READY=1. To enable it, remove the skip_reason and
+# export GROK1_ARTIFACT_READY=1.
 
 # ── Local baseline runs ──
 
@@ -347,6 +357,7 @@ max_runtime_minutes = 240
 max_disk_gib = 150
 expected_artifacts = ["run_manifest.json", "summary.json", "tick_telemetry.txt", "latent_telemetry.csv"]
 success_metrics = ["ticks_completed > 0", "latent_rows > 0"]
+skip_reason = "grok-1 artifact not staged; validation gates it on GROK1_ARTIFACT_READY=1 — remove this skip_reason and set the flag to enable"
 
 [[run]]
 run_id = "grok_2_fp8_cloud"

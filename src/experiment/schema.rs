@@ -196,6 +196,13 @@ pub struct ModelAdapterConfig {
 }
 
 /// Dynamic per-run entry in the SAAQ run matrix.
+///
+/// A `RunEntry` is a *plan*, not an execution contract. No runner in this
+/// repository loads a `RunMatrix`: `saaq_latent_calibration` is driven by
+/// env / lineup config, so `max_runtime_minutes`, `max_disk_gib`,
+/// `expected_artifacts` and `success_metrics` are declared budgets and
+/// post-hoc review criteria for the operator (and `Surrogate_Viz.jl`), not
+/// limits anything kills a run on or evaluates automatically (RM-1448).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunEntry {
     pub run_id: String,
@@ -208,12 +215,21 @@ pub struct RunEntry {
     pub norm_policy: String,
     pub telemetry_source: String,
     pub output_root: String,
+    /// Declared runtime budget in minutes. Must be non-zero for an enabled
+    /// run so every plan states a budget; **not enforced** by any runner.
     pub max_runtime_minutes: u64,
+    /// Declared disk budget in GiB. Must be non-zero for an enabled run;
+    /// **not enforced** by any runner.
     pub max_disk_gib: u64,
+    /// Files the operator expects in the run directory. Checked by review,
+    /// not by code.
     #[serde(default)]
     pub expected_artifacts: Vec<String>,
+    /// Free-form success criteria for post-hoc review. Not evaluated by code.
     #[serde(default)]
     pub success_metrics: Vec<String>,
+    /// When set, the run is a documented skip: `validate` bypasses every
+    /// check for it (budgets, policies, family, Grok-1 gate).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
 }
@@ -226,96 +242,311 @@ pub struct RunMatrix {
 }
 
 impl RunMatrix {
-    /// Validate the run matrix.
+    /// Validate the run matrix as a *plan*.
     ///
-    /// Checks:
-    /// - Every enabled run has explicit runtime and disk caps.
-    /// - Every enabled run has explicit router and norm policy.
-    /// - Grok-1 cannot be selected unless `GROK1_ARTIFACT_READY=1`.
-    /// - Unknown model families are rejected.
+    /// Checks, for every run without a `skip_reason`:
+    /// - `max_runtime_minutes` and `max_disk_gib` are declared (non-zero).
+    ///   This only asserts the plan states a budget; nothing enforces it.
+    /// - `router_policy` and `norm_policy` are explicit.
+    /// - A run naming `grok-1` is rejected unless `GROK1_ARTIFACT_READY=1`
+    ///   (readiness flag, not a path). The shipped matrix carries a
+    ///   `skip_reason` on its grok-1 entry so it validates on a clean
+    ///   checkout; drop the `skip_reason` *and* set the flag to enable it.
+    /// - `model_family` is a known family slug.
+    ///
+    /// Runs with a `skip_reason` bypass all of the above.
     pub fn validate(&self) -> Result<()> {
         let grok_ready = std::env::var("GROK1_ARTIFACT_READY").is_ok_and(|v| v == "1");
+        self.validate_with(grok_ready)
+    }
 
+    /// [`RunMatrix::validate`] with the Grok-1 readiness flag supplied by
+    /// the caller instead of read from the environment. Tests use this so
+    /// both branches of the gate run regardless of the real env.
+    pub fn validate_with(&self, grok_ready: bool) -> Result<()> {
         for run in &self.runs {
-            // Skip validation for explicitly skipped runs.
-            if run.skip_reason.is_some() {
+            if run.is_documented_skip()? {
                 continue;
             }
-
-            // Runtime and disk caps must be present (non-zero).
-            if run.max_runtime_minutes == 0 {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing max_runtime_minutes",
-                    run.run_id
-                )));
-            }
-            if run.max_disk_gib == 0 {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing max_disk_gib",
-                    run.run_id
-                )));
-            }
-
-            // Router and norm policies must be explicit.
-            if run.router_policy.trim().is_empty() {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing router_policy",
-                    run.run_id
-                )));
-            }
-            if run.norm_policy.trim().is_empty() {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' missing norm_policy",
-                    run.run_id
-                )));
-            }
-
-            // Grok-1 gate: only block runs that specifically reference grok-1.
-            if run.model_family == "grok" && run.model_id_or_path.contains("grok-1") && !grok_ready
-            {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' selects grok-1 but GROK1_ARTIFACT_READY is not set to 1",
-                    run.run_id
-                )));
-            }
-
-            const KNOWN_FAMILIES: &[&str] = &[
-                "olmoe",
-                "qwen3_moe",
-                "gemma4",
-                "deepseek2",
-                "llama_moe",
-                "moonlight_16b_a3b",
-                "granite_3_1_a800m",
-                "nemotron",
-                "lfm2_moe",
-                "slim_moe",
-                "zaya",
-                "glm4",
-                "gpt_oss",
-                "step",
-                "minimax",
-                "cohere",
-                "grin",
-                "skyworks",
-                "trinity",
-                "grok",
-            ];
-            if !KNOWN_FAMILIES.contains(&run.model_family.as_str()) {
-                return Err(HybridError::InvalidConfig(format!(
-                    "run '{}' uses unknown model_family '{}'",
-                    run.run_id, run.model_family
-                )));
-            }
+            run.validate_budgets()?;
+            run.validate_policies()?;
+            run.validate_family(grok_ready)?;
         }
-
         Ok(())
     }
 }
 
+const KNOWN_FAMILIES: &[&str] = &[
+    "olmoe",
+    "qwen3_moe",
+    "gemma4",
+    "deepseek2",
+    "llama_moe",
+    "moonlight_16b_a3b",
+    "granite_3_1_a800m",
+    "nemotron",
+    "lfm2_moe",
+    "slim_moe",
+    "zaya",
+    "glm4",
+    "gpt_oss",
+    "step",
+    "minimax",
+    "cohere",
+    "grin",
+    "skyworks",
+    "trinity",
+    "grok",
+];
+
+impl RunEntry {
+    fn invalid(&self, message: impl std::fmt::Display) -> HybridError {
+        HybridError::InvalidConfig(format!("run '{}' {message}", self.run_id))
+    }
+
+    /// `Ok(true)` when the run carries a non-blank `skip_reason` and so
+    /// bypasses every other check. A `Some` but blank/whitespace reason is
+    /// not a documented skip and is rejected rather than silently bypassing.
+    fn is_documented_skip(&self) -> Result<bool> {
+        match self.skip_reason.as_deref().map(str::trim) {
+            None => Ok(false),
+            Some("") => Err(self.invalid("has a blank skip_reason; it must be non-empty when set")),
+            Some(_) => Ok(true),
+        }
+    }
+
+    /// Declared budgets must be stated (non-zero). Nothing enforces them.
+    fn validate_budgets(&self) -> Result<()> {
+        const NOTE: &str = "(declared budget; must be non-zero, not enforced by any runner)";
+        if self.max_runtime_minutes == 0 {
+            return Err(self.invalid(format!("missing max_runtime_minutes {NOTE}")));
+        }
+        if self.max_disk_gib == 0 {
+            return Err(self.invalid(format!("missing max_disk_gib {NOTE}")));
+        }
+        Ok(())
+    }
+
+    /// Router and norm policies must be explicit.
+    fn validate_policies(&self) -> Result<()> {
+        if self.router_policy.trim().is_empty() {
+            return Err(self.invalid("missing router_policy"));
+        }
+        if self.norm_policy.trim().is_empty() {
+            return Err(self.invalid("missing norm_policy"));
+        }
+        Ok(())
+    }
+
+    /// Grok-1 readiness gate (grok-1 only, not grok-10 / grok-11) and the
+    /// known-family check.
+    fn validate_family(&self, grok_ready: bool) -> Result<()> {
+        if self.model_family == "grok" && names_grok_1(&self.model_id_or_path) && !grok_ready {
+            return Err(self.invalid(
+                "selects grok-1 but GROK1_ARTIFACT_READY is not set to 1 (set the flag, or give the run a skip_reason)",
+            ));
+        }
+        if !KNOWN_FAMILIES.contains(&self.model_family.as_str()) {
+            return Err(self.invalid(format!("uses unknown model_family '{}'", self.model_family)));
+        }
+        Ok(())
+    }
+}
+
+/// `true` when any path segment of `model_id_or_path` is `grok-1` itself or
+/// `grok-1` followed by a non-digit (`grok-1-int8`, `grok-1.gguf`), so
+/// `grok-10` / `grok-11` are not gated while `xai-org/grok-1/ckpt-0` (the
+/// real checkpoint layout) still is. Case-insensitive.
+fn names_grok_1(model_id_or_path: &str) -> bool {
+    model_id_or_path.split(['/', '\\']).any(|segment| {
+        match segment.to_ascii_lowercase().strip_prefix("grok-1") {
+            Some(rest) => rest.chars().next().is_none_or(|c| !c.is_ascii_digit()),
+            None => false,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ExperimentManifest, ExperimentMetrics, ExperimentSummary};
+    use super::{ExperimentManifest, ExperimentMetrics, ExperimentSummary, RunEntry, RunMatrix};
+
+    fn sample_run(run_id: &str, model_family: &str, model_id_or_path: &str) -> RunEntry {
+        RunEntry {
+            run_id: run_id.into(),
+            model_family: model_family.into(),
+            model_id_or_path: model_id_or_path.into(),
+            source_format: "gguf".into(),
+            quant_mode: "q8_0".into(),
+            saaq_formula_version: "saaq_v1_5".into(),
+            router_policy: "protect".into(),
+            norm_policy: "protect".into(),
+            telemetry_source: "synthetic".into(),
+            output_root: "runs/x".into(),
+            max_runtime_minutes: 30,
+            max_disk_gib: 10,
+            expected_artifacts: Vec::new(),
+            success_metrics: Vec::new(),
+            skip_reason: None,
+        }
+    }
+
+    fn matrix(runs: Vec<RunEntry>) -> RunMatrix {
+        RunMatrix { runs }
+    }
+
+    fn error_text(result: crate::error::Result<()>) -> String {
+        result.expect_err("validation should fail").to_string()
+    }
+
+    #[test]
+    fn run_matrix_accepts_well_formed_plan() {
+        matrix(vec![sample_run("olmoe_q8", "olmoe", "allenai/OLMoE")])
+            .validate()
+            .expect("valid plan");
+    }
+
+    #[test]
+    fn run_matrix_rejects_zero_runtime_budget() {
+        let mut run = sample_run("r", "olmoe", "allenai/OLMoE");
+        run.max_runtime_minutes = 0;
+        let message = error_text(matrix(vec![run]).validate());
+        assert!(message.contains("max_runtime_minutes"), "{message}");
+        assert!(message.contains("not enforced"), "{message}");
+    }
+
+    #[test]
+    fn run_matrix_rejects_zero_disk_budget() {
+        let mut run = sample_run("r", "olmoe", "allenai/OLMoE");
+        run.max_disk_gib = 0;
+        let message = error_text(matrix(vec![run]).validate());
+        assert!(message.contains("max_disk_gib"), "{message}");
+    }
+
+    #[test]
+    fn run_matrix_rejects_blank_policies() {
+        let mut run = sample_run("r", "olmoe", "allenai/OLMoE");
+        run.router_policy = "  ".into();
+        assert!(error_text(matrix(vec![run]).validate()).contains("router_policy"));
+        let mut run = sample_run("r", "olmoe", "allenai/OLMoE");
+        run.norm_policy = String::new();
+        assert!(error_text(matrix(vec![run]).validate()).contains("norm_policy"));
+    }
+
+    #[test]
+    fn run_matrix_rejects_unknown_family() {
+        let message =
+            error_text(matrix(vec![sample_run("r", "mixtral", "mistralai/Mixtral")]).validate());
+        assert!(
+            message.contains("unknown model_family 'mixtral'"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn run_matrix_gates_grok_1_but_not_other_grok_runs() {
+        // Flag injected via `validate_with` so both branches run regardless
+        // of the real GROK1_ARTIFACT_READY in this process.
+        let grok_1 = matrix(vec![sample_run("grok_1", "grok", "xai-org/grok-1")]);
+        let message = error_text(grok_1.validate_with(false));
+        assert!(message.contains("GROK1_ARTIFACT_READY"), "{message}");
+        grok_1
+            .validate_with(true)
+            .expect("grok-1 passes once the flag is set");
+
+        // Same family, different model: never gated.
+        for id in [
+            "TevunahAi/grok-2-FP8",
+            "xai-org/grok-10",
+            "xai-org/grok-11-int8",
+        ] {
+            matrix(vec![sample_run("other", "grok", id)])
+                .validate_with(false)
+                .unwrap_or_else(|e| panic!("{id} must not be gated: {e}"));
+        }
+        // Gate also matches grok-1 with a non-digit suffix, a trailing slash,
+        // or as an intermediate directory (the real xai-org/grok-1 layout
+        // keeps weights under ckpt-0/).
+        for id in [
+            "xai-org/grok-1-int8",
+            "xai-org/grok-1/",
+            "/models/Grok-1.gguf",
+            "/mnt/models/grok-1/ckpt-0",
+            "xai-org/grok-1/ckpt-0",
+        ] {
+            let message =
+                error_text(matrix(vec![sample_run("g1", "grok", id)]).validate_with(false));
+            assert!(message.contains("GROK1_ARTIFACT_READY"), "{id}: {message}");
+        }
+        // The family check still applies: a non-grok family naming grok-1 is
+        // not gated by this rule.
+        matrix(vec![sample_run("mislabelled", "olmoe", "xai-org/grok-1")])
+            .validate_with(false)
+            .expect("gate is family-scoped");
+    }
+
+    #[test]
+    fn names_grok_1_matches_only_grok_1() {
+        for id in [
+            "xai-org/grok-1",
+            "grok-1",
+            "xai-org/grok-1-int8",
+            "xai-org/GROK-1",
+            "grok-1/sub",
+            "xai-org/grok-1/ckpt-0",
+            "C:\\models\\grok-1\\ckpt-0",
+        ] {
+            assert!(super::names_grok_1(id), "{id}");
+        }
+        for id in [
+            "xai-org/grok-10",
+            "xai-org/grok-11",
+            "xai-org/grok-2",
+            "xai-org/grok-10/ckpt-0",
+            "grok-12/grok-13",
+        ] {
+            assert!(!super::names_grok_1(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn run_matrix_rejects_blank_skip_reason() {
+        for blank in ["", "   "] {
+            let mut run = sample_run("r", "olmoe", "allenai/OLMoE");
+            run.skip_reason = Some(blank.into());
+            let message = error_text(matrix(vec![run]).validate_with(false));
+            assert!(message.contains("blank skip_reason"), "{message}");
+        }
+    }
+
+    #[test]
+    fn run_matrix_skip_reason_bypasses_every_check() {
+        let mut run = sample_run("broken", "not_a_family", "xai-org/grok-1");
+        run.max_runtime_minutes = 0;
+        run.max_disk_gib = 0;
+        run.router_policy = String::new();
+        run.skip_reason = Some("documented skip".into());
+        matrix(vec![run])
+            .validate()
+            .expect("skipped runs bypass validation");
+    }
+
+    #[test]
+    fn shipped_vultr_matrix_validates_on_a_clean_checkout() {
+        let text = include_str!("../../experiments/vultr-2026-05-28/matrix.toml");
+        let matrix: RunMatrix = toml::from_str(text).expect("matrix parses");
+        matrix
+            .validate_with(false)
+            .expect("shipped matrix validates without GROK1_ARTIFACT_READY");
+        let grok_1 = matrix
+            .runs
+            .iter()
+            .find(|run| run.model_id_or_path.contains("grok-1"))
+            .expect("grok-1 entry present");
+        assert!(
+            grok_1.skip_reason.is_some(),
+            "grok-1 must carry a skip_reason"
+        );
+    }
 
     fn sample_manifest(
         lineup_declared_count: Option<usize>,
