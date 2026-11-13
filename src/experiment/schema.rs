@@ -34,6 +34,12 @@ pub struct ExperimentManifest {
     pub prompt_profile: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_text: Option<String>,
+    /// Multiplier applied to the prompt embedding before GPU upload. It sets
+    /// the drive into the GIF layer, so runs that differ only in this value
+    /// produce different latent telemetry. Absent on runs that apply no gain
+    /// and on historical manifests, where the value was not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_drive_gain: Option<f32>,
 
     pub ticks: usize,
     pub saaq_rule: String,
@@ -337,6 +343,7 @@ mod tests {
             prompt_embedding_source: "synthetic".into(),
             prompt_profile: "default".into(),
             prompt_text: None,
+            input_drive_gain: None,
             ticks: 1,
             saaq_rule: "SaaqV1_5SqrtRate".into(),
             saaq_primary_rule: "SaaqV1_5SqrtRate".into(),
@@ -433,5 +440,28 @@ mod tests {
             .expect("old manifest without lineup counts");
         assert_eq!(parsed.lineup_declared_count, None);
         assert_eq!(parsed.lineup_resolved_count, None);
+    }
+
+    #[test]
+    fn experiment_manifest_stamps_input_drive_gain() {
+        let mut manifest = sample_manifest(None, None);
+        manifest.input_drive_gain = Some(32.0);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert_eq!(json["input_drive_gain"], 32.0);
+
+        // Zero is a real configuration (no drive), not an unset value.
+        manifest.input_drive_gain = Some(0.0);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert_eq!(json["input_drive_gain"], 0.0);
+    }
+
+    #[test]
+    fn experiment_manifest_without_input_drive_gain_stays_unknown() {
+        let manifest = sample_manifest(None, None);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert!(json.get("input_drive_gain").is_none());
+        let parsed: ExperimentManifest =
+            serde_json::from_value(json).expect("old manifest without the field");
+        assert_eq!(parsed.input_drive_gain, None);
     }
 }

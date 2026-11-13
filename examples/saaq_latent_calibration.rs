@@ -207,6 +207,9 @@ struct RunContext<'a> {
     lineup_declared_count: Option<usize>,
     /// How many of those entries resolved on disk.
     lineup_resolved_count: Option<usize>,
+    /// `INPUT_DRIVE_GAIN`, read once in `run_main` so the tick loop and every
+    /// manifest written for the sweep record the same value.
+    input_drive_gain: f32,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -259,6 +262,7 @@ fn run_main(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>
     // on the canonical form.
     let sanitized_tag: Option<String> = cfg.run_tag.as_deref().map(sanitize_run_tag);
     let run_tag_ref: Option<&str> = sanitized_tag.as_deref();
+    let input_drive_gain = input_drive_gain_from_env();
 
     // In-memory index buffer. Every successful write_manifest_and_summary
     // call at a TERMINAL status pushes a row here; the CSV is materialized
@@ -287,6 +291,7 @@ fn run_main(observer: &CommandObserver) -> Result<(), Box<dyn std::error::Error>
                         run_tag: run_tag_ref,
                         lineup_declared_count: cfg.lineup_declared_count,
                         lineup_resolved_count: cfg.lineup_resolved_count,
+                        input_drive_gain,
                     };
                     run_validation(observer, &ctx, pending)?;
                 }
@@ -479,7 +484,7 @@ fn run_validation(
     let mut tick_writer = BufWriter::new(File::create(&paths.tick_path)?);
     let mut latent_exporter = SnnLatentCsvExporter::create(&paths.latent_path)?;
     let mut calibrator = SnnDualLatentCalibrator::new(saaq_rule);
-    let drive_gain = input_drive_gain_from_env();
+    let drive_gain = ctx.input_drive_gain;
     println!(
         "validation_start model_slug={} family={:?} architecture={} ticks={} repeat={}/{} routing_tensor={} synapse_source={} routing_mode={} projection_mode={} telemetry_source={} input_drive_gain={:.1}",
         ctx.spec.slug,
@@ -646,6 +651,7 @@ fn build_manifest(
         prompt_embedding_source: prompt_embedding_source.to_owned(),
         prompt_profile: ctx.prompt_profile.to_owned(),
         prompt_text: Some(ctx.prompt_text.to_owned()),
+        input_drive_gain: Some(ctx.input_drive_gain),
         ticks: ctx.ticks,
         saaq_rule: saaq_rule_label(saaq_rule).to_owned(),
         saaq_primary_rule: saaq_rule_label(saaq_rule).to_owned(),
