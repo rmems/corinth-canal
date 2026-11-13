@@ -45,6 +45,11 @@ pub struct ExperimentManifest {
     pub telemetry_csv_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub telemetry_row_count: Option<usize>,
+    /// Data rows the telemetry CSV loader dropped as malformed or non-finite;
+    /// they are not part of `telemetry_row_count`. Absent when no CSV was
+    /// parsed and on historical manifests, which must not be read as zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_rows_skipped: Option<usize>,
 
     pub wraparound_enabled: bool,
     pub wraparound_loops: u64,
@@ -344,6 +349,7 @@ mod tests {
             telemetry_source: "synthetic".into(),
             telemetry_csv_path: None,
             telemetry_row_count: None,
+            telemetry_rows_skipped: None,
             wraparound_enabled: false,
             wraparound_loops: 0,
             ticks_effective: 1,
@@ -433,5 +439,29 @@ mod tests {
             .expect("old manifest without lineup counts");
         assert_eq!(parsed.lineup_declared_count, None);
         assert_eq!(parsed.lineup_resolved_count, None);
+    }
+
+    #[test]
+    fn experiment_manifest_stamps_telemetry_rows_skipped() {
+        let mut manifest = sample_manifest(None, None);
+        manifest.telemetry_rows_skipped = Some(600);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert_eq!(json["telemetry_rows_skipped"], 600);
+
+        // A clean CSV stamps an explicit zero: that is a measurement, unlike
+        // the absent field on a run that parsed no CSV.
+        manifest.telemetry_rows_skipped = Some(0);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert_eq!(json["telemetry_rows_skipped"], 0);
+    }
+
+    #[test]
+    fn experiment_manifest_without_telemetry_rows_skipped_stays_unknown() {
+        let manifest = sample_manifest(None, None);
+        let json = serde_json::to_value(&manifest).expect("serialize manifest");
+        assert!(json.get("telemetry_rows_skipped").is_none());
+        let parsed: ExperimentManifest =
+            serde_json::from_value(json).expect("old manifest without the field");
+        assert_eq!(parsed.telemetry_rows_skipped, None);
     }
 }

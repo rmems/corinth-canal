@@ -74,6 +74,9 @@ fn smoke_manifest_identity(
         telemetry_source: format!("csv_{}", domain.source_slug()),
         telemetry_csv_path: None,
         telemetry_row_count: Some(ticks),
+        // Rows reach this manifest already mapped from JSONL; the skip counts
+        // from that step are reported by the ingest CLI, not here.
+        telemetry_rows_skipped: None,
         wraparound_enabled: false,
         wraparound_loops: 0,
         ticks_effective: ticks,
