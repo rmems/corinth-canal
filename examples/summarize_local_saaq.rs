@@ -7,7 +7,7 @@
 //! Recursively reads all `run_manifest.json` / `summary.json` files under
 //! `<runs-dir>` and emits a markdown summary table to stdout.
 
-use corinth_canal::ExperimentManifest;
+use corinth_canal::{ExperimentManifest, experiment::artifact_io};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -16,6 +16,7 @@ fn classify_status(validation: &str, has_manifest: bool) -> String {
     if validation == "completed" || validation == "ok" {
         "ok".into()
     } else if validation == "error"
+        || validation == "manifest_unreadable"
         || validation.ends_with("_failed")
         || validation == "tick_failed"
     {
@@ -39,9 +40,17 @@ fn collect_run_summaries(runs_dir: &Path, entries: &mut Vec<RunSummary>) {
 
             if manifest_path.exists() {
                 let summary_path = path.join("summary.json");
-                let manifest = fs::read_to_string(&manifest_path)
-                    .ok()
-                    .and_then(|s| serde_json::from_str::<ExperimentManifest>(&s).ok());
+                // An unreadable or truncated manifest is an error row, not a
+                // silent skip: the runner now writes atomically (RM-1447), so
+                // a bad file means something outside the runner touched it.
+                let (manifest, read_error) =
+                    match artifact_io::read_json::<ExperimentManifest>(&manifest_path) {
+                        Ok(manifest) => (Some(manifest), None),
+                        Err(error) => (None, Some(error.to_string())),
+                    };
+                if let Some(error) = &read_error {
+                    eprintln!("error: unreadable run_manifest.json: {error}");
+                }
 
                 let ticks = manifest.as_ref().map(|m| m.ticks).unwrap_or(0);
                 let model_slug = manifest
@@ -55,7 +64,7 @@ fn collect_run_summaries(runs_dir: &Path, entries: &mut Vec<RunSummary>) {
                 let validation = manifest
                     .as_ref()
                     .map(|m| m.validation_status.clone())
-                    .unwrap_or_else(|| "missing".into());
+                    .unwrap_or_else(|| "manifest_unreadable".into());
 
                 let run_id = path
                     .file_name()
@@ -72,6 +81,7 @@ fn collect_run_summaries(runs_dir: &Path, entries: &mut Vec<RunSummary>) {
 
                 entries.push(RunSummary {
                     run_id,
+                    manifest_unreadable: read_error.is_some(),
                     model_slug,
                     model_family,
                     ticks,
@@ -144,10 +154,19 @@ fn main() {
             if e.has_telemetry { "yes" } else { "no" },
         );
     }
+
+    let unreadable = entries.iter().filter(|e| e.manifest_unreadable).count();
+    if unreadable > 0 {
+        eprintln!(
+            "error: {unreadable} run_manifest.json file(s) could not be read; see messages above"
+        );
+        std::process::exit(2);
+    }
 }
 
 struct RunSummary {
     run_id: String,
+    manifest_unreadable: bool,
     model_slug: String,
     model_family: String,
     ticks: usize,

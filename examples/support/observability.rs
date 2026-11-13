@@ -562,8 +562,12 @@ pub fn git_sha() -> String {
     {
         return value;
     }
+    // Anchor to this crate's checkout: the examples are always built from
+    // it, and resolving against the process cwd would stamp whatever repo
+    // the operator happened to launch from (RM-1447).
     if let Ok(output) = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         && output.status.success()
     {
@@ -626,11 +630,23 @@ impl CommandObserver {
         E: ErrorReport + ToString,
     {
         let error_message = result.as_ref().err().map(|error| error.to_string());
-        let resolved_status = data.validation_status.unwrap_or(if result.is_ok() {
-            "completed"
-        } else {
-            "failed"
-        });
+        // A status already annotated during the run (e.g.
+        // `projection_mode_unsupported` from `emit_validation_finish`) is
+        // more specific than the generic "failed"; keep it when the final
+        // call passes no explicit status and the result is Err. Explicit
+        // statuses stay authoritative. RM-1447.
+        let previous_status = self
+            .safe_data
+            .borrow()
+            .validation_status
+            .clone()
+            .filter(|status| result.is_err() && is_terminal_failure_status(status));
+        let resolved_status: &str = match (data.validation_status, previous_status.as_deref()) {
+            (Some(explicit), _) => explicit,
+            (None, Some(previous)) => previous,
+            (None, None) if result.is_ok() => "completed",
+            (None, None) => "failed",
+        };
         let resolved_category = data.error_category.unwrap_or(error_category(
             Some(resolved_status),
             error_message.as_deref(),
@@ -638,9 +654,12 @@ impl CommandObserver {
         let enriched = {
             let mut safe_data = self.safe_data.borrow_mut();
             safe_data.merge(data);
-            safe_data
+            // Store the resolved status back so later readers (and tests)
+            // see what was actually reported.
+            *safe_data = safe_data
                 .clone()
-                .with_status(resolved_status, resolved_category)
+                .with_status(resolved_status, resolved_category);
+            safe_data.clone()
         };
 
         annotate_scope(
@@ -799,6 +818,14 @@ pub fn new_relic_verification_summary() -> String {
     lines.join("\n")
 }
 
+/// Statuses that name a terminal failure and may therefore be carried into
+/// `CommandObserver::finish` when the final call passes none. Progress
+/// markers such as `synapse_diagnostic`'s "probing" are not terminal and
+/// fall back to "failed". RM-1447.
+fn is_terminal_failure_status(status: &str) -> bool {
+    status.ends_with("_failed") || status == "projection_mode_unsupported"
+}
+
 pub fn error_category(status: Option<&str>, error: Option<&str>) -> &'static str {
     match status.unwrap_or_default() {
         "completed" => "none",
@@ -810,6 +837,8 @@ pub fn error_category(status: Option<&str>, error: Option<&str>) -> &'static str
         // the substring heuristic below.
         "model_setup_failed" => "config_error",
         "router_load_failed" => "config_error",
+        // Operator asked for a projection mode the runner refuses (RM-1447).
+        "projection_mode_unsupported" => "config_error",
         "gpu_setup_failed" => "gpu_error",
         "tick_failed" => "experiment_error",
         _ => {
@@ -935,9 +964,93 @@ mod tests {
         );
     }
 
+    fn test_observer() -> CommandObserver {
+        CommandObserver {
+            command: "test",
+            run_id: "run".to_owned(),
+            git_sha: "sha".to_owned(),
+            started: Instant::now(),
+            safe_data: RefCell::new(OwnedDiagnosticData::default()),
+            span: RefCell::new(None),
+        }
+    }
+
+    #[test]
+    fn finish_preserves_specific_status_annotated_during_the_run() {
+        let observer = test_observer();
+        observer.annotate(
+            SafeDiagnosticData::default().with_validation_status("projection_mode_unsupported"),
+        );
+        let result: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(&result, SafeDiagnosticData::default());
+        let data = observer.safe_data.borrow();
+        assert_eq!(
+            data.validation_status.as_deref(),
+            Some("projection_mode_unsupported")
+        );
+        assert_eq!(data.error_category.as_deref(), Some("config_error"));
+    }
+
+    #[test]
+    fn finish_does_not_carry_forward_progress_markers() {
+        // synapse_diagnostic annotates "probing" at the start of a run; a
+        // failed probe must still report "failed", not the marker.
+        let observer = test_observer();
+        observer.annotate(SafeDiagnosticData::default().with_validation_status("probing"));
+        let result: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(&result, SafeDiagnosticData::default());
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("failed")
+        );
+        assert!(is_terminal_failure_status("tick_failed"));
+        assert!(is_terminal_failure_status("projection_mode_unsupported"));
+        assert!(!is_terminal_failure_status("probing"));
+        assert!(!is_terminal_failure_status("preflight"));
+        assert!(!is_terminal_failure_status("completed"));
+    }
+
+    #[test]
+    fn finish_explicit_status_is_authoritative() {
+        let observer = test_observer();
+        observer.annotate(SafeDiagnosticData::default().with_validation_status("tick_failed"));
+        let result: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(
+            &result,
+            SafeDiagnosticData::default().with_validation_status("gpu_setup_failed"),
+        );
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("gpu_setup_failed")
+        );
+    }
+
+    #[test]
+    fn finish_ok_result_is_completed_and_err_without_status_is_failed() {
+        let observer = test_observer();
+        let ok: Result<(), Box<dyn std::error::Error>> = Ok(());
+        observer.finish(&ok, SafeDiagnosticData::default());
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("completed")
+        );
+
+        let observer = test_observer();
+        let err: Result<(), Box<dyn std::error::Error>> = Err("boom".into());
+        observer.finish(&err, SafeDiagnosticData::default());
+        assert_eq!(
+            observer.safe_data.borrow().validation_status.as_deref(),
+            Some("failed")
+        );
+    }
+
     #[test]
     fn error_category_maps_known_statuses() {
         assert_eq!(error_category(Some("completed"), None), "none");
+        assert_eq!(
+            error_category(Some("projection_mode_unsupported"), Some("x")),
+            "config_error"
+        );
         assert_eq!(
             error_category(Some("model_setup_failed"), Some("boom")),
             "config_error"
