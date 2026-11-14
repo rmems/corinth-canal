@@ -1,26 +1,70 @@
 from __future__ import annotations
 
+import ast
 import math
 import sys
 import tempfile
+import tomllib
 import types
 import unittest
 from pathlib import Path
+from typing import Any, ClassVar
 from unittest import mock
 
 from benchmarks import load_manifest as exported_load_manifest
 from benchmarks.models import (
+    _BACKEND_HINT_FIELDS,
+    _FORMAT_NAMES_IN_RUNTIME_TABLE,
+    _KNOWN_UNSUPPORTED_RUNTIMES,
     BackendUnavailableError,
     HuggingFaceAdapter,
     LlamaCppAdapter,
     MockModelAdapter,
     VllmAdapter,
+    _backend_from_runtime,
     _hf_trust_remote_code,
     _validate_generation,
     adapter_for_manifest,
     detect_backend,
     load_manifest,
 )
+
+
+def _normalized_value(value: Any) -> str:
+    return str(value).strip().lower().replace("-", "_")
+
+
+def _explicit_runtime_backend(entry: dict[str, Any]) -> str | None:
+    """Backend named by an explicit runtime field, or None when there is none.
+
+    Mirrors detect_backend's classification: `custom_artifact` is deferred,
+    known-unsupported runtimes raise, and `gguf` is an artifact format despite
+    sitting in the runtime table. Returns None when explicit runtimes disagree
+    (detect_backend raises for those entries).
+    """
+    backends = set()
+    for field in _BACKEND_HINT_FIELDS:
+        raw = entry.get(field)
+        if raw is None:
+            continue
+        value = _normalized_value(raw)
+        if value == "custom_artifact" or value in _KNOWN_UNSUPPORTED_RUNTIMES:
+            continue
+        if value in _FORMAT_NAMES_IN_RUNTIME_TABLE:
+            continue
+        backend = _backend_from_runtime(value)
+        if backend is not None:
+            backends.add(backend)
+    return backends.pop() if len(backends) == 1 else None
+
+
+def _is_explicit_runtime_value(value: Any) -> bool:
+    normalized = _normalized_value(value)
+    if normalized == "custom_artifact" or normalized in _KNOWN_UNSUPPORTED_RUNTIMES:
+        return False
+    if normalized in _FORMAT_NAMES_IN_RUNTIME_TABLE:
+        return False
+    return _backend_from_runtime(normalized) is not None
 
 
 class BackendDetectionTests(unittest.TestCase):
@@ -237,8 +281,6 @@ class PackageExportTests(unittest.TestCase):
             self.assertEqual(load_manifest(path)["runtime_format"], "mock")
 
 
-
-
 class DetectBackendProducerShapesTest(unittest.TestCase):
     """`detect_backend` must accept what the Rust producers actually emit.
 
@@ -295,6 +337,55 @@ class DetectBackendProducerShapesTest(unittest.TestCase):
         self.assertIn("sglang", str(ctx.exception))
         self.assertIn("no adapter", str(ctx.exception))
 
+    def test_unsupported_runtime_is_not_replaced_by_another_field(self):
+        # loader_hint asks for sglang; format alone would pick vLLM. Running
+        # vLLM silently would ignore the explicit request.
+        entry = {"loader_hint": "sglang", "format": "safetensors", "path": "/models/x"}
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend(entry)
+        self.assertTrue(str(ctx.exception).startswith("loader_hint 'sglang' has no adapter"))
+        self.assertEqual(detect_backend({**entry, "runtime_format": "vllm"}), "vllm")
+
+    def test_conflicting_artifact_formats_without_a_runtime_raise(self):
+        entry = {"loader_hint": "gguf", "format": "safetensors", "path": "/models/x"}
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend(entry)
+        message = str(ctx.exception)
+        self.assertIn("conflicting artifact format metadata", message)
+        self.assertIn("loader_hint='gguf' -> llama.cpp", message)
+        self.assertIn("format='safetensors' -> vllm", message)
+        self.assertIn("runtime_format", message)
+        self.assertEqual(detect_backend({**entry, "runtime_format": "llama.cpp"}), "llama.cpp")
+
+    def test_conflicting_explicit_runtimes_raise(self):
+        entry = {"loader_hint": "vllm", "source_format": "transformers", "path": "/models/x"}
+        with self.assertRaises(ValueError) as ctx:
+            detect_backend(entry)
+        message = str(ctx.exception)
+        self.assertIn("conflicting runtime metadata", message)
+        self.assertIn("loader_hint='vllm' -> vllm", message)
+        self.assertIn("source_format='transformers' -> huggingface", message)
+
+    def test_explicit_runtime_beats_an_artifact_format_default(self):
+        # safetensors -> vllm is only a default; a named runtime that loads the
+        # same artifact is not a conflict (Blocks/Devin review on #246).
+        cases = [
+            ({"loader_hint": "transformers", "format": "safetensors"}, "huggingface"),
+            ({"loader_hint": "hf", "source_format": "safetensors"}, "huggingface"),
+            ({"loader_hint": "transformers", "checkpoint_format": "safetensors"}, "huggingface"),
+            ({"source_format": "hf", "checkpoint_format": "safetensors"}, "huggingface"),
+            ({"loader_hint": "vllm", "format": "gguf"}, "vllm"),
+        ]
+        for fields, backend in cases:
+            with self.subTest(**fields):
+                self.assertEqual(detect_backend({**fields, "path": "/models/x"}), backend)
+
+    def test_agreeing_fields_still_resolve(self):
+        entry = {"loader_hint": "vllm", "format": "safetensors", "path": "/models/x"}
+        self.assertEqual(detect_backend(entry), "vllm")
+        entry = {"checkpoint_format": "gguf", "source_format": "q8_0", "path": "/models/x"}
+        self.assertEqual(detect_backend(entry), "llama.cpp")
+
     def test_unrecognised_values_are_echoed_in_the_error(self):
         with self.assertRaises(ValueError) as ctx:
             detect_backend({"source_format": "mystery", "path": "model.bin"})
@@ -305,8 +396,18 @@ class DetectBackendProducerShapesTest(unittest.TestCase):
     def test_custom_artifact_gets_an_explanatory_error(self):
         with self.assertRaises(ValueError) as ctx:
             detect_backend({"source_format": "custom_artifact", "path": "/models/x"})
-        self.assertIn("custom_artifact", str(ctx.exception))
-        self.assertIn("runtime_format", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("custom_artifact", message)
+        self.assertIn("runtime_format", message)
+        # Actionable: names the values runtime_format accepts.
+        for runtime in ("llama.cpp", "vllm", "huggingface"):
+            self.assertIn(runtime, message)
+
+    def test_custom_artifact_runtime_override_is_the_documented_fix(self):
+        manifest = {"source_format": "custom_artifact", "path": "/models/x"}
+        with self.assertRaises(ValueError):
+            detect_backend(manifest)
+        self.assertEqual(detect_backend({**manifest, "runtime_format": "vllm"}), "vllm")
 
     def test_unknown_metadata_names_the_fields_it_looked_at(self):
         with self.assertRaises(ValueError) as ctx:
@@ -361,6 +462,318 @@ class HuggingFaceAdapterBehaviourTest(unittest.TestCase):
 
         self.assertTrue(calls["tokenizer"].get("trust_remote_code"))
         self.assertTrue(calls["model"].get("trust_remote_code"))
+
+    def test_trust_remote_code_defaults_to_false_at_both_call_sites(self):
+        calls = {}
+
+        def tok_from_pretrained(path, **kwargs):
+            calls["tokenizer"] = kwargs
+            return _FakeHfTokenizer(prompt_ids=[])
+
+        def model_from_pretrained(path, **kwargs):
+            calls["model"] = kwargs
+            return _FakeHfModel(output=[])
+
+        stub = types.ModuleType("transformers")
+        stub.AutoTokenizer = types.SimpleNamespace(from_pretrained=tok_from_pretrained)
+        stub.AutoModelForCausalLM = types.SimpleNamespace(from_pretrained=model_from_pretrained)
+        with mock.patch.dict(sys.modules, {"transformers": stub}):
+            HuggingFaceAdapter({"model_id_or_local_path": "/models/x"}).load()
+        self.assertIs(calls["tokenizer"]["trust_remote_code"], False)
+        self.assertIs(calls["model"]["trust_remote_code"], False)
+
+    def _loaded_adapter(self, model: _FakeHfModel, tokenizer: _FakeHfTokenizer, **options):
+        stub: Any = types.ModuleType("transformers")
+        stub.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda path, **kw: tokenizer)
+        stub.AutoModelForCausalLM = types.SimpleNamespace(from_pretrained=lambda path, **kw: model)
+        with mock.patch.dict(sys.modules, {"transformers": stub}):
+            adapter = HuggingFaceAdapter({"model_id_or_local_path": "/models/x"}, **options)
+            adapter.load()
+        return adapter
+
+    def test_generate_moves_inputs_to_model_device_and_strips_the_prompt(self):
+        tokenizer = _FakeHfTokenizer(prompt_ids=[11, 12, 13])
+        model = _FakeHfModel(output=[11, 12, 13, 21, 22], device="cuda:0")
+        adapter = self._loaded_adapter(model, tokenizer)
+
+        text = adapter.generate("question", max_tokens=8)
+
+        self.assertEqual(tokenizer.encoded.moved_to, "cuda:0")
+        # Only the tokens after the prompt are decoded.
+        self.assertEqual(tokenizer.decoded, [([21, 22], True)])
+        self.assertEqual(text, "decoded:21,22")
+        kwargs = model.generate_kwargs
+        self.assertEqual(kwargs["max_new_tokens"], 8)
+        self.assertEqual(kwargs["input_ids"].ids, [11, 12, 13])
+
+    def test_generate_is_greedy_at_zero_temperature(self):
+        tokenizer = _FakeHfTokenizer(prompt_ids=[1])
+        model = _FakeHfModel(output=[1, 2])
+        adapter = self._loaded_adapter(model, tokenizer)
+
+        adapter.generate("q")
+
+        kwargs = model.generate_kwargs
+        self.assertFalse(kwargs["do_sample"])
+        # transformers warns when temperature != 1.0 with do_sample=False.
+        self.assertEqual(kwargs["temperature"], 1.0)
+
+    def test_generate_samples_and_forwards_top_p_above_zero_temperature(self):
+        tokenizer = _FakeHfTokenizer(prompt_ids=[1])
+        model = _FakeHfModel(output=[1, 2])
+        adapter = self._loaded_adapter(model, tokenizer)
+
+        adapter.generate("q", temperature=0.7, top_p=0.9)
+
+        kwargs = model.generate_kwargs
+        self.assertTrue(kwargs["do_sample"])
+        self.assertEqual(kwargs["temperature"], 0.7)
+        self.assertEqual(kwargs["top_p"], 0.9)
+
+    def test_generate_skips_device_move_for_a_parameterless_model(self):
+        tokenizer = _FakeHfTokenizer(prompt_ids=[1])
+        model = _FakeHfModel(output=[1, 2], device=None)
+        adapter = self._loaded_adapter(model, tokenizer)
+
+        adapter.generate("q")
+
+        self.assertIsNone(tokenizer.encoded.moved_to)
+
+    def test_unsupported_from_pretrained_options_are_dropped_with_a_warning(self):
+        captured = {}
+        stub = types.ModuleType("transformers")
+        stub.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda path, **kw: None)
+
+        def model_from_pretrained(path, **kw):
+            captured.update(kw)
+            return _FakeHfModel([])
+
+        stub.AutoModelForCausalLM = types.SimpleNamespace(from_pretrained=model_from_pretrained)
+        with mock.patch.dict(sys.modules, {"transformers": stub}):
+            adapter = HuggingFaceAdapter(
+                {"model_id_or_local_path": "/models/x"},
+                torch_dtype="bfloat16",
+                not_a_real_option=1,
+            )
+            with self.assertWarnsRegex(UserWarning, "not_a_real_option"):
+                adapter.load()
+        self.assertEqual(captured, {"trust_remote_code": False, "torch_dtype": "bfloat16"})
+
+    def test_missing_transformers_is_unavailable(self):
+        with mock.patch("benchmarks.models.importlib.import_module", side_effect=ImportError):
+            with self.assertRaisesRegex(BackendUnavailableError, "transformers"):
+                HuggingFaceAdapter({"model_id_or_local_path": "/models/x"}).load()
+
+
+class _FakeIds:
+    def __init__(self, ids: list[int]) -> None:
+        self.ids = ids
+        self.shape = (1, len(ids))
+
+
+class _FakeEncoding(dict):
+    """Mimics transformers.BatchEncoding: a mapping with a ``.to(device)``."""
+
+    def __init__(self, ids: list[int]) -> None:
+        super().__init__(input_ids=_FakeIds(ids))
+        self.moved_to = None
+
+    def to(self, device):
+        self.moved_to = device
+        return self
+
+
+class _FakeHfTokenizer:
+    def __init__(self, prompt_ids: list[int]) -> None:
+        self.prompt_ids = prompt_ids
+        self.encoded: _FakeEncoding | None = None
+        self.decoded: list[tuple[list[int], bool]] = []
+
+    def __call__(self, prompt, return_tensors):
+        self.encoded = _FakeEncoding(self.prompt_ids)
+        return self.encoded
+
+    def decode(self, ids, skip_special_tokens):
+        self.decoded.append((list(ids), skip_special_tokens))
+        return "decoded:" + ",".join(str(i) for i in ids)
+
+
+class _FakeHfModel:
+    def __init__(self, output: list[int], device: str | None = "cpu") -> None:
+        self.output = output
+        self.device = device
+        self.generate_kwargs: dict | None = None
+
+    def parameters(self):
+        if self.device is None:
+            return iter(())
+        return iter([types.SimpleNamespace(device=self.device)])
+
+    def generate(self, **kwargs):
+        self.generate_kwargs = kwargs
+        return [self.output]
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ADAPTER_CONFIGS = _REPO_ROOT / "configs" / "model_adapter_configs.toml"
+_KNOWN_BACKENDS = {"llama.cpp", "vllm", "huggingface", "mock"}
+
+
+class ModelAdapterConfigDetectionTest(unittest.TestCase):
+    """Every `[[adapter]]` entry on disk must resolve or fail specifically.
+
+    `configs/model_adapter_configs.toml` is the real producer of `format` and
+    `loader_hint`. Before GH#182 all 20 entries raised the generic
+    "cannot detect inference backend"; this drives the actual file, so a new
+    entry with an unsupported value fails here with a message naming it.
+    """
+
+    entries: ClassVar[list[dict[str, Any]]]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        with _ADAPTER_CONFIGS.open("rb") as handle:
+            cls.entries = tomllib.load(handle).get("adapter", [])
+
+    def test_file_has_adapter_entries(self):
+        self.assertGreater(len(self.entries), 0, f"no [[adapter]] entries in {_ADAPTER_CONFIGS}")
+
+    def test_every_entry_resolves_or_names_its_unsupported_value(self):
+        for entry in self.entries:
+            family = entry.get("model_family", "<unnamed>")
+            with self.subTest(model_family=family):
+                try:
+                    backend = detect_backend(entry)
+                except ValueError as error:
+                    message = str(error)
+                    self.assertNotIn("cannot detect inference backend", message)
+                    offending = {entry.get("format"), entry.get("loader_hint")} - {None}
+                    # With neither field set there is no value to name; the
+                    # not-generic and runtime_format checks still apply.
+                    if offending:
+                        self.assertTrue(
+                            any(value in message for value in offending),
+                            f"{family}: error does not name {offending}: {message}",
+                        )
+                    self.assertIn("runtime_format", message)
+                else:
+                    self.assertIn(backend, _KNOWN_BACKENDS)
+
+    def test_entries_resolve_to_the_runtime_their_format_implies(self):
+        # Artifact formats only supply a default backend; an explicit runtime
+        # (e.g. loader_hint="vllm" with format="gguf") decides instead, so the
+        # expected backend is computed with detect_backend's precedence.
+        artifact_defaults = {"gguf": "llama.cpp", "safetensors": "vllm"}
+        for entry in self.entries:
+            explicit = _explicit_runtime_backend(entry)
+            if explicit is not None:
+                expected_backend = explicit
+            else:
+                if entry.get("format") not in artifact_defaults:
+                    continue
+                expected_backend = artifact_defaults[entry["format"]]
+            with self.subTest(model_family=entry.get("model_family")):
+                # No skip for loader_hint != format: a conflicting hint now
+                # raises, so it fails here instead of changing the runtime.
+                self.assertEqual(detect_backend(entry), expected_backend)
+
+    def test_no_field_of_an_entry_is_silently_overridden(self):
+        for entry in self.entries:
+            try:
+                backend = detect_backend(entry)
+            except ValueError:
+                continue  # the specific-message test above covers raising entries
+            explicit = _explicit_runtime_backend(entry)
+            for field in ("format", "loader_hint"):
+                if field not in entry:
+                    continue
+                # An artifact format is only a default: when an explicit
+                # runtime elsewhere in the entry decides the backend, the
+                # format alone legitimately resolves differently.
+                if explicit is not None and not _is_explicit_runtime_value(entry[field]):
+                    continue
+                with self.subTest(model_family=entry.get("model_family"), field=field):
+                    alone = {"model_id_or_local_path": "org/model", field: entry[field]}
+                    self.assertEqual(detect_backend(alone), backend)
+
+    def test_entry_assertions_follow_explicit_runtime_precedence(self):
+        # loader_hint="vllm" + format="gguf": the explicit runtime decides, so
+        # the entry assertions must expect vllm, not the gguf default
+        # (CodeRabbit review on #246).
+        entry = {"model_family": "hypothetical", "format": "gguf", "loader_hint": "vllm"}
+        self.assertEqual(_explicit_runtime_backend(entry), "vllm")
+        self.assertTrue(_is_explicit_runtime_value(entry["loader_hint"]))
+        self.assertFalse(_is_explicit_runtime_value(entry["format"]))
+        self.assertEqual(detect_backend(entry), "vllm")
+
+    def test_documented_value_domain_resolves_or_fails_specifically(self):
+        # The header of model_adapter_configs.toml documents these domains:
+        #   format       "gguf" | "safetensors" | "custom_artifact"
+        #   loader_hint  "gguf" | "safetensors" | "vllm" | "sglang"
+        resolves = {
+            ("format", "gguf"): "llama.cpp",
+            ("format", "safetensors"): "vllm",
+            ("loader_hint", "gguf"): "llama.cpp",
+            ("loader_hint", "safetensors"): "vllm",
+            ("loader_hint", "vllm"): "vllm",
+        }
+        for (field, value), backend in resolves.items():
+            with self.subTest(field=field, value=value):
+                entry = {"model_id_or_local_path": "org/model", field: value}
+                self.assertEqual(detect_backend(entry), backend)
+        for field, value in (("format", "custom_artifact"), ("loader_hint", "sglang")):
+            with self.subTest(field=field, value=value):
+                entry = {"model_id_or_local_path": "org/model", field: value}
+                with self.assertRaises(ValueError) as ctx:
+                    detect_backend(entry)
+                message = str(ctx.exception)
+                # A prefix, not a substring: "format " also occurs inside the
+                # "runtime_format " remedy text every one of these errors has.
+                self.assertTrue(
+                    message.startswith(f"{field} {value!r}"),
+                    f"error does not attribute {value!r} to {field}: {message}",
+                )
+                self.assertIn("runtime_format", message)
+
+
+class LlamaCppLoadedStateChecksTest(unittest.TestCase):
+    """The two former `assert`s in `LlamaCppAdapter.generate` are real checks.
+
+    `python -O` strips asserts, which would have turned the documented
+    BackendUnavailableError into an AttributeError/TypeError on the next line.
+    """
+
+    def test_python_mode_without_a_model_is_unavailable(self):
+        adapter = LlamaCppAdapter({"path": "tiny.gguf"})
+        adapter._loaded = True
+        adapter._mode = "python"
+        adapter._model = None
+        with self.assertRaisesRegex(BackendUnavailableError, "holds no model"):
+            adapter.generate("prompt")
+
+    def test_cli_mode_without_an_executable_is_unavailable(self):
+        adapter = LlamaCppAdapter({"path": "tiny.gguf"})
+        adapter._loaded = True
+        adapter._mode = "cli"
+        adapter._executable = None
+        with mock.patch("benchmarks.models.subprocess.run") as run:
+            with self.assertRaisesRegex(BackendUnavailableError, "holds no executable"):
+                adapter.generate("prompt")
+        run.assert_not_called()
+
+    def test_models_has_nothing_python_optimize_would_strip(self):
+        # `python -O` removes `assert` statements and `if __debug__:` blocks
+        # and changes nothing else. With neither present in models.py, the two
+        # tests above hold unchanged under -O.
+        source_path = _REPO_ROOT / "benchmarks" / "models.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        stripped = [
+            f"line {node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assert)
+            or (isinstance(node, ast.Name) and node.id == "__debug__")
+        ]
+        self.assertEqual(stripped, [], "models.py has code that python -O strips")
 
 
 if __name__ == "__main__":
