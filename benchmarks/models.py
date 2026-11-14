@@ -14,7 +14,7 @@ import shutil
 import subprocess  # nosec B404
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -696,7 +696,7 @@ def adapter_for_manifest(
     manifest: Mapping[str, Any] | object, *, load: bool = False, **options: Any
 ) -> ModelAdapter:
     """Construct (and optionally load) the adapter selected by a manifest."""
-    adapters = {
+    adapters: dict[str, Callable[..., ModelAdapter]] = {
         "llama.cpp": LlamaCppAdapter,
         "vllm": VllmAdapter,
         "huggingface": HuggingFaceAdapter,

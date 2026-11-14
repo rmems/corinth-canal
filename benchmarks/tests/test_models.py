@@ -8,21 +8,63 @@ import tomllib
 import types
 import unittest
 from pathlib import Path
+from typing import Any, ClassVar
 from unittest import mock
 
 from benchmarks import load_manifest as exported_load_manifest
 from benchmarks.models import (
+    _BACKEND_HINT_FIELDS,
+    _FORMAT_NAMES_IN_RUNTIME_TABLE,
+    _KNOWN_UNSUPPORTED_RUNTIMES,
     BackendUnavailableError,
     HuggingFaceAdapter,
     LlamaCppAdapter,
     MockModelAdapter,
     VllmAdapter,
+    _backend_from_runtime,
     _hf_trust_remote_code,
     _validate_generation,
     adapter_for_manifest,
     detect_backend,
     load_manifest,
 )
+
+
+def _normalized_value(value: Any) -> str:
+    return str(value).strip().lower().replace("-", "_")
+
+
+def _explicit_runtime_backend(entry: dict[str, Any]) -> str | None:
+    """Backend named by an explicit runtime field, or None when there is none.
+
+    Mirrors detect_backend's classification: `custom_artifact` is deferred,
+    known-unsupported runtimes raise, and `gguf` is an artifact format despite
+    sitting in the runtime table. Returns None when explicit runtimes disagree
+    (detect_backend raises for those entries).
+    """
+    backends = set()
+    for field in _BACKEND_HINT_FIELDS:
+        raw = entry.get(field)
+        if raw is None:
+            continue
+        value = _normalized_value(raw)
+        if value == "custom_artifact" or value in _KNOWN_UNSUPPORTED_RUNTIMES:
+            continue
+        if value in _FORMAT_NAMES_IN_RUNTIME_TABLE:
+            continue
+        backend = _backend_from_runtime(value)
+        if backend is not None:
+            backends.add(backend)
+    return backends.pop() if len(backends) == 1 else None
+
+
+def _is_explicit_runtime_value(value: Any) -> bool:
+    normalized = _normalized_value(value)
+    if normalized == "custom_artifact" or normalized in _KNOWN_UNSUPPORTED_RUNTIMES:
+        return False
+    if normalized in _FORMAT_NAMES_IN_RUNTIME_TABLE:
+        return False
+    return _backend_from_runtime(normalized) is not None
 
 
 class BackendDetectionTests(unittest.TestCase):
@@ -441,7 +483,7 @@ class HuggingFaceAdapterBehaviourTest(unittest.TestCase):
         self.assertIs(calls["model"]["trust_remote_code"], False)
 
     def _loaded_adapter(self, model: _FakeHfModel, tokenizer: _FakeHfTokenizer, **options):
-        stub = types.ModuleType("transformers")
+        stub: Any = types.ModuleType("transformers")
         stub.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda path, **kw: tokenizer)
         stub.AutoModelForCausalLM = types.SimpleNamespace(from_pretrained=lambda path, **kw: model)
         with mock.patch.dict(sys.modules, {"transformers": stub}):
@@ -586,6 +628,8 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
     entry with an unsupported value fails here with a message naming it.
     """
 
+    entries: ClassVar[list[dict[str, Any]]]
+
     @classmethod
     def setUpClass(cls) -> None:
         with _ADAPTER_CONFIGS.open("rb") as handle:
@@ -616,14 +660,22 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                     self.assertIn(backend, _KNOWN_BACKENDS)
 
     def test_entries_resolve_to_the_runtime_their_format_implies(self):
-        expected = {"gguf": "llama.cpp", "safetensors": "vllm"}
+        # Artifact formats only supply a default backend; an explicit runtime
+        # (e.g. loader_hint="vllm" with format="gguf") decides instead, so the
+        # expected backend is computed with detect_backend's precedence.
+        artifact_defaults = {"gguf": "llama.cpp", "safetensors": "vllm"}
         for entry in self.entries:
-            if entry.get("format") not in expected:
-                continue
+            explicit = _explicit_runtime_backend(entry)
+            if explicit is not None:
+                expected_backend = explicit
+            else:
+                if entry.get("format") not in artifact_defaults:
+                    continue
+                expected_backend = artifact_defaults[entry["format"]]
             with self.subTest(model_family=entry.get("model_family")):
                 # No skip for loader_hint != format: a conflicting hint now
                 # raises, so it fails here instead of changing the runtime.
-                self.assertEqual(detect_backend(entry), expected[entry["format"]])
+                self.assertEqual(detect_backend(entry), expected_backend)
 
     def test_no_field_of_an_entry_is_silently_overridden(self):
         for entry in self.entries:
@@ -631,12 +683,28 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                 backend = detect_backend(entry)
             except ValueError:
                 continue  # the specific-message test above covers raising entries
+            explicit = _explicit_runtime_backend(entry)
             for field in ("format", "loader_hint"):
                 if field not in entry:
+                    continue
+                # An artifact format is only a default: when an explicit
+                # runtime elsewhere in the entry decides the backend, the
+                # format alone legitimately resolves differently.
+                if explicit is not None and not _is_explicit_runtime_value(entry[field]):
                     continue
                 with self.subTest(model_family=entry.get("model_family"), field=field):
                     alone = {"model_id_or_local_path": "org/model", field: entry[field]}
                     self.assertEqual(detect_backend(alone), backend)
+
+    def test_entry_assertions_follow_explicit_runtime_precedence(self):
+        # loader_hint="vllm" + format="gguf": the explicit runtime decides, so
+        # the entry assertions must expect vllm, not the gguf default
+        # (CodeRabbit review on #246).
+        entry = {"model_family": "hypothetical", "format": "gguf", "loader_hint": "vllm"}
+        self.assertEqual(_explicit_runtime_backend(entry), "vllm")
+        self.assertTrue(_is_explicit_runtime_value(entry["loader_hint"]))
+        self.assertFalse(_is_explicit_runtime_value(entry["format"]))
+        self.assertEqual(detect_backend(entry), "vllm")
 
     def test_documented_value_domain_resolves_or_fails_specifically(self):
         # The header of model_adapter_configs.toml documents these domains:
