@@ -55,7 +55,10 @@ configs/safetensors_lineup.toml
 # IDE/AI tool dirs
 .mimocode/
 .opencode/
-.cursor/
+.cursor/*
+# Cursor Cloud Agent environment: committed on purpose.
+!.cursor/environment.json
+!.cursor/install.sh
 .hermes/
 .kilo/
 .zed/

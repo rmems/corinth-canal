@@ -4,7 +4,9 @@
 use super::Model;
 use super::{
     core::{IZ_NEURONS, N_NEURONS, resolve_gpu_routing_telemetry_path},
-    telemetry_io::append_gpu_routing_telemetry_row,
+    telemetry_io::{
+        GPU_ROUTING_TELEMETRY_MEAN_ADAPTATION_UNUSED, append_gpu_routing_telemetry_row,
+    },
 };
 use crate::funnel::active_neuron_indices;
 use crate::gpu::{GpuAccelerator, GpuError, GpuResult};
@@ -41,6 +43,11 @@ impl Model {
 
     /// Execute exactly one GPU temporal tick using an explicit per-neuron input vector.
     /// Leaves all temporal state resident so repeated calls form a stateful temporal loop.
+    ///
+    /// Does **not** append `snn_gpu_routing_telemetry.csv` rows; only
+    /// [`Self::forward_gpu_temporal`] (and [`Model::compute_routing_telemetry`]) write that
+    /// artifact. The SAAQ runner uses this tick API, so standard validation runs omit the
+    /// routing CSV unless a forward path is also exercised.
     pub fn tick_gpu_temporal(
         &mut self,
         accelerator: &mut GpuAccelerator,
@@ -98,17 +105,16 @@ impl Model {
         } else {
             0.0
         };
-        let mean_adaptation = 0.25f32;
         let target = resolve_gpu_routing_telemetry_path(&self.config);
-        let _ = append_gpu_routing_telemetry_row(
+        append_gpu_routing_telemetry_row(
             &target,
             self.global_step as usize,
             0,
             best_walker as i32,
             total_spikes,
-            mean_adaptation,
+            GPU_ROUTING_TELEMETRY_MEAN_ADAPTATION_UNUSED,
             active_fraction,
-        );
+        )?;
 
         Ok(output)
     }
@@ -385,6 +391,22 @@ mod tests {
         let src = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
         let out = Model::resample_weights_to_square(&src, 2, 2, 4);
         assert_eq!(out, vec![0.0, 3.0, 4.0, 7.0]);
+    }
+
+    #[test]
+    fn tick_gpu_temporal_does_not_append_routing_csv() {
+        let source = include_str!("temporal.rs");
+        let tick_start = source
+            .find("pub fn tick_gpu_temporal")
+            .expect("tick_gpu_temporal should exist");
+        let forward_start = source
+            .find("pub fn forward_gpu_temporal")
+            .expect("forward_gpu_temporal should exist");
+        let tick_body = &source[tick_start..forward_start];
+        assert!(
+            !tick_body.contains("append_gpu_routing_telemetry_row"),
+            "tick_gpu_temporal must not write snn_gpu_routing_telemetry.csv"
+        );
     }
 
     #[test]

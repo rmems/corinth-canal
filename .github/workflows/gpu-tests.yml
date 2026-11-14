@@ -1,4 +1,4 @@
-name: GPU CUDA Build Validation (13.2 + sm_120)
+name: GPU CUDA Build Validation (13.3 + sm_120)
 on:
   pull_request:
     branches:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   gpu-tests:
-    runs-on: [self-hosted, Linux, X64, cuda-13.2, sm_120, gpu]
+    runs-on: [self-hosted, Linux, X64, cuda-13.3, sm_120, gpu]
     name: GPU CUDA Build Validation
     # SECURITY: Fork guard — prevent fork PRs from running on self-hosted runners.
     # Without this, an attacker could fork the repo, modify workflow steps,
@@ -33,25 +33,25 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       
-      - name: Check CUDA Version >= 13.2
+      - name: Check CUDA Version >= 13.3
         run: |
           CUDA_VERSION=$(nvcc --version | grep -oP 'release \K[0-9.]+' | head -1)
-          REQUIRED="13.2"
+          REQUIRED="13.3"
           if [ "$(printf '%s\n' "$REQUIRED" "$CUDA_VERSION" | sort -V | head -n1)" != "$REQUIRED" ]; then
-            echo "❌ CUDA $CUDA_VERSION < 13.2 required"
+            echo "❌ CUDA $CUDA_VERSION < 13.3 required"
             exit 1
           fi
           echo "✅ CUDA $CUDA_VERSION verified"
       
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       - name: Compile CUDA targets in pinned Ubuntu 22.04 toolchain
         run: |
           docker run --rm \
             -v "$PWD:/app" \
             -w /app \
-            nvidia/cuda:13.2.0-devel-ubuntu22.04 \
+            nvidia/cuda:13.3.0-devel-ubuntu22.04 \
             bash -lc '
               set -euo pipefail
               export DEBIAN_FRONTEND=noninteractive
@@ -77,6 +77,20 @@ jobs:
         # Verified in the fixing session: after update, both commands passed with --locked
         # in fresh docker (no lock error, kernels + checks succeeded).
       
+      - name: Install host OpenSSL dev packages
+        run: |
+          # native-tls (sentry transport / opentelemetry) builds openssl-sys on
+          # this host. The container compile above installs libssl-dev inside
+          # the image only. A self-hosted runner without pkg-config or libssl
+          # fails that host build with "Could not find directory of OpenSSL
+          # installation". Skip the install when the workstation already has it.
+          if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl; then
+            echo "host OpenSSL already available via pkg-config"
+            exit 0
+          fi
+          sudo -n apt-get update
+          sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y pkg-config libssl-dev
+
       - name: Execute CUDA test suite on the GPU host
         run: |
           # The container above validates the pinned 22.04 toolchain but has no
@@ -103,5 +117,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nValidation: CUDA lib-test compile + example compile in Ubuntu 22.04 / CUDA 13.2 toolchain\nCUDA: 13.2+ (sm_120)\n[View logs](${context.payload.repository.html_url}/actions/runs/${context.runId})`
+              body: `${emoji} **${title}**\n\nRunner: ShipOfTheseus (RTX 5080)\nValidation: CUDA lib-test compile + example compile in Ubuntu 22.04 / CUDA 13.3 toolchain\nCUDA: 13.3+ (sm_120)\n[View logs](${context.payload.repository.html_url}/actions/runs/${context.runId})`
             });

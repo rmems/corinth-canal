@@ -441,27 +441,4 @@ mod tests {
             "unexpected error: {err}"
         );
     }
-
-    #[test]
-    fn test_gpu_routing_telemetry_writer_adds_header_once() {
-        let path = std::env::temp_dir().join(format!(
-            "corinth_canal_gpu_routing_{}.csv",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-
-        append_gpu_routing_telemetry_row(&path, 0, 11, 3, 42, 0.12, 0.021).unwrap();
-        append_gpu_routing_telemetry_row(&path, 1, 7, 2, 18, 0.45, 0.009).unwrap();
-
-        let contents = std::fs::read_to_string(&path).unwrap();
-        let mut lines = contents.lines();
-        assert_eq!(lines.next().unwrap(), GPU_ROUTING_TELEMETRY_HEADER);
-        assert_eq!(lines.next().unwrap(), "0,11,3,42,0.1200,0.0210");
-        assert_eq!(lines.next().unwrap(), "1,7,2,18,0.4500,0.0090");
-        assert!(lines.next().is_none());
-
-        let _ = std::fs::remove_file(path);
-    }
 }

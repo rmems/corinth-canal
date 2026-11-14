@@ -44,7 +44,7 @@ reviews:
         mutated while mapped.
     - path: src/gpu/kernels/**
       instructions: >-
-        CUDA kernels built by build.rs (CUDA 13.2, sm_120). Check bounds,
+        CUDA kernels built by build.rs (CUDA 13.3, sm_120). Check bounds,
         grid/block math, shared-memory races and that the C ABI in
         myelin_shim.h matches the Rust extern declarations. They only run on
         the self-hosted GPU runner.
@@ -64,17 +64,13 @@ reviews:
         --check benchmarks (ruff 0.15.14), then python -m unittest discover
         -s benchmarks/tests -t . from the repo root. Keep code compatible
         with the declared Python floor.
-    - path: Dockerfile
-      instructions: >-
-        Dockerfile. Keep secrets out of layers and build args, and keep
-        toolchain versions in line with the CI pins.
     - path: .github/workflows/**
       instructions: >-
         GitHub Actions workflows. Keep permissions: least-privilege and job
         commands in sync with the local gates documented in the repo. Every
         uses: reference is pinned to a full commit SHA today; new or bumped
         actions must be too. GPU tests run on [self-hosted, Linux, X64,
-        cuda-13.2, sm_120, gpu] and must stay gated away from untrusted PRs.
+        cuda-13.3, sm_120, gpu] and must stay gated away from untrusted PRs.
   tools:
     clippy:
       enabled: true
