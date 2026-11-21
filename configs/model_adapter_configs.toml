@@ -76,7 +76,7 @@ supports_route_metrics = true
 supports_block_metrics = true
 preferred_quant_modes = ["q6_k", "q8_0", "q5_k"]
 minimum_expected_artifacts = ["manifest.json", "summary.json", "metrics.json"]
-known_risks = ["Q6_K dequant path validated; Q5_K path available"]
+known_risks = ["Q6_K/Q5_K dequant checked bit-exact against gguf-py goldens (RM-1415); runs before that fix loaded corrupted Q6_K and column-permuted Q5_K synapse weights"]
 
 # ── Llama MoE family ──
 [[adapter]]
