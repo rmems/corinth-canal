@@ -29,16 +29,44 @@ fn classify_status(validation: &str, has_manifest: bool) -> String {
 }
 
 fn collect_run_summaries(runs_dir: &Path, entries: &mut Vec<RunSummary>) {
-    if let Ok(subdirs) = fs::read_dir(runs_dir) {
-        for entry in subdirs.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
+    let subdirs = match fs::read_dir(runs_dir) {
+        Ok(subdirs) => subdirs,
+        Err(error) => {
+            // A directory that denies traversal is an error row, not a
+            // silent skip: the report must not exit cleanly over data it
+            // could not read.
+            eprintln!(
+                "error: unreadable directory {}: {error}",
+                runs_dir.display()
+            );
+            entries.push(RunSummary::unreadable(runs_dir));
+            return;
+        }
+    };
+    for entry in subdirs {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(error) => {
+                eprintln!("error: unreadable entry in {}: {error}", runs_dir.display());
+                entries.push(RunSummary::unreadable(runs_dir));
                 continue;
             }
+        };
+        if !path.is_dir() {
+            continue;
+        }
 
-            let manifest_path = path.join("run_manifest.json");
+        let manifest_path = path.join("run_manifest.json");
 
-            if manifest_path.exists() {
+        match manifest_path.try_exists() {
+            Err(error) => {
+                // A stat failure (e.g. permission denied) means the run may
+                // hold a manifest we cannot see — an error row, not a skip.
+                eprintln!("error: cannot stat {}: {error}", manifest_path.display());
+                entries.push(RunSummary::unreadable(&path));
+            }
+            Ok(false) => collect_run_summaries(&path, entries),
+            Ok(true) => {
                 let summary_path = path.join("summary.json");
                 // An unreadable or truncated manifest is an error row, not a
                 // silent skip: the runner now writes atomically (RM-1447), so
@@ -90,8 +118,6 @@ fn collect_run_summaries(runs_dir: &Path, entries: &mut Vec<RunSummary>) {
                     has_summary,
                     has_telemetry,
                 });
-            } else {
-                collect_run_summaries(&path, entries);
             }
         }
     }
@@ -110,12 +136,19 @@ fn main() {
         std::process::exit(1);
     }
 
+    std::process::exit(run(runs_dir));
+}
+
+/// Emit the report for `runs_dir`. Returns the process exit status: `0`
+/// when every readable run resolved, `2` when any directory, entry or
+/// manifest could not be read.
+pub fn run(runs_dir: &Path) -> i32 {
     let mut entries: Vec<RunSummary> = Vec::new();
     collect_run_summaries(runs_dir, &mut entries);
 
     if entries.is_empty() {
         println!("No run directories found under `{}`.", runs_dir.display());
-        return;
+        return 0;
     }
 
     println!("# SAAQ Sprint Summary");
@@ -160,7 +193,30 @@ fn main() {
         eprintln!(
             "error: {unreadable} run_manifest.json file(s) could not be read; see messages above"
         );
-        std::process::exit(2);
+        return 2;
+    }
+    0
+}
+
+impl RunSummary {
+    /// Error row for a directory or manifest that could not be read at all.
+    /// `manifest_unreadable` is what drives the exit-2 path.
+    fn unreadable(path: &Path) -> Self {
+        RunSummary {
+            run_id: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            manifest_unreadable: true,
+            model_slug: "?".into(),
+            model_family: "?".into(),
+            ticks: 0,
+            status: "error".into(),
+            has_manifest: true,
+            has_summary: false,
+            has_telemetry: false,
+        }
     }
 }
 

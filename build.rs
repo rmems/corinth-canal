@@ -65,6 +65,21 @@ int myelin_launch_saaq_find_best_walker(
 "#;
 
 fn main() {
+    // Bake the checkout SHA into the crate so manifests and telemetry stamp
+    // the revision the executable was built from, not whatever HEAD the
+    // checkout happens to sit on at run time (RM-1447). `option_env!` reads
+    // it in examples/support/observability.rs.
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        && output.status.success()
+    {
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !sha.is_empty() {
+            println!("cargo:rustc-env=CORINTH_CANAL_GIT_SHA={sha}");
+        }
+    }
+
     // Declare the cfg even when the stub feature is off. CUDA CI compiles with
     // `-D unexpected_cfgs`, and `cfg!(gpu_stub)` is still named on that path.
     println!("cargo:rustc-check-cfg=cfg(gpu_stub)");

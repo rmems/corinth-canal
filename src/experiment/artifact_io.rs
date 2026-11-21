@@ -14,7 +14,9 @@
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::fs::{self, File};
+use std::fs;
+#[cfg(unix)] // only `sync_dir` opens a directory handle
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -100,12 +102,16 @@ fn parent_dir(path: &Path) -> &Path {
 /// `<dir>/.<name>.tmp-<pid>-<counter>`: same directory as the destination so
 /// the final `rename` is atomic and never fails with `EXDEV`.
 fn sibling_temp_path(path: &Path) -> io::Result<std::path::PathBuf> {
+    let nonce = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    sibling_temp_path_with_nonce(path, nonce)
+}
+
+fn sibling_temp_path_with_nonce(path: &Path, nonce: u64) -> io::Result<std::path::PathBuf> {
     let file_name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
         .to_string_lossy()
         .into_owned();
-    let nonce = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     Ok(parent_dir(path).join(format!(".{file_name}.tmp-{}-{nonce}", std::process::id())))
 }
 
@@ -114,9 +120,21 @@ const MAX_TEMP_NAME_ATTEMPTS: u32 = 16;
 /// Stage `bytes` into a fresh sibling temp file, retrying with a new nonce
 /// only on `AlreadyExists`. Returns the staged path.
 fn stage_fresh_temp_file(path: &Path, bytes: &[u8]) -> io::Result<std::path::PathBuf> {
+    let start = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    stage_fresh_temp_file_from_nonce(path, bytes, start)
+}
+
+/// Same retry loop as `stage_fresh_temp_file`, but from a caller-chosen
+/// nonce so tests can plant a colliding name deterministically instead of
+/// racing the shared counter.
+fn stage_fresh_temp_file_from_nonce(
+    path: &Path,
+    bytes: &[u8],
+    start_nonce: u64,
+) -> io::Result<std::path::PathBuf> {
     let mut last_error = None;
-    for _ in 0..MAX_TEMP_NAME_ATTEMPTS {
-        let temp_path = sibling_temp_path(path)?;
+    for nonce in start_nonce..start_nonce + MAX_TEMP_NAME_ATTEMPTS as u64 {
+        let temp_path = sibling_temp_path_with_nonce(path, nonce)?;
         match stage_temp_file(&temp_path, bytes) {
             Ok(()) => return Ok(temp_path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -157,6 +175,21 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
 
 #[cfg(not(unix))]
 fn sync_dir(_dir: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// fsync `dir` and each ancestor up to and including `root`, so a freshly
+/// created run directory's entry chain survives a power loss. `write_*_atomic`
+/// already syncs a file's own directory; directories created by run setup
+/// between `root` and `dir` have no such call without this. No-op beyond
+/// the file that names nothing new (non-Unix keeps `sync_dir` a no-op).
+pub fn sync_dir_chain(dir: &Path, root: &Path) -> io::Result<()> {
+    for ancestor in dir.ancestors() {
+        sync_dir(ancestor)?;
+        if ancestor == root || !ancestor.starts_with(root) {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -356,12 +389,21 @@ mod tests {
     fn stale_temp_file_collision_picks_a_fresh_name() {
         let dir = temp_dir("collide");
         let path = dir.join("summary.json");
-        // Plant the exact name the next nonce would produce.
-        let next = TEMP_COUNTER.load(Ordering::Relaxed);
-        let planted = dir.join(format!(".summary.json.tmp-{}-{next}", std::process::id()));
+        // Plant the name a fixed nonce produces, then stage from that nonce:
+        // deterministic — reading the shared counter races parallel tests.
+        let nonce = 4242;
+        let planted = dir.join(format!(".summary.json.tmp-{}-{nonce}", std::process::id()));
         fs::write(&planted, b"stale").unwrap();
-        let _ = write_bytes_atomic(&path, b"fresh").unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"fresh");
+        let staged = stage_fresh_temp_file_from_nonce(&path, b"fresh", nonce).unwrap();
+        assert_eq!(
+            staged,
+            dir.join(format!(
+                ".summary.json.tmp-{}-{}",
+                std::process::id(),
+                nonce + 1
+            ))
+        );
+        assert_eq!(fs::read(&staged).unwrap(), b"fresh");
         // The planted file is not ours; it must be left untouched.
         assert_eq!(fs::read(&planted).unwrap(), b"stale");
         fs::remove_dir_all(&dir).unwrap();

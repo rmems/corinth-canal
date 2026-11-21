@@ -547,14 +547,16 @@ pub fn run_id() -> String {
 ///
 /// Precedence:
 ///   1. `AGENTOS_GIT_SHA` (set by managed CI / AgentOS).
-///   2. `git rev-parse --short HEAD` invoked from the current working
+///   2. `CORINTH_CANAL_GIT_SHA` baked in by `build.rs` at compile time — the
+///      executable's own build revision.
+///   3. `git rev-parse --short HEAD` invoked from the current working
 ///      directory. This matches the fallback already used by
 ///      `scripts/observability/newrelic_event.sh` and
 ///      `scripts/observability/sentry_release.sh`, so Rust traces and
 ///      shell-emitted releases / events agree on the SHA for the same
 ///      checkout (PR #30 review consistency requirement).
-///   3. Literal `"unknown"` when neither source resolves (e.g. running
-///      from outside a git checkout with the env var unset).
+///   4. Literal `"unknown"` when none of the sources resolve (e.g. built
+///      and run outside a git checkout with the env var unset).
 pub fn git_sha() -> String {
     if let Some(value) = std::env::var("AGENTOS_GIT_SHA")
         .ok()
@@ -562,7 +564,16 @@ pub fn git_sha() -> String {
     {
         return value;
     }
-    // Anchor to this crate's checkout: the examples are always built from
+    // The build-time SHA is this executable's own revision: a stale binary
+    // run after the checkout advanced must attribute its results to the
+    // code it actually runs, not the checkout's current tip (RM-1447).
+    if let Some(value) =
+        option_env!("CORINTH_CANAL_GIT_SHA").filter(|value| !value.trim().is_empty())
+    {
+        return value.to_owned();
+    }
+    // Fallback when git was unavailable at build time (e.g. vendored source):
+    // anchor to this crate's checkout. The examples are always built from
     // it, and resolving against the process cwd would stamp whatever repo
     // the operator happened to launch from (RM-1447).
     if let Ok(output) = Command::new("git")

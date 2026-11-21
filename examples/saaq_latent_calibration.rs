@@ -355,6 +355,14 @@ fn run_validation(
     // telemetry CSV inside it via ModelConfig and avoid polluting CWD.
     let run_dir = build_run_dir(ctx)?;
     fs::create_dir_all(&run_dir)?;
+    // fsync the freshly created directory chain (run_dir up to output_root)
+    // so the directories that name the artifacts survive a power loss; the
+    // files themselves are synced by write_*_atomic (RM-1447).
+    if let Err(error) = artifact_io::sync_dir_chain(&run_dir, &ctx.output_root) {
+        eprintln!(
+            "warning: directory fsync after mkdir failed; run artifacts may not survive a power loss: {error}"
+        );
+    }
     let routing_csv_path = run_dir.join("snn_gpu_routing_telemetry.csv");
 
     let mut config = default_spiking_model_config(ctx.spec.path.clone(), 1);
