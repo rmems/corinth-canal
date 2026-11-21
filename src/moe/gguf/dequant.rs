@@ -129,22 +129,18 @@ pub(in crate::moe) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Ve
 
 pub(in crate::moe) fn dequantize_row_q6_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
     if !width.is_multiple_of(256) {
-        return Err(HybridError::ModelLoad {
-            path: "".into(),
-            reason: format!("Q6_K width {width} is not divisible by 256"),
-        });
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q6_K width {width} is not divisible by 256"
+        )));
     }
     // ggml block_q6_K (210 bytes): ql[128] low 4 bits, qh[64] high 2 bits,
     // scales[16] as i8, then d as f16 at the END of the block.
     let expected_len = (width / 256) * 210;
     if row.len() != expected_len {
-        return Err(HybridError::ModelLoad {
-            path: "".into(),
-            reason: format!(
-                "Q6_K row length mismatch: expected {expected_len} bytes for width {width}, got {}",
-                row.len()
-            ),
-        });
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q6_K row length mismatch: expected {expected_len} bytes for width {width}, got {}",
+            row.len()
+        )));
     }
     let mut out = vec![0.0f32; width];
     for (block, y_block) in row.chunks_exact(210).zip(out.chunks_exact_mut(256)) {
