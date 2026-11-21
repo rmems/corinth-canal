@@ -701,7 +701,7 @@ fn routing_mode_label(mode: corinth_canal::moe::RoutingMode) -> &'static str {
 }
 
 fn write_manifest(
-    manifest_path: &PathBuf,
+    manifest_path: &Path,
     manifest: ExperimentManifest,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // temp-file + fsync + rename: a crash mid-write never leaves a
@@ -735,7 +735,7 @@ fn write_manifest_and_summary(
     config: &corinth_canal::model::ModelConfig,
     model: &Model,
     run_dir: &std::path::Path,
-    manifest_path: &PathBuf,
+    manifest_path: &Path,
     summary_path: &std::path::Path,
     tick_path: &std::path::Path,
     latent_path: &std::path::Path,
