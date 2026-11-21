@@ -266,8 +266,10 @@ pub struct RunEntry {
     /// Free-form success criteria for post-hoc review. Not evaluated by code.
     #[serde(default)]
     pub success_metrics: Vec<String>,
-    /// When set, the run is a documented skip: `validate` bypasses every
-    /// check for it (budgets, policies, family, Grok-1 gate).
+    /// When set to a non-blank value, the run is a documented skip:
+    /// `validate` bypasses every check for it (budgets, policies, family,
+    /// Grok-1 gate). A blank or whitespace-only value is rejected — a typo,
+    /// not a documented skip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skip_reason: Option<String>,
 }
@@ -394,10 +396,19 @@ impl RunEntry {
 /// `true` when any path segment of `model_id_or_path` is `grok-1` itself or
 /// `grok-1` followed by a non-digit (`grok-1-int8`, `grok-1.gguf`), so
 /// `grok-10` / `grok-11` are not gated while `xai-org/grok-1/ckpt-0` (the
-/// real checkpoint layout) still is. Case-insensitive.
+/// real checkpoint layout) still is. A Hugging Face cache segment
+/// (`models--<org>--<name>`) is unwrapped to its model name first, so a run
+/// pointing at `~/.cache/huggingface/hub/models--xai-org--grok-1` is gated
+/// too. Case-insensitive.
 fn names_grok_1(model_id_or_path: &str) -> bool {
     model_id_or_path.split(['/', '\\']).any(|segment| {
-        match segment.to_ascii_lowercase().strip_prefix("grok-1") {
+        let segment = segment.to_ascii_lowercase();
+        // HF cache layout: `models--org--name`; unwrap to `name` when present.
+        let name = segment
+            .strip_prefix("models--")
+            .and_then(|rest| rest.rsplit("--").next())
+            .unwrap_or(segment.as_str());
+        match name.strip_prefix("grok-1") {
             Some(rest) => rest.chars().next().is_none_or(|c| !c.is_ascii_digit()),
             None => false,
         }
@@ -513,6 +524,9 @@ mod tests {
             "/models/Grok-1.gguf",
             "/mnt/models/grok-1/ckpt-0",
             "xai-org/grok-1/ckpt-0",
+            // Hugging Face hub cache layout (`models--<org>--<name>`).
+            "~/.cache/huggingface/hub/models--xai-org--grok-1",
+            "models--xai-org--grok-1/snapshots/deadbeef",
         ] {
             let message =
                 error_text(matrix(vec![sample_run("g1", "grok", id)]).validate_with(false));
@@ -535,6 +549,8 @@ mod tests {
             "grok-1/sub",
             "xai-org/grok-1/ckpt-0",
             "C:\\models\\grok-1\\ckpt-0",
+            "models--xai-org--grok-1",
+            "models--xai-org--grok-1-int8",
         ] {
             assert!(super::names_grok_1(id), "{id}");
         }
@@ -544,6 +560,8 @@ mod tests {
             "xai-org/grok-2",
             "xai-org/grok-10/ckpt-0",
             "grok-12/grok-13",
+            "models--xai-org--grok-10",
+            "models--xai-org--grok-2",
         ] {
             assert!(!super::names_grok_1(id), "{id}");
         }
@@ -567,8 +585,19 @@ mod tests {
         run.router_policy = String::new();
         run.skip_reason = Some("documented skip".into());
         matrix(vec![run])
-            .validate()
+            .validate_with(false)
             .expect("skipped runs bypass validation");
+    }
+
+    #[test]
+    fn run_matrix_skip_reason_bypasses_grok_1_gate() {
+        // The gate is family-scoped, so the run must name family `grok`;
+        // without the skip_reason it is rejected for GROK1_ARTIFACT_READY.
+        let mut run = sample_run("gated", "grok", "xai-org/grok-1");
+        run.skip_reason = Some("artifact not yet provisioned".into());
+        matrix(vec![run])
+            .validate_with(false)
+            .expect("skip_reason bypasses the Grok-1 readiness gate");
     }
 
     #[test]
