@@ -158,12 +158,13 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
   it. Keep the GH#126 failure mode in mind — GH#126 was based on `refactor/gh118-unify-infer-family`,
   which was squash-merged via GH#125 and deleted, so GitHub marked GH#126 "merged" while none of its
   code reached `main` — the refactor was silently lost and had to be reconstructed. When landing a
-  stack: merge the parent first, then retarget each child to `main` and rebase it with
-  `git rebase --onto main <parent-tip> <child>` before deleting the parent's branch — a plain
-  `git rebase main` can replay the parent's original commits because a squash merge changes their
-  patch-ids. After the child merges, verify its work reached `main` with `git diff main <child>`
-  (the two-dot form diffs the tips and must show none of the child's changes missing; `main...`
-  diffs the merge-base and shows the child's work even when it never landed).
+  stack: merge the parent first, `git fetch` so `origin/main` reflects the merge, then retarget
+  each child to `main` and rebase it with `git rebase --onto origin/main <parent-tip> <child>`
+  before deleting the parent's branch — a plain `git rebase main` can replay the parent's original
+  commits because a squash merge changes their patch-ids. After the child merges, fetch again and
+  verify its work reached `main` with `git diff origin/main <child>` (the two-dot form diffs the
+  tips and must show none of the child's changes missing; `...` diffs the merge-base and shows the
+  child's work even when it never landed).
 - Run `cargo check --no-default-features` and `cargo test --no-default-features` before closing substantial Rust changes. Docs-only, license-only, or similar non-Rust edits do not require cargo validation.
 - On CUDA-equipped setups with `nvcc` available, also run the default-feature path and `cargo build --examples`.
 - Snyk scans via MCP tools (see Cross-platform and security CI section) for on-demand use in development/agent flows (GH#108).
