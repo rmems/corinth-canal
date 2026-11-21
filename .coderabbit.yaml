@@ -61,9 +61,9 @@ reviews:
     - path: benchmarks/**/*.py
       instructions: >-
         Python 3.11 (CI). CI gate: ruff check benchmarks and ruff format
-        --check benchmarks (ruff 0.15.14), then python -m unittest discover
-        -s benchmarks/tests -t . from the repo root. Keep code compatible
-        with the declared Python floor.
+        --check benchmarks (ruff 0.15.14), mypy benchmarks (mypy 2.4.1),
+        then python -m unittest discover -s benchmarks/tests -t . from the
+        repo root. Keep code compatible with the declared Python floor.
     - path: .github/workflows/**
       instructions: >-
         GitHub Actions workflows. Keep permissions: least-privilege and job
