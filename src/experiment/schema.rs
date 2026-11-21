@@ -581,7 +581,7 @@ mod tests {
         let grok_1 = matrix
             .runs
             .iter()
-            .find(|run| run.model_id_or_path.contains("grok-1"))
+            .find(|run| super::names_grok_1(&run.model_id_or_path))
             .expect("grok-1 entry present");
         assert!(
             grok_1.skip_reason.is_some(),
