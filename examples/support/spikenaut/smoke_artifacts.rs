@@ -67,6 +67,8 @@ fn smoke_manifest_identity(
         prompt_embedding_source: "none".to_owned(),
         prompt_profile: "spikenaut_ingest".to_owned(),
         prompt_text: None,
+        // The CPU smoke drives the funnel from telemetry, not a scaled prompt.
+        input_drive_gain: None,
         ticks,
         saaq_rule: "SaaqV1_5SqrtRate".to_owned(),
         saaq_primary_rule: "SaaqV1_5SqrtRate".to_owned(),
