@@ -158,8 +158,8 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
   it. Keep the GH#126 failure mode in mind — GH#126 was based on `refactor/gh118-unify-infer-family`,
   which was squash-merged via GH#125 and deleted, so GitHub marked GH#126 "merged" while none of its
   code reached `main` — the refactor was silently lost and had to be reconstructed. When merging a
-  stack, land the parent first and retarget children to `main` as needed; after squash-merging any
-  stack, verify the child landed: `git grep <new-symbol> origin/main -- <file>`.
+  stack, land the parent first and retarget children to `main` before deleting its branch; after
+  squash-merging any stack, verify the child landed: `git grep <new-symbol> origin/main -- <file>`.
 - Run `cargo check --no-default-features` and `cargo test --no-default-features` before closing substantial Rust changes. Docs-only, license-only, or similar non-Rust edits do not require cargo validation.
 - On CUDA-equipped setups with `nvcc` available, also run the default-feature path and `cargo build --examples`.
 - Snyk scans via MCP tools (see Cross-platform and security CI section) for on-demand use in development/agent flows (GH#108).
