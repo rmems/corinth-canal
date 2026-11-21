@@ -101,8 +101,9 @@ saaq-campaign:
     @head -n1 "${TELEMETRY_CSV_PATH}" | tr -d '\r' | grep -qx 'timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w' || { echo "error: TELEMETRY_CSV_PATH header is not the canonical schema (timestamp_ms,gpu_temp_c,gpu_power_w,cpu_tctl_c,cpu_package_power_w)." >&2; exit 1; }
     @rows=$(cargo run -q --example validate_local_saaq --no-default-features -- --count-usable-rows "${TELEMETRY_CSV_PATH}") || exit 1; \
     [ "$rows" -gt 0 ] 2>/dev/null || { echo "error: TELEMETRY_CSV_PATH contains no usable row (needs 5 fields: u64 timestamp + 4 finite f32). Every row is blank or malformed, so the runner would skip them all and degrade to synthetic." >&2; exit 1; }; \
-    ticks="${TICKS:-}"; case "$ticks" in ''|*[!0-9]*) ticks=512;; esac; [ "$ticks" = 0 ] && ticks="$rows"; \
-    [ "$ticks" -le "$rows" ] || { echo "error: TICKS=$ticks exceeds the $rows usable rows in TELEMETRY_CSV_PATH; phase 2/2 runs with STRICT_WRAPAROUND=1 and would abort after the full phase-1 GPU sweep. Set TICKS<=$rows (or TICKS=0 for one full pass) before starting the campaign." >&2; exit 1; }
+    ticks="${TICKS:-}"; ticks="${ticks#+}"; case "$ticks" in ''|*[!0-9]*) ticks=512;; esac; \
+    ticks="$(printf '%s' "$ticks" | sed 's/^0*//')"; [ -z "$ticks" ] && ticks=0; [ "$ticks" = 0 ] && ticks="$rows"; \
+    { [ "${#ticks}" -gt "${#rows}" ] || { [ "${#ticks}" -eq "${#rows}" ] && [ "$ticks" -gt "$rows" ]; }; } && { echo "error: TICKS=$ticks exceeds the $rows usable rows in TELEMETRY_CSV_PATH; phase 2/2 runs with STRICT_WRAPAROUND=1 and would abort after the full phase-1 GPU sweep. Set TICKS<=$rows (or TICKS=0 for one full pass) before starting the campaign." >&2; exit 1; } || true
     @echo ">>> phase 1/2: synthetic baseline, repeat=2"
     SAAQ_RULE=saaq_v1_5 REPEAT_COUNT=2 TELEMETRY_SOURCE=synthetic \
         RUN_TAG=campaign_syn LINEUP_STRICT=1 \
