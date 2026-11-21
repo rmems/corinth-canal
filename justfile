@@ -23,8 +23,8 @@ test:
 # Python lint + type checks for the benchmarks package (mirrors CI).
 lint-python:
     python3 -m pip install --disable-pip-version-check -q 'ruff==0.15.14' 'mypy==2.4.1'
-    ruff check benchmarks
-    ruff format --check benchmarks
+    python3 -m ruff check benchmarks
+    python3 -m ruff format --check benchmarks
     python3 -m mypy benchmarks
 
 # GPU smoke test — GPU_SMOKE_TICKS ticks (default 10000) against a real

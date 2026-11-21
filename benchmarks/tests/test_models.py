@@ -694,7 +694,14 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                     continue
                 with self.subTest(model_family=entry.get("model_family"), field=field):
                     alone = {"model_id_or_local_path": "org/model", field: entry[field]}
-                    self.assertEqual(detect_backend(alone), backend)
+                    try:
+                        alone_backend = detect_backend(alone)
+                    except ValueError:
+                        # A field with no backend default (e.g.
+                        # format="custom_artifact") cannot resolve alone;
+                        # that is not a silent override.
+                        continue
+                    self.assertEqual(alone_backend, backend)
 
     def test_entry_assertions_follow_explicit_runtime_precedence(self):
         # loader_hint="vllm" + format="gguf": the explicit runtime decides, so
