@@ -3,6 +3,14 @@
 //!
 //! Usage:
 //!   cargo run --example validate_local_saaq --no-default-features -- <matrix.toml> [--check-paths]
+//!   cargo run --example validate_local_saaq --no-default-features -- --count-usable-rows <telemetry.csv>
+//!
+//! `--count-usable-rows` prints the number of data rows the SAAQ runner will
+//! actually replay from a canonical telemetry CSV, using the exact loader
+//! (`support/telemetry_csv.rs::load_csv_telemetry_rows`) the runner uses, and exits 0. Rows
+//! that look numeric but the loader rejects (e.g. `1e39` overflows `f32`)
+//! are not counted. `just saaq-campaign` uses this for its TICKS preflight
+//! (RM-1449). Exits 1 if the file is missing or the header is wrong.
 //!
 //! Validates matrix entries for:
 //! - Structural correctness (RunMatrix::validate)
@@ -10,6 +18,12 @@
 //! - Path existence (when --check-paths is given, with env var resolution)
 //!
 //! Exits 0 on success, 1 on validation failure.
+
+// Path-include only the CSV loader so this example stays in the CPU
+// `--no-default-features` set (the full `mod support` tree is cuda-gated).
+#[allow(dead_code)]
+#[path = "support/telemetry_csv.rs"]
+mod telemetry_csv;
 
 use corinth_canal::RunMatrix;
 use std::env;
@@ -31,6 +45,22 @@ fn resolve_env_path(raw: &str) -> (String, bool) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--count-usable-rows") {
+        let Some(csv_path) = args.get(2) else {
+            eprintln!("Usage: validate_local_saaq --count-usable-rows <telemetry.csv>");
+            process::exit(1);
+        };
+        match telemetry_csv::load_csv_telemetry_rows(Path::new(csv_path)) {
+            Ok(rows) => {
+                println!("{}", rows.len());
+                return;
+            }
+            Err(error) => {
+                eprintln!("Error: {error}");
+                process::exit(1);
+            }
+        }
+    }
     if args.len() < 2 {
         eprintln!("Usage: validate_local_saaq <matrix.toml> [--check-paths]");
         process::exit(1);

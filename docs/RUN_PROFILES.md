@@ -54,7 +54,11 @@ The latent telemetry CSV includes both SAAQ trajectories via
 
 - `TICKS=0` with `TELEMETRY_SOURCE=csv` uses the full CSV row count so corpus
   runs cover exactly one telemetry loop.
-- When `TICKS > csv_row_count`, the runner warns about wraparound contamination.
+- When `TICKS > csv_row_count`, the runner warns about wraparound contamination;
+  with `STRICT_WRAPAROUND=true` (set by `just saaq-campaign`) it aborts instead.
+  `run_manifest.json` stamps `wraparound_enabled` (any looped tick, including a
+  partial second pass) and `wraparound_loops` (complete extra passes only:
+  `ticks == rows` is 0, `ticks == 2*rows` is 1).
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including

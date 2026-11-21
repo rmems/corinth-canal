@@ -43,6 +43,7 @@ fn env_example_documents_keys_the_code_reads() {
         "GROK1_ARTIFACT_READY",
         "OBSERVABILITY_PROBE_MODE",
         "INPUT_DRIVE_GAIN",
+        "STRICT_WRAPAROUND",
     ] {
         assert!(
             has_assignment(text, key),

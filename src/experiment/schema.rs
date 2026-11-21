@@ -81,6 +81,44 @@ pub struct ExperimentManifest {
     pub generated_files: Vec<String>,
 }
 
+/// Wraparound bookkeeping for a CSV-replay run (RM-1449).
+///
+/// Stamped into [`ExperimentManifest::wraparound_enabled`] and
+/// [`ExperimentManifest::wraparound_loops`]. The two fields answer different
+/// questions:
+///
+/// - `enabled`: did *any* tick read a looped row (`ticks > rows`)? This is the
+///   predicate for "could the regressor have seen looped endings at all",
+///   including a partial second pass.
+/// - `loops`: how many *complete* extra passes beyond the first were made,
+///   i.e. `ticks / rows - 1` when `ticks > rows`. `ticks == rows` is one pass
+///   with zero wraparound (the SR.jl corpus sweet spot); `ticks == 2*rows` is
+///   exactly one wraparound; `rows < ticks < 2*rows` is `enabled == true` with
+///   `loops == 0` — a partial loop is reported by `enabled`, not rounded up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WraparoundStats {
+    pub enabled: bool,
+    pub loops: u64,
+}
+
+impl WraparoundStats {
+    /// Compute wraparound stats for `ticks` over a telemetry source with
+    /// `telemetry_row_count` rows. `None` or `Some(0)` rows (synthetic
+    /// telemetry, empty CSV) never wraps.
+    pub fn compute(ticks: usize, telemetry_row_count: Option<usize>) -> Self {
+        match telemetry_row_count {
+            Some(rows) if rows > 0 && ticks > rows => Self {
+                enabled: true,
+                loops: (ticks / rows) as u64 - 1,
+            },
+            _ => Self {
+                enabled: false,
+                loops: 0,
+            },
+        }
+    }
+}
+
 /// Compact, stable per-run summary consumed by downstream aggregators.
 ///
 /// Emitted as `summary.json` inside every run directory.
@@ -315,7 +353,57 @@ impl RunMatrix {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExperimentManifest, ExperimentMetrics, ExperimentSummary};
+    use super::{ExperimentManifest, ExperimentMetrics, ExperimentSummary, WraparoundStats};
+
+    #[test]
+    fn wraparound_stats_match_documented_extra_pass_count() {
+        // (ticks, rows) -> (enabled, loops). RM-1449.
+        let table: &[(usize, Option<usize>, bool, u64)] = &[
+            // No row count (synthetic) or empty CSV: never wraps.
+            (512, None, false, 0),
+            (512, Some(0), false, 0),
+            // Fewer ticks than rows: partial first pass, no wraparound.
+            (3, Some(5), false, 0),
+            // Exactly one pass: zero wraparound (SR.jl corpus sweet spot).
+            (5, Some(5), false, 0),
+            // Partial second pass: enabled, but not a full extra loop.
+            (6, Some(5), true, 0),
+            (9, Some(5), true, 0),
+            // Exactly two passes: one wraparound.
+            (10, Some(5), true, 1),
+            // Two full passes plus a partial third: still one complete loop.
+            (11, Some(5), true, 1),
+            (14, Some(5), true, 1),
+            // Three passes: two wraparounds.
+            (15, Some(5), true, 2),
+            // Single-row CSV: every tick after the first is a loop.
+            (1, Some(1), false, 0),
+            (4, Some(1), true, 3),
+        ];
+        for &(ticks, rows, enabled, loops) in table {
+            let stats = WraparoundStats::compute(ticks, rows);
+            assert_eq!(
+                stats,
+                WraparoundStats { enabled, loops },
+                "ticks={ticks} rows={rows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wraparound_loops_zero_implies_not_more_than_two_passes() {
+        // `loops == 0 && enabled` means strictly less than two full passes.
+        for rows in 1..=8usize {
+            for ticks in 1..=40usize {
+                let stats = WraparoundStats::compute(ticks, Some(rows));
+                assert_eq!(stats.enabled, ticks > rows);
+                if stats.enabled {
+                    assert!((stats.loops as usize + 1) * rows <= ticks);
+                    assert!((stats.loops as usize + 2) * rows > ticks);
+                }
+            }
+        }
+    }
 
     fn sample_manifest(
         lineup_declared_count: Option<usize>,

@@ -9,5 +9,5 @@ pub mod schema;
 
 pub use schema::{
     ExperimentBundle, ExperimentManifest, ExperimentMetrics, ExperimentSummary, ExperimentWarning,
-    ModelAdapterConfig, RunEntry, RunMatrix,
+    ModelAdapterConfig, RunEntry, RunMatrix, WraparoundStats,
 };
