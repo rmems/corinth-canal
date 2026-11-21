@@ -154,12 +154,12 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
 
 - Prefer `git` commands over MCP tools for branch and PR operations in this environment.
 - Keep behavioral changes separate from structural refactors when possible.
-- Prefer basing PRs on `main`; avoid opening a PR whose base is another feature branch. When work
-  is stacked, retarget child PRs to `main` before merging the parent. GH#126 was based on
-  `refactor/gh118-unify-infer-family`; that branch was squash-merged via GH#125 and deleted, so
-  GitHub marked GH#126 "merged" while none of its code reached `main` — the refactor was silently
-  lost and had to be reconstructed. After squash-merging any stack, verify the child landed:
-  `git grep <new-symbol> origin/main -- <file>`.
+- Stacked PRs are allowed: basing a PR on another feature branch is fine when the work builds on
+  it. Keep the GH#126 failure mode in mind — GH#126 was based on `refactor/gh118-unify-infer-family`,
+  which was squash-merged via GH#125 and deleted, so GitHub marked GH#126 "merged" while none of its
+  code reached `main` — the refactor was silently lost and had to be reconstructed. When merging a
+  stack, land the parent first and retarget children to `main` as needed; after squash-merging any
+  stack, verify the child landed: `git grep <new-symbol> origin/main -- <file>`.
 - Run `cargo check --no-default-features` and `cargo test --no-default-features` before closing substantial Rust changes. Docs-only, license-only, or similar non-Rust edits do not require cargo validation.
 - On CUDA-equipped setups with `nvcc` available, also run the default-feature path and `cargo build --examples`.
 - Snyk scans via MCP tools (see Cross-platform and security CI section) for on-demand use in development/agent flows (GH#108).
