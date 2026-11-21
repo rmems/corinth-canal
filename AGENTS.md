@@ -158,7 +158,8 @@ Run `cargo check --no-default-features && cargo test --no-default-features` loca
   it. Keep the GH#126 failure mode in mind — GH#126 was based on `refactor/gh118-unify-infer-family`,
   which was squash-merged via GH#125 and deleted, so GitHub marked GH#126 "merged" while none of its
   code reached `main` — the refactor was silently lost and had to be reconstructed. When landing a
-  stack: merge the parent first, `git fetch` so `origin/main` reflects the merge, then retarget
+  stack: merge the parent first, `git fetch` so the base remote's `main` (`origin` in this repo;
+  `upstream` on a fork clone) reflects the merge, then retarget
   each child to `main` and rebase it with `git rebase --onto origin/main <parent-tip> <child>`
   before deleting the parent's branch — a plain `git rebase main` can replay the parent's original
   commits because a squash merge changes their patch-ids. After the child merges, fetch again and
