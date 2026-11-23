@@ -59,6 +59,10 @@ The latent telemetry CSV includes both SAAQ trajectories via
   `run_manifest.json` stamps `wraparound_enabled` (any looped tick, including a
   partial second pass) and `wraparound_loops` (complete extra passes only:
   `ticks == rows` is 0, `ticks == 2*rows` is 1).
+- CSV rows that are malformed or non-finite are dropped, not filled, and later
+  rows shift up one tick. `run_manifest.json` stamps the count as
+  `telemetry_rows_skipped`, separate from `telemetry_row_count`; the field is
+  absent when no CSV was parsed.
 - `STRICT_REPEAT_CHECK=true` enables repeat-to-repeat comparison in the
   validation workflow.
 - `run_manifest.json` stamps the actual telemetry source label, including
