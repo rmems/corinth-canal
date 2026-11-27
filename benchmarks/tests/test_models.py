@@ -16,8 +16,6 @@ from benchmarks.models import (
     _BACKEND_HINT_FIELDS,
     _EXPLICIT_RUNTIMES,
     _FORMAT_NAMES_IN_RUNTIME_TABLE,
-    _GGUF_FORMATS,
-    _HF_FORMATS,
     _KNOWN_UNSUPPORTED_RUNTIMES,
     _RUNTIME_OVERRIDE_FIELD,
     BackendUnavailableError,
@@ -25,6 +23,7 @@ from benchmarks.models import (
     LlamaCppAdapter,
     MockModelAdapter,
     VllmAdapter,
+    _backend_from_artifact,
     _backend_from_runtime,
     _hf_trust_remote_code,
     _validate_generation,
@@ -653,16 +652,23 @@ _DOCUMENTED_FIELD_VALUES: dict[str, frozenset[str]] = {
     "format": frozenset({"gguf", "safetensors", "custom_artifact"}),
     "loader_hint": frozenset({"gguf", "safetensors", "vllm", "sglang"}),
 }
-_KNOWN_HINT_VALUES = frozenset(
-    _normalized_value(value)
-    for value in (
-        set(_EXPLICIT_RUNTIMES)
-        | _GGUF_FORMATS
-        | _HF_FORMATS
-        | {"custom_artifact"}
-        | _KNOWN_UNSUPPORTED_RUNTIMES
-    )
-)
+
+
+def _recognized_hint_value(value: Any) -> bool:
+    """True when detect_backend's own rules recognise ``value`` as a hint.
+
+    Mirrors the per-field classification in detect_backend: deferred
+    ``custom_artifact``, known-unsupported runtimes, explicit runtime names,
+    and artifact formats via _backend_from_artifact — which accepts the exact
+    table values plus the ``safetensors`` prefix and ``.gguf``/``.safetensors``
+    suffix rules, so variants like ``safetensors-fp16`` count.
+    """
+    normalized = _normalized_value(value)
+    if normalized == "custom_artifact" or normalized in _KNOWN_UNSUPPORTED_RUNTIMES:
+        return True
+    if normalized not in _FORMAT_NAMES_IN_RUNTIME_TABLE and _backend_from_runtime(normalized):
+        return True
+    return _backend_from_artifact(normalized, "") is not None
 
 
 class ModelAdapterConfigDetectionTest(unittest.TestCase):
@@ -771,9 +777,16 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                 if field not in entry:
                     continue
                 value = _normalized_value(entry[field])
-                allowed = _DOCUMENTED_FIELD_VALUES.get(field, _KNOWN_HINT_VALUES)
+                allowed = _DOCUMENTED_FIELD_VALUES.get(field)
                 with self.subTest(model_family=family, field=field, value=value):
-                    self.assertIn(value, allowed)
+                    if allowed is not None:
+                        self.assertIn(value, allowed)
+                    else:
+                        self.assertTrue(
+                            _recognized_hint_value(entry[field]),
+                            f"{field}={value!r} matches no runtime or artifact format "
+                            "detect_backend recognises",
+                        )
             if _RUNTIME_OVERRIDE_FIELD in entry:
                 value = _normalized_value(entry[_RUNTIME_OVERRIDE_FIELD])
                 with self.subTest(model_family=family, field=_RUNTIME_OVERRIDE_FIELD, value=value):
@@ -793,6 +806,23 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
         self.assertIsNone(_explicit_runtime_backend(entry))
         with self.assertRaises(AssertionError):
             _standalone_field_backend("format", entry["format"])
+
+    def test_safetensors_prefixed_hint_values_match_the_detector(self):
+        # Review on #246: _backend_from_artifact accepts any "safetensors*"
+        # value via its prefix rule, so the domain check must accept
+        # checkpoint_format="safetensors-fp16" too — while a value the
+        # detector does not recognise ("safetensorz") stays rejected.
+        entry = {
+            "model_family": "hypothetical",
+            "checkpoint_format": "safetensors-fp16",
+            "loader_hint": "vllm",
+        }
+        self.assertTrue(_recognized_hint_value(entry["checkpoint_format"]))
+        self.assertEqual(detect_backend(entry), "vllm")
+
+        self.assertFalse(_recognized_hint_value("safetensorz"))
+        with self.assertRaises(AssertionError):
+            _standalone_field_backend("checkpoint_format", "safetensorz")
 
     def test_documented_value_domain_resolves_or_fails_specifically(self):
         # The header of model_adapter_configs.toml documents these domains:
