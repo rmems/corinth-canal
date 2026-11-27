@@ -659,9 +659,11 @@ def _recognized_hint_value(value: Any) -> bool:
 
     Mirrors the per-field classification in detect_backend: deferred
     ``custom_artifact``, known-unsupported runtimes, explicit runtime names,
-    and artifact formats via _backend_from_artifact — which accepts the exact
-    table values plus the ``safetensors`` prefix and ``.gguf``/``.safetensors``
-    suffix rules, so variants like ``safetensors-fp16`` count.
+    and artifact formats via _backend_from_artifact, which accepts the exact
+    table values plus the ``safetensors`` prefix rule, so variants like
+    ``safetensors-fp16`` count. The ``.gguf``/``.safetensors`` suffix checks
+    in _backend_from_artifact apply only to the model path, which is passed
+    as "" here, so a hint value such as ``weights.gguf`` is not recognised.
     """
     normalized = _normalized_value(value)
     if normalized == "custom_artifact" or normalized in _KNOWN_UNSUPPORTED_RUNTIMES:
@@ -819,6 +821,15 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
         }
         self.assertTrue(_recognized_hint_value(entry["checkpoint_format"]))
         self.assertEqual(detect_backend(entry), "vllm")
+        # loader_hint="vllm" alone would give vllm, so also pin the
+        # standalone recognition of the prefixed format (review on #246).
+        self.assertEqual(
+            detect_backend(
+                {"model_id_or_local_path": "org/model", "checkpoint_format": "safetensors-fp16"}
+            ),
+            "vllm",
+        )
+        self.assertEqual(_standalone_field_backend("checkpoint_format", "safetensors-fp16"), "vllm")
 
         self.assertFalse(_recognized_hint_value("safetensorz"))
         with self.assertRaises(AssertionError):
