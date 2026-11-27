@@ -14,8 +14,12 @@ from unittest import mock
 from benchmarks import load_manifest as exported_load_manifest
 from benchmarks.models import (
     _BACKEND_HINT_FIELDS,
+    _EXPLICIT_RUNTIMES,
     _FORMAT_NAMES_IN_RUNTIME_TABLE,
+    _GGUF_FORMATS,
+    _HF_FORMATS,
     _KNOWN_UNSUPPORTED_RUNTIMES,
+    _RUNTIME_OVERRIDE_FIELD,
     BackendUnavailableError,
     HuggingFaceAdapter,
     LlamaCppAdapter,
@@ -65,6 +69,28 @@ def _is_explicit_runtime_value(value: Any) -> bool:
     if normalized in _FORMAT_NAMES_IN_RUNTIME_TABLE:
         return False
     return _backend_from_runtime(normalized) is not None
+
+
+def _standalone_field_backend(field: str, value: Any) -> str | None:
+    """Backend a lone ``field`` resolves to, or None when it has no default.
+
+    Returns None only for a documented value that cannot resolve alone
+    (``custom_artifact``, ``sglang``): their standalone failure is a specific
+    error, not a silent override. An unrecognised value raises AssertionError
+    instead — its standalone failure is the generic "cannot detect inference
+    backend" error, which must not be skipped the way custom_artifact's is,
+    or a typo like ``format="safetensor"`` escapes when ``loader_hint``
+    resolves the entry.
+    """
+    alone = {"model_id_or_local_path": "org/model", field: value}
+    try:
+        return detect_backend(alone)
+    except ValueError as error:
+        if "cannot detect inference backend" in str(error):
+            raise AssertionError(
+                f"{field}={value!r} matches no known runtime or artifact format"
+            ) from error
+        return None
 
 
 class BackendDetectionTests(unittest.TestCase):
@@ -618,6 +644,26 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ADAPTER_CONFIGS = _REPO_ROOT / "configs" / "model_adapter_configs.toml"
 _KNOWN_BACKENDS = {"llama.cpp", "vllm", "huggingface", "mock"}
 
+# Value domains documented in the header of configs/model_adapter_configs.toml:
+#   format       "gguf" | "safetensors" | "custom_artifact"
+#   loader_hint  "gguf" | "safetensors" | "vllm" | "sglang"
+# Hint fields without a documented per-field domain accept any value the
+# detection tables in benchmarks.models recognise.
+_DOCUMENTED_FIELD_VALUES: dict[str, frozenset[str]] = {
+    "format": frozenset({"gguf", "safetensors", "custom_artifact"}),
+    "loader_hint": frozenset({"gguf", "safetensors", "vllm", "sglang"}),
+}
+_KNOWN_HINT_VALUES = frozenset(
+    _normalized_value(value)
+    for value in (
+        set(_EXPLICIT_RUNTIMES)
+        | _GGUF_FORMATS
+        | _HF_FORMATS
+        | {"custom_artifact"}
+        | _KNOWN_UNSUPPORTED_RUNTIMES
+    )
+)
+
 
 class ModelAdapterConfigDetectionTest(unittest.TestCase):
     """Every `[[adapter]]` entry on disk must resolve or fail specifically.
@@ -693,13 +739,12 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
                 if explicit is not None and not _is_explicit_runtime_value(entry[field]):
                     continue
                 with self.subTest(model_family=entry.get("model_family"), field=field):
-                    alone = {"model_id_or_local_path": "org/model", field: entry[field]}
-                    try:
-                        alone_backend = detect_backend(alone)
-                    except ValueError:
-                        # A field with no backend default (e.g.
-                        # format="custom_artifact") cannot resolve alone;
-                        # that is not a silent override.
+                    alone_backend = _standalone_field_backend(field, entry[field])
+                    if alone_backend is None:
+                        # A documented value with no standalone default
+                        # (custom_artifact, sglang) cannot resolve alone;
+                        # that is not a silent override. An unrecognised
+                        # value raises AssertionError inside the helper.
                         continue
                     self.assertEqual(alone_backend, backend)
 
@@ -712,6 +757,42 @@ class ModelAdapterConfigDetectionTest(unittest.TestCase):
         self.assertTrue(_is_explicit_runtime_value(entry["loader_hint"]))
         self.assertFalse(_is_explicit_runtime_value(entry["format"]))
         self.assertEqual(detect_backend(entry), "vllm")
+
+    def test_entry_field_values_stay_within_the_documented_domains(self):
+        # Every artifact/runtime field set on a real entry must hold a value
+        # detect_backend can recognise. format and loader_hint additionally
+        # stay inside the domains documented in the TOML header; the other
+        # hint fields accept any value the detection tables know. This is
+        # what flags a typo like format="safetensor" even when loader_hint
+        # resolves the entry (review on #246).
+        for entry in self.entries:
+            family = entry.get("model_family", "<unnamed>")
+            for field in _BACKEND_HINT_FIELDS:
+                if field not in entry:
+                    continue
+                value = _normalized_value(entry[field])
+                allowed = _DOCUMENTED_FIELD_VALUES.get(field, _KNOWN_HINT_VALUES)
+                with self.subTest(model_family=family, field=field, value=value):
+                    self.assertIn(value, allowed)
+            if _RUNTIME_OVERRIDE_FIELD in entry:
+                value = _normalized_value(entry[_RUNTIME_OVERRIDE_FIELD])
+                with self.subTest(model_family=family, field=_RUNTIME_OVERRIDE_FIELD, value=value):
+                    self.assertIn(value, set(_EXPLICIT_RUNTIMES))
+
+    def test_unknown_format_is_flagged_when_loader_hint_resolves(self):
+        # Regression for the #246 review: format="safetensor" is a typo, but
+        # loader_hint="safetensors" resolves the entry, and the agreement
+        # test used to skip the standalone ValueError just like it skips
+        # custom_artifact, which has no default.
+        entry = {
+            "model_family": "hypothetical",
+            "format": "safetensor",
+            "loader_hint": "safetensors",
+        }
+        self.assertEqual(detect_backend(entry), "vllm")
+        self.assertIsNone(_explicit_runtime_backend(entry))
+        with self.assertRaises(AssertionError):
+            _standalone_field_backend("format", entry["format"])
 
     def test_documented_value_domain_resolves_or_fails_specifically(self):
         # The header of model_adapter_configs.toml documents these domains:
